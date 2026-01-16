@@ -8,6 +8,9 @@
 [![GitHub contributors](https://img.shields.io/github/contributors/kramergroup/openImpala)](https://github.com/kramergroup/openImpala/graphs/contributors)
 [![Build and Test Status](https://github.com/kramergroup/openImpala/actions/workflows/build-test.yml/badge.svg?branch=main)](https://github.com/kramergroup/openImpala/actions/workflows/build-test.yml)
 
+> ⚠️ **Active Development Notice:** > This repository is the active development fork maintained by the [BASE Laboratory](https://github.com/BASE-Laboratory). 
+> For the original archive, please visit [kramergroup/openImpala](https://github.com/kramergroup/openImpala).
+
 OpenImpala is a high-performance computing framework for image-based modelling, built upon the [AMReX library](https://github.com/AMReX-Codes/amrex) for massive parallelism using MPI. It tackles the challenge posed by large 3D imaging datasets (often billions of voxels) common in materials science and tomography.
 
 OpenImpala directly solves physical equations, such as steady-state diffusion or conduction problems, on the voxel grid of the input image using finite differences. This approach bypasses the need for explicit mesh generation, working directly with the acquired image data. From the simulation results, it calculates effective homogenised transport properties (e.g., diffusivity, conductivity, tortuosity) characteristic of the microstructure.
