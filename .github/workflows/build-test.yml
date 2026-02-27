@@ -74,7 +74,7 @@ jobs:
                 clang-tidy "$f" \
                   -warnings-as-errors="*" \
                   -header-filter="src/.*" \
-                  -- -std=c++17 -DOMPI_SKIP_MPICXX \
+                  -- -std=c++17 -fopenmp -DOMPI_SKIP_MPICXX \
                   -Isrc -Isrc/props \
                   -I/opt/amrex/25.03/include \
                   -I/opt/hypre/v2.32.0/include \

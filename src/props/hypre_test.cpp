@@ -9,7 +9,7 @@
 // Simple HYPRE error checking macro
 #define HYPRE_CHECK_MSG(msg, ierr)                                                                 \
     do {                                                                                           \
-        if (ierr != 0) {                                                                           \
+        if ((ierr) != 0) {                                                                         \
             char hypre_error_msg[256];                                                             \
             HYPRE_DescribeError(ierr, hypre_error_msg);                                            \
             fprintf(stderr, "FAIL: %s\n", msg);                                                    \

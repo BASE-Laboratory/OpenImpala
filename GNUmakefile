@@ -226,7 +226,7 @@ release: all
 
 # Static analysis with clang-tidy (requires clang-tidy to be installed)
 CLANG_TIDY    ?= clang-tidy
-TIDY_FLAGS    := -- -std=c++17 -DOMPI_SKIP_MPICXX $(INCLUDE)
+TIDY_FLAGS    := -- -std=c++17 -fopenmp -DOMPI_SKIP_MPICXX $(INCLUDE)
 SOURCES_CPP_ALL := $(SOURCES_IO_ALL) $(SOURCES_PRP_ALL)
 
 tidy:
