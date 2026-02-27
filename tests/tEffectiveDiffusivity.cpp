@@ -1,6 +1,6 @@
-// src/props/tEffectiveDiffusivity.cpp
+// tests/tEffectiveDiffusivity.cpp
 
-#include "../io/TiffReader.H"
+#include "TiffReader.H"
 #include "EffectiveDiffusivityHypre.H"
 #include "Tortuosity.H" // For OpenImpala::Direction enum
 

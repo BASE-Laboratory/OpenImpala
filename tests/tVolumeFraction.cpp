@@ -5,7 +5,7 @@
 // summation using AMReX tools, and reports PASS/FAIL.
 // Configuration is handled via ParmParse inputs.
 
-#include "../io/TiffReader.H" // Assuming defines OpenImpala::TiffReader
+#include "TiffReader.H" // Assuming defines OpenImpala::TiffReader
 #include "VolumeFraction.H"   // Assuming defines OpenImpala::VolumeFraction
 
 #include <cstdlib>
