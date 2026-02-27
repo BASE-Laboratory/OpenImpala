@@ -36,6 +36,7 @@ These calculated coefficients can directly parameterize continuum-scale models, 
 * [Visualisation](#visualisation)
 * [Applications & Related Publications](#applications--related-publications)
 * [Contributing](#contributing)
+* [Code Formatting](#code-formatting)
 * [Citation](#citation)
 * [License](#license)
 * [Acknowledgements](#acknowledgements)
@@ -329,6 +330,32 @@ Contributions to OpenImpala are welcome! Whether it's reporting bugs, suggesting
         4.  Push your branch to your fork (`git push origin feature/my-new-feature`).
         5.  Submit a [Pull Request](https://github.com/kramergroup/openImpala/pulls) to the main repository.
 * **Documentation:** Improvements to the README, code comments, or other documentation are always appreciated. You can submit these via Pull Requests.
+
+## Code Formatting
+
+This project uses [clang-format](https://clang.llvm.org/docs/ClangFormat.html) to enforce a consistent C++ code style. A `.clang-format` configuration file is provided in the repository root.
+
+**CI enforces formatting** — pull requests with unformatted C++ code will fail the format check.
+
+### Running Locally
+
+To format all C++ files in-place:
+
+```bash
+find src/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" \) \
+  -exec clang-format -i {} +
+```
+
+To check for formatting issues without modifying files:
+
+```bash
+find src/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" \) \
+  -exec clang-format --dry-run --Werror {} +
+```
+
+> **Note:** Fortran files (`.F90`, `.f90`) are not covered by clang-format and should not be passed to it.
+
+---
 
 ## Citation
 

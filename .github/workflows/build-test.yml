@@ -16,6 +16,23 @@ on:
   workflow_dispatch: # Allows manual triggering
 
 jobs:
+  format-check:
+    name: C++ Format Check (clang-format)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+
+      - name: Run clang-format check
+        run: |
+          find src/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.c" \) \
+            -exec clang-format --dry-run --Werror {} +
+
   build-and-test-openimpala: # Renamed job for clarity
     runs-on: ubuntu-latest
 

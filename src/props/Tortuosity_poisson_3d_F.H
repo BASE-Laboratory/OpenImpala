@@ -34,17 +34,19 @@ extern "C" {
  * @param[out] fz    Pointer to the Z-face flux array data (output).
  * @param[in] fzlo   Pointer to lower corner of the fz array Fortran bounds.
  * @param[in] fzhi   Pointer to upper corner of the fz array Fortran bounds.
- * @param[in] sol    Pointer to the input solution array data (contains phi at Fortran comp 1, cell type at Fortran comp 2).
- * @param[in] slo    Pointer to lower corner of the sol array Fortran bounds (including ghost cells).
- * @param[in] shi    Pointer to upper corner of the sol array Fortran bounds (including ghost cells).
+ * @param[in] sol    Pointer to the input solution array data (contains phi at Fortran comp 1, cell
+ * type at Fortran comp 2).
+ * @param[in] slo    Pointer to lower corner of the sol array Fortran bounds (including ghost
+ * cells).
+ * @param[in] shi    Pointer to upper corner of the sol array Fortran bounds (including ghost
+ * cells).
  * @param[in] dxinv  Pointer to array[3] of inverse cell sizes (1/dx, 1/dy, 1/dz).
  */
-void tortuosity_poisson_flux (const int* lo, const int* hi,
-                              amrex_real* fx, const int* fxlo, const int* fxhi,
-                              amrex_real* fy, const int* fylo, const int* fyhi,
-                              amrex_real* fz, const int* fzlo, const int* fzhi,
-                              const amrex_real* sol, const int* slo, const int* shi,
-                              const amrex_real* dxinv);
+void tortuosity_poisson_flux(const int* lo, const int* hi, amrex_real* fx, const int* fxlo,
+                             const int* fxhi, amrex_real* fy, const int* fylo, const int* fyhi,
+                             amrex_real* fz, const int* fzlo, const int* fzhi,
+                             const amrex_real* sol, const int* slo, const int* shi,
+                             const amrex_real* dxinv);
 
 
 //-----------------------------------------------------------------------
@@ -75,18 +77,19 @@ void tortuosity_poisson_flux (const int* lo, const int* hi,
  * @param[in] fz     Pointer to the Z-face flux array data (input).
  * @param[in] fzlo   Pointer to lower corner of the fz array Fortran bounds.
  * @param[in] fzhi   Pointer to upper corner of the fz array Fortran bounds.
- * @param[in] ncomp  Pointer to the number of components in p and n arrays. Passed by reference. <<< ADDED >>>
+ * @param[in] ncomp  Pointer to the number of components in p and n arrays. Passed by reference. <<<
+ * ADDED >>>
  * @param[in] dxinv  Pointer to array[3] of inverse cell sizes (1/dx, 1/dy, 1/dz).
- * @param[in] dt     Pointer to the time step (or relaxation factor). Passed by reference from Fortran default bind(c).
+ * @param[in] dt     Pointer to the time step (or relaxation factor). Passed by reference from
+ * Fortran default bind(c).
  */
-void tortuosity_poisson_update (const int* lo, const int* hi,
-                                const amrex_real* p, const int* plo, const int* phi,
-                                amrex_real* n, const int* nlo, const int* nhi,
-                                const amrex_real* fx, const int* fxlo, const int* fxhi,
-                                const amrex_real* fy, const int* fylo, const int* fyhi,
-                                const amrex_real* fz, const int* fzlo, const int* fzhi,
-                                const int* ncomp, // <<< ADDED ncomp argument >>>
-                                const amrex_real* dxinv, const amrex_real* dt);
+void tortuosity_poisson_update(const int* lo, const int* hi, const amrex_real* p, const int* plo,
+                               const int* phi, amrex_real* n, const int* nlo, const int* nhi,
+                               const amrex_real* fx, const int* fxlo, const int* fxhi,
+                               const amrex_real* fy, const int* fylo, const int* fyhi,
+                               const amrex_real* fz, const int* fzlo, const int* fzhi,
+                               const int* ncomp, // <<< ADDED ncomp argument >>>
+                               const amrex_real* dxinv, const amrex_real* dt);
 
 
 //-----------------------------------------------------------------------
@@ -112,15 +115,15 @@ void tortuosity_poisson_update (const int* lo, const int* hi,
  * @param[in] fz       Pointer to the Z-face flux array data (input).
  * @param[in] fzlo     Pointer to lower corner of the fz array Fortran bounds.
  * @param[in] fzhi     Pointer to upper corner of the fz array Fortran bounds.
- * @param[in] dir      Pointer to the direction index (0=X, 1=Y, 2=Z). Passed by reference from Fortran default bind(c).
+ * @param[in] dir      Pointer to the direction index (0=X, 1=Y, 2=Z). Passed by reference from
+ * Fortran default bind(c).
  * @param[out] flux_in Pointer to store the total flux entering on the low face (output).
  * @param[out] flux_out Pointer to store the total flux exiting on the high face (output).
  */
-void tortuosity_poisson_fio (const int* lo, const int* hi,
-                             const amrex_real* fx, const int* fxlo, const int* fxhi,
-                             const amrex_real* fy, const int* fylo, const int* fyhi,
-                             const amrex_real* fz, const int* fzlo, const int* fzhi,
-                             const int* dir, amrex_real* flux_in, amrex_real* flux_out);
+void tortuosity_poisson_fio(const int* lo, const int* hi, const amrex_real* fx, const int* fxlo,
+                            const int* fxhi, const amrex_real* fy, const int* fylo, const int* fyhi,
+                            const amrex_real* fz, const int* fzlo, const int* fzhi, const int* dir,
+                            amrex_real* flux_in, amrex_real* flux_out);
 
 
 #ifdef __cplusplus
