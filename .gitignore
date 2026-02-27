@@ -1,6 +1,15 @@
 tmp_build_dir
 build
+cmake_build
+cmake_install
 .DS_Store
 plt*
 phi*
 Backtrace*
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.mod
