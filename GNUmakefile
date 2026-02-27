@@ -1,3 +1,15 @@
+# ==============================================================================
+# DEPRECATED: This GNUmakefile is retained for backward compatibility.
+# The project has migrated to CMake. Please use the CMake build system:
+#
+#   mkdir cmake_build && cd cmake_build
+#   cmake ..
+#   make -j$(nproc)
+#   ctest
+#
+# This Makefile will be removed in a future release.
+# ==============================================================================
+#
 # GNU MakeFile for OpenImpala Diffusion Application and Tests
 # Corrected version 2: Uses Static Pattern Rules for compilation.
 

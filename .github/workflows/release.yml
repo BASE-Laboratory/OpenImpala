@@ -41,13 +41,26 @@ jobs:
           path: dependency_image.sif
           key: ${{ steps.cache-restore-sif.outputs.cache-primary-key || format('{0}-apptainer-sif-{1}', runner.os, hashFiles('containers/Singularity.deps.def')) }}
 
-      - name: Compile Application Binaries
+      - name: Compile Application Binaries (CMake)
         run: |
-          echo "Compiling application executables inside the dependency container..."
+          echo "Compiling application executables inside the dependency container using CMake..."
           sudo apptainer exec \
+            --writable-tmpfs \
             --bind $PWD:/src \
             ./dependency_image.sif \
-            bash -c 'source /opt/rh/gcc-toolset-11/enable && cd /src && make all -j$(nproc)'
+            bash -c 'source /opt/rh/gcc-toolset-11/enable && \
+                     cd /src && \
+                     rm -rf cmake_build && mkdir cmake_build && cd cmake_build && \
+                     cmake3 .. \
+                       -DCMAKE_BUILD_TYPE=Release \
+                       -DCMAKE_C_COMPILER=$(which mpicc) \
+                       -DCMAKE_CXX_COMPILER=$(which mpicxx) \
+                       -DCMAKE_Fortran_COMPILER=$(which mpif90) \
+                       -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
+                       -DBUILD_TESTING=OFF \
+                       -DCMAKE_INSTALL_PREFIX=/src/cmake_install && \
+                     make -j$(nproc) && \
+                     make install'
           echo "Compilation complete."
 
       - name: Build Final Release SIF
@@ -58,7 +71,7 @@ jobs:
           echo "Using staging directory: $STAGING_DIR"
 
           echo "Copying compiled application binaries and custom libraries to staging area..."
-          cp -r ./build/apps "$STAGING_DIR/"
+          cp -r ./cmake_install/bin "$STAGING_DIR/apps"
           sudo apptainer exec \
             --bind "$STAGING_DIR:/staging" \
             ./dependency_image.sif \
