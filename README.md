@@ -37,6 +37,7 @@ These calculated coefficients can directly parameterize continuum-scale models, 
 * [Applications & Related Publications](#applications--related-publications)
 * [Contributing](#contributing)
 * [Code Formatting](#code-formatting)
+* [Static Analysis](#static-analysis)
 * [Citation](#citation)
 * [License](#license)
 * [Acknowledgements](#acknowledgements)
@@ -354,6 +355,29 @@ find src/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp
 ```
 
 > **Note:** Fortran files (`.F90`, `.f90`) are not covered by clang-format and should not be passed to it.
+
+## Static Analysis
+
+This project uses [clang-tidy](https://clang.llvm.org/extra/clang-tidy/) for static analysis. A `.clang-tidy` configuration file in the repository root enables conservative checks from the `bugprone-*`, `performance-*`, and `modernize-use-nullptr` categories.
+
+**CI enforces static analysis** — pull requests that introduce new clang-tidy warnings will fail.
+
+### Running Locally
+
+If you are building inside the dependency container, run the Makefile target:
+
+```bash
+apptainer exec --bind "$(pwd):/src" dependency_image.sif bash -c "cd /src && make tidy"
+```
+
+Or run clang-tidy on individual files with the project's include paths:
+
+```bash
+clang-tidy src/props/MyFile.cpp -- -std=c++17 -DOMPI_SKIP_MPICXX \
+  -Isrc -Isrc/props \
+  -I${AMREX_HOME}/include -I${HYPRE_HOME}/include \
+  -I${HDF5_HOME}/include -I${TIFF_HOME}/include
+```
 
 ---
 

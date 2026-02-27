@@ -188,11 +188,11 @@ private:
 
 
     // HYPRE Data Structures
-    HYPRE_StructGrid m_grid = NULL;
-    HYPRE_StructStencil m_stencil = NULL;
-    HYPRE_StructMatrix m_A = NULL;
-    HYPRE_StructVector m_b = NULL;
-    HYPRE_StructVector m_x = NULL;
+    HYPRE_StructGrid m_grid = nullptr;
+    HYPRE_StructStencil m_stencil = nullptr;
+    HYPRE_StructMatrix m_A = nullptr;
+    HYPRE_StructVector m_b = nullptr;
+    HYPRE_StructVector m_x = nullptr;
 };
 
 

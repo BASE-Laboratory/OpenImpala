@@ -114,8 +114,8 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
       m_dir(dir), m_solvertype(st), m_vlo(vlo), m_vhi(vhi), m_resultspath(resultspath),
       m_verbose(verbose), m_write_plotfile(write_plotfile), m_mf_phi(ba, dm, numComponentsPhi, 1),
       m_mf_active_mask(ba, dm, 1, 1), m_active_vf(0.0), // <<< CHANGE: Initialize active VF member
-      m_first_call(true), m_value(std::numeric_limits<amrex::Real>::quiet_NaN()), m_grid(NULL),
-      m_stencil(NULL), m_A(NULL), m_b(NULL), m_x(NULL), m_num_iterations(-1),
+      m_first_call(true), m_value(std::numeric_limits<amrex::Real>::quiet_NaN()), m_grid(nullptr),
+      m_stencil(nullptr), m_A(nullptr), m_b(nullptr), m_x(nullptr), m_num_iterations(-1),
       m_final_res_norm(std::numeric_limits<amrex::Real>::quiet_NaN()), m_converged(false),
       m_flux_in(0.0), m_flux_out(0.0) {
     // Copy data from input iMultiFab to member iMultiFab
@@ -203,10 +203,10 @@ OpenImpala::TortuosityHypre::~TortuosityHypre() {
         HYPRE_StructStencilDestroy(m_stencil);
     if (m_grid)
         HYPRE_StructGridDestroy(m_grid);
-    m_x = m_b = NULL;
-    m_A = NULL;
-    m_stencil = NULL;
-    m_grid = NULL;
+    m_x = m_b = nullptr;
+    m_A = nullptr;
+    m_stencil = nullptr;
+    m_grid = nullptr;
 }
 
 
@@ -725,7 +725,7 @@ bool OpenImpala::TortuosityHypre::solve() {
     BL_PROFILE("TortuosityHypre::solve");
     HYPRE_Int ierr = 0;
     HYPRE_StructSolver solver;
-    HYPRE_StructSolver precond = NULL;
+    HYPRE_StructSolver precond = nullptr;
     m_num_iterations = -1;
     m_final_res_norm = std::numeric_limits<amrex::Real>::quiet_NaN();
     m_converged = false;
@@ -740,7 +740,7 @@ bool OpenImpala::TortuosityHypre::solve() {
         HYPRE_StructFlexGMRESSetTol(solver, m_eps);
         HYPRE_StructFlexGMRESSetMaxIter(solver, m_maxiter);
         HYPRE_StructFlexGMRESSetPrintLevel(solver, m_verbose > 1 ? 3 : 0);
-        precond = NULL;
+        precond = nullptr;
         ierr = HYPRE_StructSMGCreate(MPI_COMM_WORLD, &precond);
         HYPRE_CHECK(ierr);
         HYPRE_StructSMGSetTol(precond, 0.0);

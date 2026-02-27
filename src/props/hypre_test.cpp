@@ -52,9 +52,9 @@ int main(int argc, char* argv[]) {
     fflush(stdout);
 
     // Declare HYPRE objects
-    HYPRE_StructGrid grid = NULL;
-    HYPRE_StructStencil stencil = NULL;
-    HYPRE_StructMatrix matrix = NULL; // Initialize to NULL
+    HYPRE_StructGrid grid = nullptr;
+    HYPRE_StructStencil stencil = nullptr;
+    HYPRE_StructMatrix matrix = nullptr;
 
     // --- Grid Setup ---
     const int ndim = 3;
@@ -138,7 +138,7 @@ int main(int argc, char* argv[]) {
 
     // --- Cleanup ---
     // Destroy Matrix only if it was successfully created and initialized
-    if (matrix != NULL) { // Check handle is not NULL
+    if (matrix != nullptr) {
         printf("[%d] Calling HYPRE_StructMatrixDestroy...\n", myid);
         fflush(stdout);
         ierr = HYPRE_StructMatrixDestroy(matrix);
@@ -148,7 +148,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Destroy Stencil
-    if (stencil != NULL) { // Check handle is not NULL
+    if (stencil != nullptr) {
         printf("[%d] Calling HYPRE_StructStencilDestroy...\n", myid);
         fflush(stdout);
         ierr = HYPRE_StructStencilDestroy(stencil);
@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Destroy Grid
-    if (grid != NULL) { // Check handle is not NULL
+    if (grid != nullptr) {
         printf("[%d] Calling HYPRE_StructGridDestroy...\n", myid);
         fflush(stdout);
         ierr = HYPRE_StructGridDestroy(grid);
