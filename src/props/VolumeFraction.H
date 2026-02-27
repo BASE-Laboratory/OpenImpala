@@ -73,7 +73,7 @@ public:
     amrex::Real value_vf(bool local = false) const {
         long long pc, tc;
         value(pc, tc, local); // Call the method that returns counts
-        return (tc > 0) ? static_cast<amrex::Real>(pc) / tc : 0.0;
+        return (tc > 0) ? static_cast<amrex::Real>(pc) / static_cast<amrex::Real>(tc) : 0.0;
     }
 
 private:

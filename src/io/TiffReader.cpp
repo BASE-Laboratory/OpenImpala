@@ -566,7 +566,7 @@ void TiffReader::readDistributedIntoFab(amrex::iMultiFab& dest_mf, int value_if_
                                             (size_t)j_chk * tile_width_int +
                                             i_chk; // Use tile_width_int for tile calculations
                                         byte_i = lin_i_chk / 8;
-                                        bit_i = lin_i_chk % 8;
+                                        bit_i = static_cast<int>(lin_i_chk % 8);
                                         if (byte_i < (size_t)bytes_rd) {
                                             p_byte = temp_buffer[byte_i];
                                             bit_v = (fill_order_local == FILLORDER_MSB2LSB)
