@@ -24,7 +24,7 @@ namespace OpenImpala {
 namespace { // Anonymous namespace
 
 inline std::int32_t swap_bytes_int32(std::int32_t val) {
-    return __builtin_bswap32(val);
+    return static_cast<std::int32_t>(__builtin_bswap32(static_cast<std::uint32_t>(val)));
 }
 
 inline std::uint16_t swap_bytes_uint16(std::uint16_t val) {
