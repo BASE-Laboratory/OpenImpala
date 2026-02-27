@@ -42,7 +42,7 @@
 // HYPRE_CHECK macro
 #define HYPRE_CHECK(ierr)                                                                          \
     do {                                                                                           \
-        if (ierr != 0) {                                                                           \
+        if ((ierr) != 0) {                                                                         \
             char hypre_error_msg[256];                                                             \
             HYPRE_DescribeError(ierr, hypre_error_msg);                                            \
             amrex::Abort("HYPRE Error: " + std::string(hypre_error_msg) +                          \

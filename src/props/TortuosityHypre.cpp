@@ -587,7 +587,9 @@ void OpenImpala::TortuosityHypre::generateActivityMask(const amrex::iMultiFab& p
     // <<< END CORRECTION >>>
 
     long total_cells = m_geom.Domain().numPts();
-    m_active_vf = (total_cells > 0) ? static_cast<amrex::Real>(num_active) / total_cells : 0.0;
+    m_active_vf = (total_cells > 0)
+                      ? static_cast<amrex::Real>(num_active) / static_cast<amrex::Real>(total_cells)
+                      : 0.0;
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "  Active Volume Fraction (percolating phase " << m_phase
