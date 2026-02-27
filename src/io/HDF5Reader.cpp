@@ -420,7 +420,9 @@ void HDF5Reader::threshold(double raw_threshold, int value_if_true, int value_if
                                       std::to_string(static_cast<int>(type_class_enum));
                 try {
                     err_msg += ", Size (bytes): " + std::to_string(m_native_type.getSize());
-                } catch (...) {}
+                } catch (...) {
+                    err_msg += ", Size (bytes): unknown";
+                }
                 throw std::runtime_error(err_msg);
             }
         } // End MFIter loop

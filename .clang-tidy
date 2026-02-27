@@ -8,6 +8,7 @@ Checks: >
   -bugprone-exception-escape,
   performance-*,
   -performance-avoid-endl,
+  -performance-enum-size,
   modernize-use-nullptr
 
 WarningsAsErrors: '*'
