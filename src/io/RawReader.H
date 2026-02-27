@@ -31,7 +31,8 @@ enum class RawDataType {
     UNKNOWN,    ///< Default, indicating an uninitialized or invalid type.
     UINT8,      ///< 8-bit unsigned integer (char, byte). Endianness irrelevant.
     INT8,       ///< 8-bit signed integer (signed char). Endianness irrelevant.
-    INT16_LE,   ///< 16-bit signed integer, Little Endian (least significant byte first, common on x86).
+    INT16_LE,   ///< 16-bit signed integer, Little Endian (least significant byte first, common on
+                ///< x86).
     INT16_BE,   ///< 16-bit signed integer, Big Endian (most significant byte first).
     UINT16_LE,  ///< 16-bit unsigned integer, Little Endian.
     UINT16_BE,  ///< 16-bit unsigned integer, Big Endian.
@@ -62,8 +63,7 @@ enum class RawDataType {
  * potential byte swapping between the file's endianness and the host
  * machine's endianness if they differ.
  */
-class RawReader
-{
+class RawReader {
 public:
     /**
      * @brief Type alias for the underlying byte storage.
@@ -96,8 +96,7 @@ public:
      * Must not be `RawDataType::UNKNOWN`.
      * @throws std::runtime_error If reading or validation fails.
      */
-    explicit RawReader(const std::string& filename,
-                       int width, int height, int depth,
+    explicit RawReader(const std::string& filename, int width, int height, int depth,
                        RawDataType data_type);
 
     /**
@@ -135,8 +134,7 @@ public:
      * Must not be `RawDataType::UNKNOWN`.
      * @return `true` if the file was read and validated successfully, `false` otherwise.
      */
-    bool readFile(const std::string& filename,
-                  int width, int height, int depth,
+    bool readFile(const std::string& filename, int width, int height, int depth,
                   RawDataType data_type);
 
     /**
@@ -211,17 +209,19 @@ public:
      * - Otherwise (including if the cell is outside the raw data bounds), the cell
      * in `mf` is set to `value_if_false`.
      *
-     * @param threshold_value The value to compare against. The comparison is strictly greater than (>).
+     * @param threshold_value The value to compare against. The comparison is strictly greater than
+     * (>).
      * @param value_if_true The integer value to write to `mf` for cells exceeding the threshold.
-     * @param value_if_false The integer value to write to `mf` for cells not exceeding the threshold
-     * or outside the bounds of the raw data.
+     * @param value_if_false The integer value to write to `mf` for cells not exceeding the
+     * threshold or outside the bounds of the raw data.
      * @param[out] mf The `amrex::iMultiFab` to be filled. It must be defined (allocated) and
      * is expected to have exactly one component (`nComp() == 1`). The operation
      * is performed in parallel using OpenMP if available.
      * @throws std::runtime_error If the reader is not in a valid state (`isRead()` is false) or
      * if `mf.nComp() != 1`.
      */
-    void threshold(double threshold_value, int value_if_true, int value_if_false, amrex::iMultiFab& mf) const;
+    void threshold(double threshold_value, int value_if_true, int value_if_false,
+                   amrex::iMultiFab& mf) const;
 
     /**
      * @brief Fills an AMReX iMultiFab based on thresholding the raw data (outputting 1 or 0).
@@ -231,7 +231,8 @@ public:
      * mask in the `iMultiFab` where cells corresponding to raw data values greater
      * than `threshold_value` are set to 1, and all others are set to 0.
      *
-     * @param threshold_value The value to compare against. The comparison is strictly greater than (>).
+     * @param threshold_value The value to compare against. The comparison is strictly greater than
+     * (>).
      * @param[out] mf The `amrex::iMultiFab` to be filled. It must be defined (allocated) and
      * is expected to have exactly one component (`nComp() == 1`).
      * @throws std::runtime_error If the reader is not in a valid state (`isRead()` is false) or
@@ -251,8 +252,8 @@ private:
 
     /**
      * @brief Calculates the size in bytes of a single voxel based on the stored `m_data_type`.
-     * @return The number of bytes per voxel (e.g., 1 for UINT8, 2 for INT16, 4 for FLOAT32, 8 for FLOAT64).
-     * Returns 0 if `m_data_type` is `UNKNOWN`.
+     * @return The number of bytes per voxel (e.g., 1 for UINT8, 2 for INT16, 4 for FLOAT32, 8 for
+     * FLOAT64). Returns 0 if `m_data_type` is `UNKNOWN`.
      */
     size_t getBytesPerVoxel() const;
 
@@ -265,16 +266,21 @@ private:
 
 
     // --- Member Variables ---
-    std::string m_filename;       ///< Stores the path to the source raw file provided to the constructor or `readFile`.
-    int m_width = 0;              ///< Width (X dimension) of the dataset in voxels, set by constructor or `readFile`.
-    int m_height = 0;             ///< Height (Y dimension) of the dataset in voxels, set by constructor or `readFile`.
-    int m_depth = 0;              ///< Depth (Z dimension) of the dataset in voxels, set by constructor or `readFile`.
-    RawDataType m_data_type = RawDataType::UNKNOWN; ///< Data type (incl. endianness) specified for the file's content.
+    std::string m_filename; ///< Stores the path to the source raw file provided to the constructor
+                            ///< or `readFile`.
+    int m_width =
+        0; ///< Width (X dimension) of the dataset in voxels, set by constructor or `readFile`.
+    int m_height =
+        0; ///< Height (Y dimension) of the dataset in voxels, set by constructor or `readFile`.
+    int m_depth =
+        0; ///< Depth (Z dimension) of the dataset in voxels, set by constructor or `readFile`.
+    RawDataType m_data_type =
+        RawDataType::UNKNOWN; ///< Data type (incl. endianness) specified for the file's content.
 
     // Internal buffer holding the raw byte data read from the file.
     std::vector<ByteType> m_raw_bytes; ///< Contiguous storage for all voxel data as raw bytes.
 
-    bool m_is_read = false;       ///< Status flag indicating if data was successfully read and validated.
+    bool m_is_read = false; ///< Status flag indicating if data was successfully read and validated.
 };
 
 } // namespace OpenImpala

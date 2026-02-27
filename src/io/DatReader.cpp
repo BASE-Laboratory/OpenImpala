@@ -8,7 +8,7 @@
 #include <limits>    // For std::numeric_limits
 #include <cstdint>   // For std::int32_t, std::uint16_t (via DataType)
 // Include for compiler endianness macros (often implicitly available with GCC)
-#include <endian.h>  // Or rely on compiler built-ins
+#include <endian.h> // Or rely on compiler built-ins
 
 #include <AMReX.H>
 #include <AMReX_Print.H> // For amrex::Print, amrex::Warning
@@ -30,7 +30,8 @@ inline std::int32_t swap_bytes_int32(std::int32_t val) {
 inline std::uint16_t swap_bytes_uint16(std::uint16_t val) {
     // Assuming DataType is uint16_t based on DatReader.H
     // Use appropriate bswap if DataType changes!
-    static_assert(sizeof(DatReader::DataType) == sizeof(std::uint16_t), "Swap logic assumes uint16_t");
+    static_assert(sizeof(DatReader::DataType) == sizeof(std::uint16_t),
+                  "Swap logic assumes uint16_t");
     return __builtin_bswap16(val);
 }
 
@@ -39,9 +40,9 @@ constexpr bool is_system_big_endian() {
 #if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__)
     return __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__;
 #else
-    // Fallback or error if macros not defined - might need runtime check instead
-    // Forcing little-endian assumption here if macros missing, add warning.
-    #warning "Could not determine endianness via macros, assuming little-endian."
+// Fallback or error if macros not defined - might need runtime check instead
+// Forcing little-endian assumption here if macros missing, add warning.
+#warning "Could not determine endianness via macros, assuming little-endian."
     return false; // Assume little-endian if unsure
 #endif
 }
@@ -51,14 +52,12 @@ constexpr bool is_system_big_endian() {
 
 // --- Constructor Implementations ---
 
-DatReader::DatReader() :
-    m_width(0), m_height(0), m_depth(0), m_is_read(false)
-{
+DatReader::DatReader() : m_width(0), m_height(0), m_depth(0), m_is_read(false) {
     // Default constructor: initializes members to default state.
 }
 
-DatReader::DatReader(const std::string& filename) :
-    DatReader() // Delegate to default constructor for initialization
+DatReader::DatReader(const std::string& filename)
+    : DatReader() // Delegate to default constructor for initialization
 {
     if (!readFile(filename)) {
         throw std::runtime_error("DatReader: Failed to read file: " + filename);
@@ -71,11 +70,12 @@ bool OpenImpala::DatReader::isRead() const {
     return m_is_read; // Return the state of your internal flag
 }
 
-bool DatReader::readFile(const std::string& filename)
-{
+bool DatReader::readFile(const std::string& filename) {
     m_filename = filename;
     m_raw.clear();
-    m_width = 0; m_height = 0; m_depth = 0;
+    m_width = 0;
+    m_height = 0;
+    m_depth = 0;
     m_is_read = false;
 
     std::ifstream ifs(m_filename, std::ios::binary | std::ios::ate);
@@ -110,9 +110,9 @@ bool DatReader::readFile(const std::string& filename)
     }
 
     if (dims[0] <= 0 || dims[1] <= 0 || dims[2] <= 0) {
-         amrex::Print() << "Error: [DatReader] Invalid dimensions in header: " << m_filename
-                        << " (W=" << dims[0] << ", H=" << dims[1] << ", D=" << dims[2] << ")\n";
-         return false;
+        amrex::Print() << "Error: [DatReader] Invalid dimensions in header: " << m_filename
+                       << " (W=" << dims[0] << ", H=" << dims[1] << ", D=" << dims[2] << ")\n";
+        return false;
     }
     m_width = static_cast<int>(dims[0]);
     m_height = static_cast<int>(dims[1]);
@@ -125,19 +125,20 @@ bool DatReader::readFile(const std::string& filename)
     std::streamsize actual_data_size = file_size - header_size;
 
     if (actual_data_size < expected_data_size) {
-         amrex::Print() << "Error: [DatReader] File size mismatch: " << m_filename
-                        << ". Expected data: " << expected_data_size
-                        << " bytes, Available: " << actual_data_size << " bytes.\n";
-         return false;
+        amrex::Print() << "Error: [DatReader] File size mismatch: " << m_filename
+                       << ". Expected data: " << expected_data_size
+                       << " bytes, Available: " << actual_data_size << " bytes.\n";
+        return false;
     }
     if (actual_data_size > expected_data_size) {
-         std::string msg = "Warning: [DatReader] File contains more data than expected. Ignoring extra data.";
-         amrex::Warning(msg.c_str()); // <<< FIX: Use .c_str() for safety >>>
+        std::string msg =
+            "Warning: [DatReader] File contains more data than expected. Ignoring extra data.";
+        amrex::Warning(msg.c_str()); // <<< FIX: Use .c_str() for safety >>>
     }
 
     try {
         if (static_cast<size_t>(num_voxels) > std::numeric_limits<size_t>::max()) {
-             throw std::overflow_error("DatReader: Voxel count exceeds vector size limit.");
+            throw std::overflow_error("DatReader: Voxel count exceeds vector size limit.");
         }
         m_raw.resize(static_cast<size_t>(num_voxels));
     } catch (const std::exception& e) {
@@ -148,10 +149,10 @@ bool DatReader::readFile(const std::string& filename)
 
     ifs.read(reinterpret_cast<char*>(m_raw.data()), expected_data_size);
     if (!ifs.good() && ifs.gcount() != expected_data_size) {
-         amrex::Print() << "Error: [DatReader] Failed reading voxel data: " << m_filename
-                        << ". Read " << ifs.gcount() << "/" << expected_data_size << " bytes.\n";
-         m_raw.clear();
-         return false;
+        amrex::Print() << "Error: [DatReader] Failed reading voxel data: " << m_filename
+                       << ". Read " << ifs.gcount() << "/" << expected_data_size << " bytes.\n";
+        m_raw.clear();
+        return false;
     }
 
     // --- Handle Endianness for Data (ASSUMPTION: File is Little Endian) ---
@@ -165,44 +166,54 @@ bool DatReader::readFile(const std::string& filename)
     }
 
     m_is_read = true;
-    amrex::Print() << "Successfully read DAT file: " << m_filename
-                   << " (Dimensions: " << m_width << "x" << m_height << "x" << m_depth << ")\n";
+    amrex::Print() << "Successfully read DAT file: " << m_filename << " (Dimensions: " << m_width
+                   << "x" << m_height << "x" << m_depth << ")\n";
     return true;
 }
 
 
 // --- Getter Implementations ---
-int DatReader::width() const { return m_width; }
-int DatReader::height() const { return m_height; }
-int DatReader::depth() const { return m_depth; }
-amrex::Box DatReader::box() const {
-    if (!m_is_read) return amrex::Box();
-    return amrex::Box(amrex::IntVect(0, 0, 0), amrex::IntVect(m_width - 1, m_height - 1, m_depth - 1));
+int DatReader::width() const {
+    return m_width;
 }
-const std::vector<DatReader::DataType>& DatReader::getRawData() const { return m_raw; }
+int DatReader::height() const {
+    return m_height;
+}
+int DatReader::depth() const {
+    return m_depth;
+}
+amrex::Box DatReader::box() const {
+    if (!m_is_read)
+        return amrex::Box();
+    return amrex::Box(amrex::IntVect(0, 0, 0),
+                      amrex::IntVect(m_width - 1, m_height - 1, m_depth - 1));
+}
+const std::vector<DatReader::DataType>& DatReader::getRawData() const {
+    return m_raw;
+}
 
 DatReader::DataType DatReader::getRawValue(int i, int j, int k) const {
     if (!m_is_read) {
         throw std::out_of_range("[DatReader::getRawValue] Data not read yet.");
     }
     if (i < 0 || i >= m_width || j < 0 || j >= m_height || k < 0 || k >= m_depth) {
-        throw std::out_of_range("[DatReader::getRawValue] Index ("
-                                + std::to_string(i) + "," + std::to_string(j) + "," + std::to_string(k)
-                                + ") out of bounds (W:" + std::to_string(m_width)
-                                + ", H:" + std::to_string(m_height) + ", D:" + std::to_string(m_depth) + ").");
+        throw std::out_of_range(
+            "[DatReader::getRawValue] Index (" + std::to_string(i) + "," + std::to_string(j) + "," +
+            std::to_string(k) + ") out of bounds (W:" + std::to_string(m_width) +
+            ", H:" + std::to_string(m_height) + ", D:" + std::to_string(m_depth) + ").");
     }
     amrex::Long idx = static_cast<amrex::Long>(k) * m_width * m_height +
-                      static_cast<amrex::Long>(j) * m_width +
-                      static_cast<amrex::Long>(i);
+                      static_cast<amrex::Long>(j) * m_width + static_cast<amrex::Long>(i);
     if (idx >= static_cast<amrex::Long>(m_raw.size())) {
-         throw std::out_of_range("[DatReader::getRawValue] Calculated index exceeds raw data vector size.");
+        throw std::out_of_range(
+            "[DatReader::getRawValue] Calculated index exceeds raw data vector size.");
     }
     return m_raw[static_cast<size_t>(idx)];
 }
 
 // --- Threshold Implementation ---
-void DatReader::threshold(DataType raw_threshold, int value_if_true, int value_if_false, amrex::iMultiFab& mf) const
-{
+void DatReader::threshold(DataType raw_threshold, int value_if_true, int value_if_false,
+                          amrex::iMultiFab& mf) const {
     if (!m_is_read) {
         amrex::Abort("[DatReader::threshold] Cannot threshold, data not read successfully.");
     }
@@ -215,33 +226,30 @@ void DatReader::threshold(DataType raw_threshold, int value_if_true, int value_i
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-    for (amrex::MFIter mfi(mf); mfi.isValid(); ++mfi)
-    {
+    for (amrex::MFIter mfi(mf); mfi.isValid(); ++mfi) {
         const amrex::Box& box = mfi.validbox();
         amrex::IArrayBox& fab = mf[mfi];
-        amrex::LoopOnCpu(box, [&] (int i, int j, int k)
-        {
-            if (i >= 0 && i < current_width && j >= 0 && j < current_height && k >= 0 && k < current_depth)
-            {
+        amrex::LoopOnCpu(box, [&](int i, int j, int k) {
+            if (i >= 0 && i < current_width && j >= 0 && j < current_height && k >= 0 &&
+                k < current_depth) {
                 amrex::Long idx = static_cast<amrex::Long>(k) * current_width * current_height +
                                   static_cast<amrex::Long>(j) * current_width +
                                   static_cast<amrex::Long>(i);
-                if (idx >= 0 && idx < raw_data_size)
-                {
-                    fab(amrex::IntVect(i, j, k), 0) = (data_ptr[idx] > raw_threshold) ? value_if_true : value_if_false;
+                if (idx >= 0 && idx < raw_data_size) {
+                    fab(amrex::IntVect(i, j, k), 0) =
+                        (data_ptr[idx] > raw_threshold) ? value_if_true : value_if_false;
                 } else {
                     fab(amrex::IntVect(i, j, k), 0) = value_if_false;
                 }
             } else {
-                 fab(amrex::IntVect(i, j, k), 0) = value_if_false;
+                fab(amrex::IntVect(i, j, k), 0) = value_if_false;
             }
         });
     }
 }
 
 // Original overload (output 1/0) - calls the flexible version
-void DatReader::threshold(DataType raw_threshold, amrex::iMultiFab& mf) const
-{
+void DatReader::threshold(DataType raw_threshold, amrex::iMultiFab& mf) const {
     threshold(raw_threshold, 1, 0, mf);
 }
 

@@ -8,6 +8,9 @@
 [![GitHub contributors](https://img.shields.io/github/contributors/kramergroup/openImpala)](https://github.com/kramergroup/openImpala/graphs/contributors)
 [![Build and Test Status](https://github.com/kramergroup/openImpala/actions/workflows/build-test.yml/badge.svg?branch=main)](https://github.com/kramergroup/openImpala/actions/workflows/build-test.yml)
 
+> ⚠️ **Active Development Notice:** > This repository is the active development fork maintained by the [BASE Laboratory](https://github.com/BASE-Laboratory). 
+> For the original archive, please visit [kramergroup/openImpala](https://github.com/kramergroup/openImpala).
+
 OpenImpala is a high-performance computing framework for image-based modelling, built upon the [AMReX library](https://github.com/AMReX-Codes/amrex) for massive parallelism using MPI. It tackles the challenge posed by large 3D imaging datasets (often billions of voxels) common in materials science and tomography.
 
 OpenImpala directly solves physical equations, such as steady-state diffusion or conduction problems, on the voxel grid of the input image using finite differences. This approach bypasses the need for explicit mesh generation, working directly with the acquired image data. From the simulation results, it calculates effective homogenised transport properties (e.g., diffusivity, conductivity, tortuosity) characteristic of the microstructure.
@@ -33,6 +36,8 @@ These calculated coefficients can directly parameterize continuum-scale models, 
 * [Visualisation](#visualisation)
 * [Applications & Related Publications](#applications--related-publications)
 * [Contributing](#contributing)
+* [Code Formatting](#code-formatting)
+* [Static Analysis](#static-analysis)
 * [Citation](#citation)
 * [License](#license)
 * [Acknowledgements](#acknowledgements)
@@ -326,6 +331,55 @@ Contributions to OpenImpala are welcome! Whether it's reporting bugs, suggesting
         4.  Push your branch to your fork (`git push origin feature/my-new-feature`).
         5.  Submit a [Pull Request](https://github.com/kramergroup/openImpala/pulls) to the main repository.
 * **Documentation:** Improvements to the README, code comments, or other documentation are always appreciated. You can submit these via Pull Requests.
+
+## Code Formatting
+
+This project uses [clang-format](https://clang.llvm.org/docs/ClangFormat.html) to enforce a consistent C++ code style. A `.clang-format` configuration file is provided in the repository root.
+
+**CI enforces formatting** — pull requests with unformatted C++ code will fail the format check.
+
+### Running Locally
+
+To format all C++ files in-place:
+
+```bash
+find src/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" \) \
+  -exec clang-format -i {} +
+```
+
+To check for formatting issues without modifying files:
+
+```bash
+find src/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" \) \
+  -exec clang-format --dry-run --Werror {} +
+```
+
+> **Note:** Fortran files (`.F90`, `.f90`) are not covered by clang-format and should not be passed to it.
+
+## Static Analysis
+
+This project uses [clang-tidy](https://clang.llvm.org/extra/clang-tidy/) for static analysis. A `.clang-tidy` configuration file in the repository root enables conservative checks from the `bugprone-*`, `performance-*`, and `modernize-use-nullptr` categories.
+
+**CI enforces static analysis** — pull requests that introduce new clang-tidy warnings will fail.
+
+### Running Locally
+
+If you are building inside the dependency container, run the Makefile target:
+
+```bash
+apptainer exec --bind "$(pwd):/src" dependency_image.sif bash -c "cd /src && make tidy"
+```
+
+Or run clang-tidy on individual files with the project's include paths:
+
+```bash
+clang-tidy src/props/MyFile.cpp -- -std=c++17 -DOMPI_SKIP_MPICXX \
+  -Isrc -Isrc/props \
+  -I${AMREX_HOME}/include -I${HYPRE_HOME}/include \
+  -I${HDF5_HOME}/include -I${TIFF_HOME}/include
+```
+
+---
 
 ## Citation
 

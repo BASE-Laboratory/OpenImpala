@@ -17,13 +17,12 @@ namespace OpenImpala { // Wrap in project namespace
  *
  * @warning Document the EXPECTED UNITS for every parameter (e.g., SI units).
  */
-struct CathodeParams
-{
+struct CathodeParams {
     // Example parameters - ADD ALL NECESSARY PARAMETERS HERE
-    amrex::Real volume_fraction_solid = 0.5; // [-] Volume fraction of active material
-    amrex::Real particle_radius = 5e-6;      // [m] Average particle radius
+    amrex::Real volume_fraction_solid = 0.5;          // [-] Volume fraction of active material
+    amrex::Real particle_radius = 5e-6;               // [m] Average particle radius
     amrex::Real active_material_conductivity = 100.0; // [S/m] Solid phase conductivity
-    amrex::Real max_concentration = 51000.0; // [mol/m^3] Max concentration in solid
+    amrex::Real max_concentration = 51000.0;          // [mol/m^3] Max concentration in solid
     // Add diffusivity, reaction rates, porosity (1-vf), Bruggeman coeffs, etc.
     // Add thermal parameters if needed.
     // Add stoichiometric coefficients/ranges if needed.
@@ -40,8 +39,7 @@ struct CathodeParams
  * ParmParse in the future) and writes them into formatted files compatible
  * with specific battery simulation platforms like DandeLiion and PyBamm.
  */
-class CathodeWrite
-{
+class CathodeWrite {
 public:
     /**
      * @brief Constructs the CathodeWrite object using provided parameters.
@@ -69,7 +67,8 @@ public:
      * @param filename The full path and name for the output .txt parameter file.
      * @return true if the file was written successfully, false otherwise (e.g., file open error).
      */
-    bool writeDandeLiionParameters(const std::string& filename) const; // Mark const if state doesn't change
+    bool writeDandeLiionParameters(
+        const std::string& filename) const; // Mark const if state doesn't change
 
     /**
      * @brief Writes a parameter file compatible with the PyBamm model.
@@ -77,7 +76,8 @@ public:
      * @param filename The full path and name for the output .csv parameter file.
      * @return true if the file was written successfully, false otherwise (e.g., file open error).
      */
-    bool writePyBammParameters(const std::string& filename) const; // Mark const if state doesn't change
+    bool
+    writePyBammParameters(const std::string& filename) const; // Mark const if state doesn't change
 
 private:
     // --- Member Variables ---

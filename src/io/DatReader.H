@@ -4,7 +4,7 @@
 #include <cstddef> // <--- ADD THIS LINE
 #include <vector>
 #include <string>
-#include <cstdint> // Use <cstdint> for fixed-width types
+#include <cstdint>   // Use <cstdint> for fixed-width types
 #include <stdexcept> // For exceptions in constructor
 
 #include <AMReX_REAL.H>
@@ -26,8 +26,7 @@ namespace OpenImpala {
  *
  * @warning Copying is disabled due to potentially large raw data size.
  */
-class DatReader
-{
+class DatReader {
 public:
     // --- Define the expected raw data type ---
     // IMPORTANT: Verify this matches the actual DAT file format!
@@ -113,12 +112,14 @@ public:
      * @param value_if_false The integer value to set otherwise.
      * @param mf Output amrex::iMultiFab reference to fill (must be defined).
      */
-    void threshold(DataType raw_threshold, int value_if_true, int value_if_false, amrex::iMultiFab& mf) const;
+    void threshold(DataType raw_threshold, int value_if_true, int value_if_false,
+                   amrex::iMultiFab& mf) const;
 
     /**
      * @brief Returns the index space Box covering the entire image domain.
      * The Box typically starts at (0,0,0).
-     * @return amrex::Box representing the full image dimensions. Returns empty box if data not read.
+     * @return amrex::Box representing the full image dimensions. Returns empty box if data not
+     * read.
      */
     amrex::Box box() const;
 
@@ -158,12 +159,12 @@ private:
     bool readDatFileInternal();
 
     // --- Member Variables ---
-    std::string m_filename;             /**< Filename of the source Dat file */
-    std::vector<DataType> m_raw;        /**< Vector containing the raw data (verify DataType!) */
-    int m_width = 0;                    /**< Width of the domain (X) */
-    int m_height = 0;                   /**< Height of the domain (Y) */
-    int m_depth = 0;                    /**< Depth of the domain (Z) */
-    bool m_is_read = false;             /**< Flag indicating if data has been successfully read */
+    std::string m_filename;      /**< Filename of the source Dat file */
+    std::vector<DataType> m_raw; /**< Vector containing the raw data (verify DataType!) */
+    int m_width = 0;             /**< Width of the domain (X) */
+    int m_height = 0;            /**< Height of the domain (Y) */
+    int m_depth = 0;             /**< Depth of the domain (Z) */
+    bool m_is_read = false;      /**< Flag indicating if data has been successfully read */
 
 }; // class DatReader
 
