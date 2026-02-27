@@ -159,7 +159,7 @@ bool RawReader::readRawFileInternal() {
 
     // Use long long for intermediate calculation to avoid overflow before size_t check
     long long total_voxels = static_cast<long long>(m_width) * m_height * m_depth;
-    long long expected_bytes_ll = total_voxels * bytes_per_voxel;
+    long long expected_bytes_ll = total_voxels * static_cast<long long>(bytes_per_voxel);
 
     if (expected_bytes_ll <= 0) {
         // This could happen if dimensions are large enough to overflow 'long long'
@@ -225,7 +225,8 @@ bool RawReader::readRawFileInternal() {
 
     // --- Read Data ---
     file.seekg(0, std::ios::beg); // Go back to the beginning to read
-    if (!file.read(reinterpret_cast<char*>(m_raw_bytes.data()), expected_bytes)) {
+    if (!file.read(reinterpret_cast<char*>(m_raw_bytes.data()),
+                   static_cast<std::streamsize>(expected_bytes))) {
         // Read failed, report stream state
         amrex::Print() << "Error: [RawReader] Failed to read " << expected_bytes
                        << " bytes from file: " << m_filename << "\n";

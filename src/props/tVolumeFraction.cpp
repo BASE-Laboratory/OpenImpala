@@ -327,14 +327,14 @@ int main(int argc, char* argv[]) {
         vf0.value(phase0_count_local, total_count0_local, true);         // Get local counts
 
         // Calculate VF from counts
-        amrex::Real actual_vf0_global =
-            (total_count0_global > 0)
-                ? static_cast<amrex::Real>(phase0_count_global) / total_count0_global
-                : 0.0;
-        amrex::Real actual_vf0_local =
-            (total_count0_local > 0)
-                ? static_cast<amrex::Real>(phase0_count_local) / total_count0_local
-                : 0.0;
+        amrex::Real actual_vf0_global = (total_count0_global > 0)
+                                            ? static_cast<amrex::Real>(phase0_count_global) /
+                                                  static_cast<amrex::Real>(total_count0_global)
+                                            : 0.0;
+        amrex::Real actual_vf0_local = (total_count0_local > 0)
+                                           ? static_cast<amrex::Real>(phase0_count_local) /
+                                                 static_cast<amrex::Real>(total_count0_local)
+                                           : 0.0;
 
         amrex::Print() << "  VF[" << phase0_id << "] (Global): " << actual_vf0_global << "\n";
         // *** ADDED: Print global counts ***
@@ -382,14 +382,14 @@ int main(int argc, char* argv[]) {
         vf1.value(phase1_count_local, total_count1_local, true);         // Local
 
         // Calculate VF
-        amrex::Real actual_vf1_global =
-            (total_count1_global > 0)
-                ? static_cast<amrex::Real>(phase1_count_global) / total_count1_global
-                : 0.0;
-        amrex::Real actual_vf1_local =
-            (total_count1_local > 0)
-                ? static_cast<amrex::Real>(phase1_count_local) / total_count1_local
-                : 0.0;
+        amrex::Real actual_vf1_global = (total_count1_global > 0)
+                                            ? static_cast<amrex::Real>(phase1_count_global) /
+                                                  static_cast<amrex::Real>(total_count1_global)
+                                            : 0.0;
+        amrex::Real actual_vf1_local = (total_count1_local > 0)
+                                           ? static_cast<amrex::Real>(phase1_count_local) /
+                                                 static_cast<amrex::Real>(total_count1_local)
+                                           : 0.0;
 
         amrex::Print() << "  VF[" << phase1_id << "] (Global): " << actual_vf1_global << "\n";
         // *** ADDED: Print global counts ***

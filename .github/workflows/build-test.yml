@@ -33,6 +33,61 @@ jobs:
           find src/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.c" \) \
             -exec clang-format --dry-run --Werror {} +
 
+  static-analysis:
+    name: Static Analysis (clang-tidy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Apptainer
+        uses: eWaterCycle/setup-apptainer@v2
+        with:
+          apptainer-version: 1.2.5
+
+      - name: Restore Dependency SIF Cache
+        id: cache-restore-sif-tidy
+        uses: actions/cache/restore@v4
+        with:
+          path: dependency_image.sif
+          key: ${{ runner.os }}-apptainer-sif-${{ hashFiles('containers/Singularity.deps.def') }}
+          restore-keys: |
+            ${{ runner.os }}-apptainer-sif-
+
+      - name: Build Dependency SIF Image (if cache miss)
+        id: build_sif_tidy
+        if: steps.cache-restore-sif-tidy.outputs.cache-hit != 'true'
+        run: |
+          sudo apptainer build --force dependency_image.sif containers/Singularity.deps.def
+
+      - name: Run clang-tidy
+        run: |
+          sudo apptainer exec --writable-tmpfs --bind $PWD:/src ./dependency_image.sif \
+            bash -c '
+              source /opt/rh/gcc-toolset-11/enable
+              dnf install -y clang-tools-extra 2>&1 | tail -3
+              echo "clang-tidy version: $(clang-tidy --version 2>&1 | head -1)"
+              cd /src
+              ERRORS=0
+              for f in $(find src/ -type f -name "*.cpp"); do
+                echo "Analyzing $f..."
+                clang-tidy "$f" \
+                  -warnings-as-errors="*" \
+                  -header-filter="src/.*" \
+                  -- -std=c++17 -fopenmp -DOMPI_SKIP_MPICXX \
+                  -Isrc -Isrc/props \
+                  -I/opt/amrex/25.03/include \
+                  -I/opt/hypre/v2.32.0/include \
+                  -I/opt/hdf5/1.12.3/include \
+                  -I/opt/libtiff/4.6.0/include || ERRORS=$((ERRORS+1))
+              done
+              if [ $ERRORS -ne 0 ]; then
+                echo "::error::clang-tidy found issues in $ERRORS file(s)."
+                exit 1
+              fi
+              echo "clang-tidy passed on all files."
+            '
+
   build-and-test-openimpala: # Renamed job for clarity
     runs-on: ubuntu-latest
 

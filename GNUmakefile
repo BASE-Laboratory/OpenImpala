@@ -91,7 +91,7 @@ VPATH := $(subst $(space),:,$(SRC_DIRS)):src
 # ============================================================
 # Main Targets
 # ============================================================
-.PHONY: all main tests test clean debug release
+.PHONY: all main tests test clean debug release tidy
 
 all: main tests
 
@@ -223,6 +223,19 @@ debug: all
 
 release: # Using defaults: -O3 defined initially
 release: all
+
+# Static analysis with clang-tidy (requires clang-tidy to be installed)
+CLANG_TIDY    ?= clang-tidy
+TIDY_FLAGS    := -- -std=c++17 -fopenmp -DOMPI_SKIP_MPICXX $(INCLUDE)
+SOURCES_CPP_ALL := $(SOURCES_IO_ALL) $(SOURCES_PRP_ALL)
+
+tidy:
+	@echo "--- Running clang-tidy ---"
+	@for src in $(SOURCES_CPP_ALL); do \
+	    echo "  Analyzing $$src..."; \
+	    $(CLANG_TIDY) $$src $(TIDY_FLAGS) || exit 1; \
+	done
+	@echo "--- clang-tidy complete ---"
 
 # Clean target (removes objects, module files, executables, dependency files)
 clean:

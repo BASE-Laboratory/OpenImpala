@@ -301,8 +301,8 @@ int main(int argc, char* argv[]) {
                 dm_full.define(ba_full);
                 mf_phase_full.define(ba_full, dm_full, 1, 1);
                 amrex::iMultiFab mf_temp_no_ghost(ba_full, dm_full, 1, 0);
-                reader.threshold(main_threshold_val, reader_phase_active, reader_phase_inactive,
-                                 mf_temp_no_ghost);
+                reader.threshold(static_cast<OpenImpala::DatReader::DataType>(main_threshold_val),
+                                 reader_phase_active, reader_phase_inactive, mf_temp_no_ghost);
                 amrex::Copy(mf_phase_full, mf_temp_no_ghost, 0, 0, 1, 0);
 
             } else if (ext == ".h5" || ext == ".hdf5") {

@@ -1,0 +1,23 @@
+# OpenImpala clang-tidy configuration
+# Conservative checks focused on bug prevention and performance.
+---
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  performance-*,
+  -performance-avoid-endl,
+  -performance-enum-size,
+  modernize-use-nullptr
+
+WarningsAsErrors: '*'
+
+HeaderFilterRegex: 'src/.*'
+
+CheckOptions:
+  - key: bugprone-argument-comment.StrictMode
+    value: false
+  - key: performance-unnecessary-value-param.AllowedTypes
+    value: ''
+...

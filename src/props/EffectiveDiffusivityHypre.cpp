@@ -42,7 +42,7 @@
 // HYPRE_CHECK macro
 #define HYPRE_CHECK(ierr)                                                                          \
     do {                                                                                           \
-        if (ierr != 0) {                                                                           \
+        if ((ierr) != 0) {                                                                         \
             char hypre_error_msg[256];                                                             \
             HYPRE_DescribeError(ierr, hypre_error_msg);                                            \
             amrex::Abort("HYPRE Error: " + std::string(hypre_error_msg) +                          \
@@ -115,8 +115,8 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
       m_phase_id(phase_id_arg), m_dir_solve(dir_of_chi_k), m_solvertype(solver_type), m_eps(1e-9),
       m_maxiter(1000), m_resultspath(resultspath), m_verbose(verbose_level),
       m_write_plotfile(write_plotfile_flag), m_mf_chi(ba, dm, numComponentsChi, 1),
-      m_mf_active_mask(ba, dm, 1, 1), m_grid(NULL), m_stencil(NULL), m_A(NULL), m_b(NULL),
-      m_x(NULL), m_num_iterations(-1),
+      m_mf_active_mask(ba, dm, 1, 1), m_grid(nullptr), m_stencil(nullptr), m_A(nullptr),
+      m_b(nullptr), m_x(nullptr), m_num_iterations(-1),
       m_final_res_norm(std::numeric_limits<amrex::Real>::quiet_NaN()), m_converged(false) {
     BL_PROFILE("EffectiveDiffusivityHypre::Constructor");
 
@@ -212,10 +212,10 @@ EffectiveDiffusivityHypre::~EffectiveDiffusivityHypre() {
         HYPRE_StructStencilDestroy(m_stencil);
     if (m_grid)
         HYPRE_StructGridDestroy(m_grid);
-    m_x = m_b = NULL;
-    m_A = NULL;
-    m_stencil = NULL;
-    m_grid = NULL;
+    m_x = m_b = nullptr;
+    m_A = nullptr;
+    m_stencil = nullptr;
+    m_grid = nullptr;
 }
 
 void EffectiveDiffusivityHypre::generateActiveMask() {
@@ -434,7 +434,7 @@ void EffectiveDiffusivityHypre::setupGrids() {
     }
     ierr = HYPRE_StructGridAssemble(m_grid);
     HYPRE_CHECK(ierr);
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_grid != NULL,
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_grid != nullptr,
                                      "m_grid is NULL after HYPRE_StructGridAssemble!");
 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
@@ -458,7 +458,7 @@ void EffectiveDiffusivityHypre::setupStencil() {
         HYPRE_CHECK(ierr);
     }
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_stencil != NULL, "m_stencil is NULL after HYPRE_StructStencilCreate/SetElement!");
+        m_stencil != nullptr, "m_stencil is NULL after HYPRE_StructStencilCreate/SetElement!");
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "  setupStencil: Complete." << std::endl;
     }
@@ -473,9 +473,9 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
                        << std::endl;
     }
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_grid != NULL, "m_grid is NULL in setupMatrixEquation. Call setupGrids first.");
+        m_grid != nullptr, "m_grid is NULL in setupMatrixEquation. Call setupGrids first.");
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_stencil != NULL, "m_stencil is NULL in setupMatrixEquation. Call setupStencil first.");
+        m_stencil != nullptr, "m_stencil is NULL in setupMatrixEquation. Call setupStencil first.");
 
     ierr = HYPRE_StructMatrixCreate(MPI_COMM_WORLD, m_grid, m_stencil, &m_A);
     HYPRE_CHECK(ierr);
@@ -643,7 +643,7 @@ bool EffectiveDiffusivityHypre::solve() {
 
     HYPRE_Int ierr = 0;
     HYPRE_StructSolver solver_hypre;
-    HYPRE_StructSolver precond = NULL;
+    HYPRE_StructSolver precond = nullptr;
 
     m_num_iterations = -1;
     m_final_res_norm = std::numeric_limits<amrex::Real>::quiet_NaN();
