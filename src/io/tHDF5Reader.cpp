@@ -7,8 +7,8 @@
 #include <fstream>   // For std::ifstream check
 #include <iomanip>   // For std::setw, std::setfill
 #include <ctime>
-#include <memory>    // For std::unique_ptr, std::make_unique
-#include <sstream>   // For std::stringstream
+#include <memory>  // For std::unique_ptr, std::make_unique
+#include <sstream> // For std::stringstream
 
 #include <AMReX.H>
 #include <AMReX_ParmParse.H> // For reading input files
@@ -23,10 +23,10 @@
 #include <AMReX_CoordSys.H>
 #include <AMReX_DistributionMapping.H>
 #include <AMReX_PlotFileUtil.H>
-#include <AMReX_Utility.H> // For amrex::UtilCreateDirectory, amrex::Concatenate
+#include <AMReX_Utility.H>            // For amrex::UtilCreateDirectory, amrex::Concatenate
 #include <AMReX_ParallelDescriptor.H> // For IOProcessor, Barrier, MyProc
-#include <AMReX_GpuLaunch.H> // Provides amrex::ParallelFor
-#include <AMReX_MFIter.H>    // Needed for MFIter
+#include <AMReX_GpuLaunch.H>          // Provides amrex::ParallelFor
+#include <AMReX_MFIter.H>             // Needed for MFIter
 
 
 // Output directory relative to executable location
@@ -34,8 +34,7 @@ const std::string test_output_dir = "tHDF5Reader_output";
 // Define Box size for breaking down domain (can also be read from inputs)
 const int BOX_SIZE = 32;
 
-int main (int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     amrex::Initialize(argc, argv);
 
     // Use a block for AMReX object lifetimes
@@ -49,7 +48,7 @@ int main (int argc, char* argv[])
 
 
         // --- ParmParse ---
-        { // Use ParmParse to query the database populated by Initialize
+        {                        // Use ParmParse to query the database populated by Initialize
             amrex::ParmParse pp; // No prefix - queries global database
 
             // These should now work if make test passes ./inputs argument
@@ -67,14 +66,16 @@ int main (int argc, char* argv[])
         {
             std::ifstream test_ifs(hdf5_filename);
             if (!test_ifs) {
-                amrex::Error("Error: Cannot open input HDF5 file specified by 'filename': " + hdf5_filename);
+                amrex::Error("Error: Cannot open input HDF5 file specified by 'filename': " +
+                             hdf5_filename);
             }
             // (Removed DEBUG print for successful open)
         }
 
         // --- Parameter Summary ---
         if (amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "Starting tHDF5Reader Test (Compiled: " << __DATE__ << " " << __TIME__ << ")\n";
+            amrex::Print() << "Starting tHDF5Reader Test (Compiled: " << __DATE__ << " " << __TIME__
+                           << ")\n";
             amrex::Print() << "Input HDF5 file (from inputs): " << hdf5_filename << "\n";
             amrex::Print() << "Input dataset path (from inputs): " << hdf5_dataset << "\n";
             amrex::Print() << "Threshold value: " << threshold_value << "\n";
@@ -112,14 +113,17 @@ int main (int argc, char* argv[])
         int actual_depth = reader_ptr->depth();
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "  Read dimensions: " << actual_width << "x" << actual_height << "x" << actual_depth << "\n";
+            amrex::Print() << "  Read dimensions: " << actual_width << "x" << actual_height << "x"
+                           << actual_depth << "\n";
             // (Removed skipping metadata checks message)
         }
 
-        if (actual_width != expected_width || actual_height != expected_height || actual_depth != expected_depth) {
+        if (actual_width != expected_width || actual_height != expected_height ||
+            actual_depth != expected_depth) {
             std::stringstream ss;
-            ss << "FAIL: Read dimensions (" << actual_width << "x" << actual_height << "x" << actual_depth
-               << ") do not match expected dimensions (" << expected_width << "x" << expected_height << "x" << expected_depth << ").";
+            ss << "FAIL: Read dimensions (" << actual_width << "x" << actual_height << "x"
+               << actual_depth << ") do not match expected dimensions (" << expected_width << "x"
+               << expected_height << "x" << expected_depth << ").";
             amrex::Error(ss.str());
         }
 
@@ -132,11 +136,11 @@ int main (int argc, char* argv[])
         amrex::Box domain_box = reader_ptr->box();
         // (Removed DEBUG print for geometry/boxarray setup)
         {
-            amrex::RealBox rb({AMREX_D_DECL(0.0, 0.0, 0.0)},
-                              {AMREX_D_DECL(amrex::Real(domain_box.length(0)),
-                                            amrex::Real(domain_box.length(1)),
-                                            amrex::Real(domain_box.length(2)))});
-            amrex::Array<int,AMREX_SPACEDIM> is_periodic{0, 0, 0};
+            amrex::RealBox rb(
+                {AMREX_D_DECL(0.0, 0.0, 0.0)},
+                {AMREX_D_DECL(amrex::Real(domain_box.length(0)), amrex::Real(domain_box.length(1)),
+                              amrex::Real(domain_box.length(2)))});
+            amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
             geom.define(domain_box, &rb, amrex::CoordSys::cartesian, is_periodic.data());
         }
         amrex::BoxArray ba(domain_box);
@@ -174,31 +178,31 @@ int main (int argc, char* argv[])
 
         // --- Optional: Write Plotfile ---
         if (write_plotfile) {
-             std::string plotfilename;
-             const std::string plotfile_prefix = "plt_thresh";
-             if (amrex::ParallelDescriptor::IOProcessor()) {
-                 if (!amrex::UtilCreateDirectory(test_output_dir, 0755)) {
-                     amrex::CreateDirectoryFailed(test_output_dir);
-                 }
-             }
-             amrex::ParallelDescriptor::Barrier(); // Ensure directory exists before proceeding
+            std::string plotfilename;
+            const std::string plotfile_prefix = "plt_thresh";
+            if (amrex::ParallelDescriptor::IOProcessor()) {
+                if (!amrex::UtilCreateDirectory(test_output_dir, 0755)) {
+                    amrex::CreateDirectoryFailed(test_output_dir);
+                }
+            }
+            amrex::ParallelDescriptor::Barrier(); // Ensure directory exists before proceeding
 
-             // Construct filename (e.g., plt_thresh_00000) - simpler example
-             plotfilename = amrex::Concatenate(test_output_dir + "/" + plotfile_prefix, 5, '0');
+            // Construct filename (e.g., plt_thresh_00000) - simpler example
+            plotfilename = amrex::Concatenate(test_output_dir + "/" + plotfile_prefix, 5, '0');
 
-             if (amrex::ParallelDescriptor::IOProcessor()) {
-                  amrex::Print() << "Writing plotfile: " << plotfilename << "\n";
-             }
-             // Need to copy iMultiFab to MultiFab for plotting
-             amrex::MultiFab mfv(ba, dm, 1, 0);
-             amrex::Copy(mfv, mf, 0, 0, 1, 0); // Copy component 0 from mf to mfv
+            if (amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << "Writing plotfile: " << plotfilename << "\n";
+            }
+            // Need to copy iMultiFab to MultiFab for plotting
+            amrex::MultiFab mfv(ba, dm, 1, 0);
+            amrex::Copy(mfv, mf, 0, 0, 1, 0); // Copy component 0 from mf to mfv
 
-             amrex::WriteSingleLevelPlotfile(plotfilename, mfv, {"phase_threshold"}, geom, 0.0, 0);
+            amrex::WriteSingleLevelPlotfile(plotfilename, mfv, {"phase_threshold"}, geom, 0.0, 0);
 
-             if (amrex::ParallelDescriptor::IOProcessor()) {
-                 amrex::Print() << "Plotfile writing complete.\n";
-             }
-         }
+            if (amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << "Plotfile writing complete.\n";
+            }
+        }
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "tHDF5Reader Test Completed Successfully.\n";

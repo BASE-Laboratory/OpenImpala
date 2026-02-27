@@ -31,8 +31,7 @@ namespace OpenImpala {
  * data needed for its owned patches. For true parallel I/O performance,
  * parallel HDF5 features would be needed.
  */
-class HDF5Reader
-{
+class HDF5Reader {
 public:
     /**
      * @brief Default constructor. Creates an empty reader. Use readFile() later.
@@ -48,7 +47,8 @@ public:
      *
      * @param filename Path to the HDF5 file.
      * @param hdf5dataset Full path to the 3D dataset within the HDF5 file (e.g., "/group/data").
-     * @throws std::runtime_error on HDF5 errors (file not found, dataset not found, invalid rank, etc.).
+     * @throws std::runtime_error on HDF5 errors (file not found, dataset not found, invalid rank,
+     * etc.).
      */
     explicit HDF5Reader(const std::string& filename, const std::string& hdf5dataset);
 
@@ -95,14 +95,15 @@ public:
     void threshold(double raw_threshold, amrex::iMultiFab& mf) const;
 
     /**
-     * @brief Reads data chunk-by-chunk into an iMultiFab based on thresholding with custom output values.
+     * @brief Reads data chunk-by-chunk into an iMultiFab based on thresholding with custom output
+     * values.
      *
      * Iterates through the patches of the output iMultiFab `mf`. For each patch,
      * reads the corresponding hyperslab from the HDF5 dataset and fills the
      * patch's FArrayBox based on the threshold comparison.
-     * Sets output cells to `value_if_true` if `native_value > raw_threshold`, else `value_if_false`.
-     * Assumes mf is defined on a box compatible with the dataset dimensions read previously.
-     * Handles conversion from native HDF5 type to double for comparison.
+     * Sets output cells to `value_if_true` if `native_value > raw_threshold`, else
+     * `value_if_false`. Assumes mf is defined on a box compatible with the dataset dimensions read
+     * previously. Handles conversion from native HDF5 type to double for comparison.
      *
      * @param raw_threshold The threshold value (compared against data converted to double).
      * @param value_if_true The integer value to set if condition is true.
@@ -110,11 +111,14 @@ public:
      * @param mf Output amrex::iMultiFab reference to fill (must be defined).
      * @throws std::runtime_error on HDF5 read errors or if metadata not read.
      */
-    void threshold(double raw_threshold, int value_if_true, int value_if_false, amrex::iMultiFab& mf) const;
+    void threshold(double raw_threshold, int value_if_true, int value_if_false,
+                   amrex::iMultiFab& mf) const;
 
     /**
-     * @brief Returns the index space Box covering the entire image domain [0, w-1] x [0, h-1] x [0, d-1].
-     * @return amrex::Box representing the full image dimensions. Returns empty box if metadata not read.
+     * @brief Returns the index space Box covering the entire image domain [0, w-1] x [0, h-1] x [0,
+     * d-1].
+     * @return amrex::Box representing the full image dimensions. Returns empty box if metadata not
+     * read.
      */
     amrex::Box box() const;
 
@@ -137,15 +141,20 @@ public:
     /**
      * @brief Reads all attributes from the HDF5 dataset.
      * Attempts to read attribute values as strings.
-     * @return A map of attribute names to string values. Returns empty map if no attributes or error.
+     * @return A map of attribute names to string values. Returns empty map if no attributes or
+     * error.
      */
     std::map<std::string, std::string> getAllAttributes() const;
 
     /** @brief Check if metadata has been successfully read. */
-    bool isRead() const { return m_is_read; }
+    bool isRead() const {
+        return m_is_read;
+    }
 
     /** @brief Get the native HDF5 data type detected in the dataset. */
-    H5::DataType getNativeDataType() const { return m_native_type; }
+    H5::DataType getNativeDataType() const {
+        return m_native_type;
+    }
 
 
 private:
@@ -159,19 +168,19 @@ private:
 
     // Template function to read a hyperslab and apply thresholding
     // Needed because the native type read from file varies.
-    template<typename T_Native>
-    void readAndThresholdFab(H5::DataSet& dataset, double raw_threshold,
-                             int value_if_true, int value_if_false,
-                             const amrex::Box& box, amrex::IArrayBox& fab) const;
+    template <typename T_Native>
+    void readAndThresholdFab(H5::DataSet& dataset, double raw_threshold, int value_if_true,
+                             int value_if_false, const amrex::Box& box,
+                             amrex::IArrayBox& fab) const;
 
     // --- Member Variables ---
-    std::string m_filename;         /**< Filename of the source HDF5 file */
-    std::string m_hdf5dataset;      /**< Path to the dataset within the HDF5 file */
-    int m_width = 0;                /**< Width of the domain (X) */
-    int m_height = 0;               /**< Height of the domain (Y) */
-    int m_depth = 0;                /**< Depth of the domain (Z) */
-    bool m_is_read = false;         /**< Flag indicating if *metadata* has been successfully read */
-    H5::DataType m_native_type;     /**< Detected native HDF5 data type of the dataset */
+    std::string m_filename;     /**< Filename of the source HDF5 file */
+    std::string m_hdf5dataset;  /**< Path to the dataset within the HDF5 file */
+    int m_width = 0;            /**< Width of the domain (X) */
+    int m_height = 0;           /**< Height of the domain (Y) */
+    int m_depth = 0;            /**< Depth of the domain (Z) */
+    bool m_is_read = false;     /**< Flag indicating if *metadata* has been successfully read */
+    H5::DataType m_native_type; /**< Detected native HDF5 data type of the dataset */
 
 }; // class HDF5Reader
 

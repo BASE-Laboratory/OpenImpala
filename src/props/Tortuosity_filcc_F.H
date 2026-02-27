@@ -31,18 +31,19 @@ extern "C" {
  * @param[in]    q_lo   Pointer to lower corner of the q array Fortran bounds (incl. ghosts).
  * @param[in]    q_hi   Pointer to upper corner of the q array Fortran bounds (incl. ghosts).
  * @param[in]    q_ncomp Pointer to the number of components in array q.
- * @param[in]    p      Pointer to the input phase array data (INTEGER). Component comp_phase is read.
+ * @param[in]    p      Pointer to the input phase array data (INTEGER). Component comp_phase is
+ * read.
  * @param[in]    p_lo   Pointer to lower corner of the p array Fortran bounds (incl. ghosts).
  * @param[in]    p_hi   Pointer to upper corner of the p array Fortran bounds (incl. ghosts).
  * @param[in]    p_ncomp Pointer to the number of components in array p.
  * @param[in]    domlo  Pointer to the domain lower corner indices (Fortran indexing).
  * @param[in]    domhi  Pointer to the domain upper corner indices (Fortran indexing).
- * @param[in]    phase  Pointer to the integer ID of the phase considered 'free'. (Passed by reference).
+ * @param[in]    phase  Pointer to the integer ID of the phase considered 'free'. (Passed by
+ * reference).
  */
 void tortuosity_filct(amrex_real* q, const int* q_lo, const int* q_hi, const int* q_ncomp,
                       const int* p, const int* p_lo, const int* p_hi, const int* p_ncomp,
-                      const int* domlo, const int* domhi,
-                      const int* phase);
+                      const int* domlo, const int* domhi, const int* phase);
 
 /**
  * @brief Removes isolated single cells (islands) from a phase field.
@@ -53,7 +54,8 @@ void tortuosity_filct(amrex_real* q, const int* q_lo, const int* q_hi, const int
  * Uses -1 to denote neighbors outside the physical domain defined by domlo/domhi.
  * Assumes Fortran 1-based component indexing (comp_phase=1).
  *
- * @param[in,out] q      Pointer to the phase array data (INTEGER). Component comp_phase is modified.
+ * @param[in,out] q      Pointer to the phase array data (INTEGER). Component comp_phase is
+ * modified.
  * @param[in]    q_lo   Pointer to lower corner of the q array Fortran bounds (incl. ghosts).
  * @param[in]    q_hi   Pointer to upper corner of the q array Fortran bounds (incl. ghosts).
  * @param[in]    ncomp  Pointer to the number of components in array q.
@@ -62,9 +64,8 @@ void tortuosity_filct(amrex_real* q, const int* q_lo, const int* q_hi, const int
  * @param[in]    domlo  Pointer to the physical domain lower corner indices.
  * @param[in]    domhi  Pointer to the physical domain upper corner indices.
  */
-void tortuosity_remspot(int* q, const int* q_lo, const int* q_hi, const int* ncomp,
-                        const int* bxlo, const int* bxhi,
-                        const int* domlo, const int* domhi);
+void tortuosity_remspot(int* q, const int* q_lo, const int* q_hi, const int* ncomp, const int* bxlo,
+                        const int* bxhi, const int* domlo, const int* domhi);
 
 
 //-----------------------------------------------------------------------
@@ -87,12 +88,12 @@ void tortuosity_remspot(int* q, const int* q_lo, const int* q_hi, const int* nco
  * @param[in]    domhi  Pointer to the domain upper corner indices.
  * @param[in]    vlo    Pointer to the boundary value for low faces. (Passed by reference).
  * @param[in]    vhi    Pointer to the boundary value for high faces. (Passed by reference).
- * @param[in]    bc     Pointer to the boundary condition flags array [Fortran: bc(amrex_spacedim, 2)].
+ * @param[in]    bc     Pointer to the boundary condition flags array [Fortran: bc(amrex_spacedim,
+ * 2)].
  */
 void tortuosity_filbc(amrex_real* q, const int* q_lo, const int* q_hi, const int* ncomp,
-                      const int* domlo, const int* domhi,
-                      const amrex_real* vlo, const amrex_real* vhi,
-                      const int* bc);
+                      const int* domlo, const int* domhi, const amrex_real* vlo,
+                      const amrex_real* vhi, const int* bc);
 
 /**
  * @brief Fills the initial condition for the potential field in array 'q'.
@@ -107,7 +108,8 @@ void tortuosity_filbc(amrex_real* q, const int* q_lo, const int* q_hi, const int
  * @param[in]    q_lo   Pointer to lower corner of the q array Fortran bounds.
  * @param[in]    q_hi   Pointer to upper corner of the q array Fortran bounds.
  * @param[in]    ncomp  Pointer to the number of components in array q.
- * @param[in]    p      Pointer to the input phase array data (INTEGER). Component comp_phase is read.
+ * @param[in]    p      Pointer to the input phase array data (INTEGER). Component comp_phase is
+ * read.
  * @param[in]    p_lo   Pointer to lower corner of the p array Fortran bounds.
  * @param[in]    p_hi   Pointer to upper corner of the p array Fortran bounds.
  * @param[in]    p_ncomp Pointer to the number of components in array p.
@@ -115,17 +117,18 @@ void tortuosity_filbc(amrex_real* q, const int* q_lo, const int* q_hi, const int
  * @param[in]    hi     Pointer to upper corner of the valid box indices to fill.
  * @param[in]    domlo  Pointer to the domain lower corner indices.
  * @param[in]    domhi  Pointer to the domain upper corner indices.
- * @param[in]    vlo    Pointer to the boundary value at the low end for interpolation. (Passed by reference).
- * @param[in]    vhi    Pointer to the boundary value at the high end for interpolation. (Passed by reference).
+ * @param[in]    vlo    Pointer to the boundary value at the low end for interpolation. (Passed by
+ * reference).
+ * @param[in]    vhi    Pointer to the boundary value at the high end for interpolation. (Passed by
+ * reference).
  * @param[in]    phase  Pointer to the integer ID of the phase to initialize. (Passed by reference).
- * @param[in]    dir    Pointer to the direction index (0=X, 1=Y, 2=Z) for interpolation. (Passed by reference).
+ * @param[in]    dir    Pointer to the direction index (0=X, 1=Y, 2=Z) for interpolation. (Passed by
+ * reference).
  */
 void tortuosity_filic(amrex_real* q, const int* q_lo, const int* q_hi, const int* ncomp,
                       const int* p, const int* p_lo, const int* p_hi, const int* p_ncomp,
-                      const int* lo, const int* hi,
-                      const int* domlo, const int* domhi,
-                      const amrex_real* vlo, const amrex_real* vhi,
-                      const int* phase,
+                      const int* lo, const int* hi, const int* domlo, const int* domhi,
+                      const amrex_real* vlo, const amrex_real* vhi, const int* phase,
                       const int* dir);
 
 

@@ -7,9 +7,9 @@
 #include <fstream>   // For std::ifstream check
 #include <iomanip>   // For std::setw, std::setfill
 #include <ctime>
-#include <memory>    // For std::unique_ptr
-#include <map>       // For mapping string to enum
-#include <limits>    // For numeric_limits // Ensure this is included
+#include <memory> // For std::unique_ptr
+#include <map>    // For mapping string to enum
+#include <limits> // For numeric_limits // Ensure this is included
 
 #include <AMReX.H>
 #include <AMReX_ParmParse.H> // For reading input files
@@ -24,9 +24,9 @@
 #include <AMReX_CoordSys.H>
 #include <AMReX_DistributionMapping.H>
 #include <AMReX_PlotFileUtil.H>
-#include <AMReX_Utility.H>      // For amrex::UtilCreateDirectory, amrex::Concatenate
+#include <AMReX_Utility.H>            // For amrex::UtilCreateDirectory, amrex::Concatenate
 #include <AMReX_ParallelDescriptor.H> // For IOProcessor, Barrier
-#include <AMReX_GpuLaunch.H> // Provides amrex::ParallelFor
+#include <AMReX_GpuLaunch.H>          // Provides amrex::ParallelFor
 
 
 // --- Test Configuration ---
@@ -73,8 +73,7 @@ OpenImpala::RawDataType StringToRawDataType(const std::string& type_str) {
 //================================================================
 // Main Function
 //================================================================
-int main (int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     amrex::Initialize(argc, argv);
 
     // Use a block for AMReX object lifetimes
@@ -113,15 +112,19 @@ int main (int argc, char* argv[])
         // --- Validate Mandatory Parameters ---
         OpenImpala::RawDataType data_type_enum = StringToRawDataType(datatype_str);
         if (data_type_enum == OpenImpala::RawDataType::UNKNOWN) {
-            amrex::Abort("Error: Invalid 'datatype' string specified in input file: " + datatype_str + "\n"
-                         "  Supported types: UINT8, INT8, UINT16_LE, UINT16_BE, INT16_LE, ..., FLOAT64_BE");
+            amrex::Abort(
+                "Error: Invalid 'datatype' string specified in input file: " + datatype_str +
+                "\n"
+                "  Supported types: UINT8, INT8, UINT16_LE, UINT16_BE, INT16_LE, ..., FLOAT64_BE");
         }
         if (width <= 0 || height <= 0 || depth <= 0) {
-            amrex::Abort("Error: Invalid dimensions specified in input file (W=" + std::to_string(width)
-                         + ", H=" + std::to_string(height) + ", D=" + std::to_string(depth) + "). Must be positive.");
+            amrex::Abort("Error: Invalid dimensions specified in input file (W=" +
+                         std::to_string(width) + ", H=" + std::to_string(height) +
+                         ", D=" + std::to_string(depth) + "). Must be positive.");
         }
         if (box_size <= 0) {
-             amrex::Abort("Error: Invalid 'box_size' specified (" + std::to_string(box_size) + "). Must be positive.");
+            amrex::Abort("Error: Invalid 'box_size' specified (" + std::to_string(box_size) +
+                         "). Must be positive.");
         }
 
 
@@ -138,8 +141,10 @@ int main (int argc, char* argv[])
         if (amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "\n--- tRawReader Test Configuration ---\n";
             amrex::Print() << "  Input RAW file:    " << raw_filename << "\n";
-            amrex::Print() << "  Input Dimensions:  " << width << "x" << height << "x" << depth << "\n";
-            amrex::Print() << "  Input DataType:    " << datatype_str << " (Enum: " << static_cast<int>(data_type_enum) << ")\n";
+            amrex::Print() << "  Input Dimensions:  " << width << "x" << height << "x" << depth
+                           << "\n";
+            amrex::Print() << "  Input DataType:    " << datatype_str
+                           << " (Enum: " << static_cast<int>(data_type_enum) << ")\n";
             amrex::Print() << "  Threshold value:   " << threshold_val << "\n";
             amrex::Print() << "  Box Size:          " << box_size << "\n";
             amrex::Print() << "  Write plot file:   " << (write_plotfile ? "Yes" : "No") << "\n";
@@ -150,7 +155,8 @@ int main (int argc, char* argv[])
         std::unique_ptr<OpenImpala::RawReader> reader_ptr;
         try {
             // Use the constructor that takes metadata and throws on failure
-            reader_ptr = std::make_unique<OpenImpala::RawReader>(raw_filename, width, height, depth, data_type_enum);
+            reader_ptr = std::make_unique<OpenImpala::RawReader>(raw_filename, width, height, depth,
+                                                                 data_type_enum);
 
         } catch (const std::exception& e) {
             // Catch errors during construction (e.g., file size mismatch, allocation fail)
@@ -159,7 +165,7 @@ int main (int argc, char* argv[])
 
         // --- Check Dimensions & Type Post-Read (should match input if successful) ---
         if (amrex::ParallelDescriptor::IOProcessor()) {
-             amrex::Print() << "Checking dimensions and data type reported by reader...\n";
+            amrex::Print() << "Checking dimensions and data type reported by reader...\n";
         }
         int actual_width = reader_ptr->width();
         int actual_height = reader_ptr->height();
@@ -167,28 +173,32 @@ int main (int argc, char* argv[])
         OpenImpala::RawDataType actual_type = reader_ptr->getDataType();
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
-             amrex::Print() << "  Reader dimensions: " << actual_width << "x" << actual_height << "x" << actual_depth << "\n";
-             amrex::Print() << "  Reader DataType:   " << static_cast<int>(actual_type) << "\n";
+            amrex::Print() << "  Reader dimensions: " << actual_width << "x" << actual_height << "x"
+                           << actual_depth << "\n";
+            amrex::Print() << "  Reader DataType:   " << static_cast<int>(actual_type) << "\n";
         }
 
         // These checks primarily verify the reader stored the input metadata correctly
         if (actual_width != width || actual_height != height || actual_depth != depth) {
-            amrex::Abort("FAIL: Reader dimensions do not match input dimensions provided to constructor.");
+            amrex::Abort(
+                "FAIL: Reader dimensions do not match input dimensions provided to constructor.");
         }
-         if (actual_type != data_type_enum) {
-            amrex::Abort("FAIL: Reader data type does not match input data type provided to constructor.");
-         }
+        if (actual_type != data_type_enum) {
+            amrex::Abort(
+                "FAIL: Reader data type does not match input data type provided to constructor.");
+        }
         if (amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  Dimensions and data type confirmed.\n";
         }
         // TODO: Add tests for RawReader getValue(i,j,k) against known data points if available.
-        // TODO: Add separate tests for error conditions (bad file path, size mismatch, unsupported type).
+        // TODO: Add separate tests for error conditions (bad file path, size mismatch, unsupported
+        // type).
 
         // --- Setup AMReX Data Structures ---
         amrex::Geometry geom;
         amrex::Box domain_box = reader_ptr->box();
         if (domain_box.isEmpty()) {
-             amrex::Abort("FAIL: Reader returned an empty box after successful read.");
+            amrex::Abort("FAIL: Reader returned an empty box after successful read.");
         }
         {
             // Use physical domain size equal to index space for simplicity here
@@ -196,7 +206,7 @@ int main (int argc, char* argv[])
                               {AMREX_D_DECL(static_cast<amrex::Real>(actual_width),
                                             static_cast<amrex::Real>(actual_height),
                                             static_cast<amrex::Real>(actual_depth))});
-            amrex::Array<int,AMREX_SPACEDIM> is_periodic{AMREX_D_DECL(0, 0, 0)}; // Non-periodic
+            amrex::Array<int, AMREX_SPACEDIM> is_periodic{AMREX_D_DECL(0, 0, 0)}; // Non-periodic
             // Setup static geometry data
             amrex::Geometry::Setup(&rb, 0, is_periodic.data());
             // Define the BoundingBox object
@@ -211,7 +221,7 @@ int main (int argc, char* argv[])
 
         // --- Test Thresholding ---
         if (amrex::ParallelDescriptor::IOProcessor()) {
-             amrex::Print() << "Performing threshold > " << threshold_val << "...\n";
+            amrex::Print() << "Performing threshold > " << threshold_val << "...\n";
         }
         try {
             // Use threshold(double, iMultiFab) overload for 1/0 output
@@ -228,55 +238,58 @@ int main (int argc, char* argv[])
         int max_val = mf.max(0);
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
-             amrex::Print() << "  Threshold result min value (global): " << min_val << "\n";
-             amrex::Print() << "  Threshold result max value (global): " << max_val << "\n";
+            amrex::Print() << "  Threshold result min value (global): " << min_val << "\n";
+            amrex::Print() << "  Threshold result max value (global): " << max_val << "\n";
 
-             // Check if result is strictly binary {0, 1} and both are present
-             if (min_val == 0 && max_val == 1) {
-                 amrex::Print() << "  Threshold value range looks plausible (0 and 1 found).\n";
-             } else if (min_val == 0 && max_val == 0) {
-                 amrex::Print() << "Warning: Thresholded data is uniformly 0. Check threshold/data.\n";
-             } else if (min_val == 1 && max_val == 1) {
-                 amrex::Print() << "Warning: Thresholded data is uniformly 1. Check threshold/data.\n";
-             } else {
-                 // This case includes min_val being -1 (if some cells weren't set) or other unexpected values
-                 amrex::Abort("FAIL: Thresholded data min/max (" + std::to_string(min_val) + "/"
-                              + std::to_string(max_val) + ") not {0, 1}. Check threshold value ("
-                              + std::to_string(threshold_val) + ") or sample data range/content.");
-             }
+            // Check if result is strictly binary {0, 1} and both are present
+            if (min_val == 0 && max_val == 1) {
+                amrex::Print() << "  Threshold value range looks plausible (0 and 1 found).\n";
+            } else if (min_val == 0 && max_val == 0) {
+                amrex::Print()
+                    << "Warning: Thresholded data is uniformly 0. Check threshold/data.\n";
+            } else if (min_val == 1 && max_val == 1) {
+                amrex::Print()
+                    << "Warning: Thresholded data is uniformly 1. Check threshold/data.\n";
+            } else {
+                // This case includes min_val being -1 (if some cells weren't set) or other
+                // unexpected values
+                amrex::Abort("FAIL: Thresholded data min/max (" + std::to_string(min_val) + "/" +
+                             std::to_string(max_val) + ") not {0, 1}. Check threshold value (" +
+                             std::to_string(threshold_val) + ") or sample data range/content.");
+            }
         }
 
         // --- Optional: Write Plotfile ---
         if (write_plotfile) {
-             if (amrex::ParallelDescriptor::IOProcessor()) {
-                 amrex::Print() << "Writing plot file...\n";
-             }
+            if (amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << "Writing plot file...\n";
+            }
 
-             // Create output directory relative to executable location
-             if (amrex::ParallelDescriptor::IOProcessor()) {
-                 if (!amrex::UtilCreateDirectory(test_output_dir, 0755)) {
-                     // Use CreateDirectoryFailed to potentially abort or handle error
-                     amrex::CreateDirectoryFailed(test_output_dir);
-                 }
-             }
-             // Ensure all processors wait until directory is created
-             amrex::ParallelDescriptor::Barrier();
+            // Create output directory relative to executable location
+            if (amrex::ParallelDescriptor::IOProcessor()) {
+                if (!amrex::UtilCreateDirectory(test_output_dir, 0755)) {
+                    // Use CreateDirectoryFailed to potentially abort or handle error
+                    amrex::CreateDirectoryFailed(test_output_dir);
+                }
+            }
+            // Ensure all processors wait until directory is created
+            amrex::ParallelDescriptor::Barrier();
 
-             // Get datetime string for unique filename
-             std::string datetime_str = amrex::UniqueString(); // Use AMReX helper
-             std::string plotfilename = test_output_dir + "/rawreadertest_" + datetime_str;
+            // Get datetime string for unique filename
+            std::string datetime_str = amrex::UniqueString(); // Use AMReX helper
+            std::string plotfilename = test_output_dir + "/rawreadertest_" + datetime_str;
 
-             // Copy integer data to float MultiFab for plotting
-             amrex::MultiFab mfv(ba, dm, 1, 0);
-             // Use amrex::Copy which handles parallelism internally
-             amrex::Copy(mfv, mf, 0, 0, 1, 0);
+            // Copy integer data to float MultiFab for plotting
+            amrex::MultiFab mfv(ba, dm, 1, 0);
+            // Use amrex::Copy which handles parallelism internally
+            amrex::Copy(mfv, mf, 0, 0, 1, 0);
 
-             // Write the plotfile
-             amrex::WriteSingleLevelPlotfile(plotfilename, mfv, {"phase_threshold"}, geom, 0.0, 0);
+            // Write the plotfile
+            amrex::WriteSingleLevelPlotfile(plotfilename, mfv, {"phase_threshold"}, geom, 0.0, 0);
 
-             if (amrex::ParallelDescriptor::IOProcessor()) {
-                 amrex::Print() << "  Plot file written to: " << plotfilename << "\n";
-             }
+            if (amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << "  Plot file written to: " << plotfilename << "\n";
+            }
         }
 
         if (amrex::ParallelDescriptor::IOProcessor()) {

@@ -6,11 +6,7 @@
 namespace OpenImpala { // Wrap definitions in a project-specific namespace
 
 /** @brief Defines cardinal directions for calculations. */
-enum class Direction {
-    X = 0,
-    Y = 1,
-    Z = 2
-};
+enum class Direction { X = 0, Y = 1, Z = 2 };
 
 /**
  * @brief Cell types identifying the role of a cell within the domain.
@@ -44,8 +40,7 @@ enum class CellType {
  * often by solving a transport equation (like Laplace's equation for diffusion)
  * on a representation of the structure.
  */
-class Tortuosity
-{
+class Tortuosity {
 public:
     /**
      * @brief Virtual destructor (essential for base classes with virtual functions).

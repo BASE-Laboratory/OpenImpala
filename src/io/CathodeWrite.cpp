@@ -3,23 +3,22 @@
 #include <AMReX_REAL.H>
 #include <AMReX_Print.H> // For error/warning messages
 
-#include <fstream>   // For std::ofstream
-#include <string>    // For std::string
-#include <iomanip>   // For std::setprecision, std::scientific, std::fixed
-#include <cmath>     // For std::abs
-#include <limits>    // For std::numeric_limits
+#include <fstream> // For std::ofstream
+#include <string>  // For std::string
+#include <iomanip> // For std::setprecision, std::scientific, std::fixed
+#include <cmath>   // For std::abs
+#include <limits>  // For std::numeric_limits
 
 namespace OpenImpala {
 
 // Constructor: Initializes members from the CathodeParams struct
-CathodeWrite::CathodeWrite(const CathodeParams& params) :
-    // Initialize members by copying from the params struct
-    m_vf_solid(params.volume_fraction_solid),
-    m_particle_radius(params.particle_radius),
-    m_conductivity(params.active_material_conductivity),
-    m_max_concentration(params.max_concentration)
-    // Add initializers for ALL other necessary member variables here
-    // e.g., m_some_other_param(params.some_other_param)
+CathodeWrite::CathodeWrite(const CathodeParams& params)
+    : // Initialize members by copying from the params struct
+      m_vf_solid(params.volume_fraction_solid), m_particle_radius(params.particle_radius),
+      m_conductivity(params.active_material_conductivity),
+      m_max_concentration(params.max_concentration)
+// Add initializers for ALL other necessary member variables here
+// e.g., m_some_other_param(params.some_other_param)
 {
     // Optional: Add validation for parameters if needed
     if (m_vf_solid < 0.0 || m_vf_solid > 1.0) {
@@ -32,8 +31,7 @@ CathodeWrite::CathodeWrite(const CathodeParams& params) :
 }
 
 // Write DandeLiion parameter file
-bool CathodeWrite::writeDandeLiionParameters(const std::string& filename) const
-{
+bool CathodeWrite::writeDandeLiionParameters(const std::string& filename) const {
     std::ofstream myfile;
     myfile.open(filename);
 
@@ -69,29 +67,37 @@ bool CathodeWrite::writeDandeLiionParameters(const std::string& filename) const
     myfile << "# Units should correspond to DandeLiion expectations.     #\n";
     myfile << "###########################################################\n";
     myfile << "\n";
-    // Mesh nodes - these seem like simulation settings, not material params? Keep default or make configurable?
+    // Mesh nodes - these seem like simulation settings, not material params? Keep default or make
+    // configurable?
     myfile << "N = 55                # Number of mesh nodes in liquid (Example value)\n";
     myfile << "M = 50                # Number of mesh nodes in solid (Example value)\n";
     myfile << "\n";
     // Use member variables instead of hardcoded values - ADD ALL RELEVANT PARAMS
-    // myfile << "L = 54.0e-6           # Electrode thickness, m (Get from params?)\n"; // Example if thickness is needed
+    // myfile << "L = 54.0e-6           # Electrode thickness, m (Get from params?)\n"; // Example
+    // if thickness is needed
     myfile << "R = " << m_particle_radius << "          # Particle radius, m\n";
     myfile << "\n";
-    // myfile << "act     = 0.58            # Active part of the electrode (Get from params?)\n"; // Example
-    // myfile << "A       = 8.585e-3        # Electrode cross-sectional area, m^2 (Get from params?)\n"; // Example
-    myfile << "el      = " << porosity << "        # Volume fraction of electrolyte, Calculated (1 - vf_solid)\n";
-    myfile << "bet     = " << bet_surface_area << "  # BET surface area, m^-1 (Verify formula: 3*vf_solid/R ?)\n";
-    myfile << "B       = " << permeability_factor_B << "   # Permeability factor of electrolyte (Verify formula: el/1.94 ?)\n";
-    myfile << "cmax    = " << m_max_concentration << "   # Maximum concentration of Li ions in solid, mol m^-3\n";
+    // myfile << "act     = 0.58            # Active part of the electrode (Get from params?)\n"; //
+    // Example myfile << "A       = 8.585e-3        # Electrode cross-sectional area, m^2 (Get from
+    // params?)\n"; // Example
+    myfile << "el      = " << porosity
+           << "        # Volume fraction of electrolyte, Calculated (1 - vf_solid)\n";
+    myfile << "bet     = " << bet_surface_area
+           << "  # BET surface area, m^-1 (Verify formula: 3*vf_solid/R ?)\n";
+    myfile << "B       = " << permeability_factor_B
+           << "   # Permeability factor of electrolyte (Verify formula: el/1.94 ?)\n";
+    myfile << "cmax    = " << m_max_concentration
+           << "   # Maximum concentration of Li ions in solid, mol m^-3\n";
     myfile << "sigma_s = " << m_conductivity << "    # Solid conductivity, S m^-1\n";
     // ... ADD ALL OTHER REQUIRED PARAMETERS FROM MEMBER VARIABLES ...
     myfile << "###########################################################\n";
 
     // Check for write errors before returning
     if (!myfile.good()) {
-         amrex::Print() << "Error: An error occurred during file write operation for " << filename << "\n";
-         myfile.close(); // Attempt to close
-         return false;
+        amrex::Print() << "Error: An error occurred during file write operation for " << filename
+                       << "\n";
+        myfile.close(); // Attempt to close
+        return false;
     }
 
     myfile.close(); // Optional explicit close
@@ -100,8 +106,7 @@ bool CathodeWrite::writeDandeLiionParameters(const std::string& filename) const
 }
 
 // Write PyBamm parameter file
-bool CathodeWrite::writePyBammParameters(const std::string& filename) const
-{
+bool CathodeWrite::writePyBammParameters(const std::string& filename) const {
     std::ofstream myfile;
     myfile.open(filename);
 
@@ -121,7 +126,8 @@ bool CathodeWrite::writePyBammParameters(const std::string& filename) const
     if (m_particle_radius > std::numeric_limits<amrex::Real>::epsilon()) { // Avoid division by zero
         surface_area_density = 3.0 * m_vf_solid / m_particle_radius;
     } else {
-        amrex::Warning("PyBammWrite: Particle radius is near zero, cannot calculate surface area density.");
+        amrex::Warning(
+            "PyBammWrite: Particle radius is near zero, cannot calculate surface area density.");
     }
 
     // Set output formatting (PyBamm CSV might prefer fixed point for some values)
@@ -136,24 +142,35 @@ bool CathodeWrite::writePyBammParameters(const std::string& filename) const
     myfile << ",,,\n";
     myfile << "# Electrode properties,,,\n";
     // Use member variables instead of hardcoded values - ADD ALL RELEVANT PARAMS
-    myfile << "Positive electrode conductivity [S.m-1]," << m_conductivity << ",OpenImpala Calculated Parameter,\n"; // Example
-    myfile << "Maximum concentration in positive electrode [mol.m-3]," << m_max_concentration << ",OpenImpala Calculated Parameter,\n"; // Example
-    myfile << "Positive electrode diffusivity [m2.s-1],[function]lico2_diffusivity_Dualfoil1998,,Requires Function Definition in PyBamm\n"; // Example: Keep function defs if applicable
+    myfile << "Positive electrode conductivity [S.m-1]," << m_conductivity
+           << ",OpenImpala Calculated Parameter,\n"; // Example
+    myfile << "Maximum concentration in positive electrode [mol.m-3]," << m_max_concentration
+           << ",OpenImpala Calculated Parameter,\n"; // Example
+    myfile << "Positive electrode diffusivity "
+              "[m2.s-1],[function]lico2_diffusivity_Dualfoil1998,,Requires Function Definition in "
+              "PyBamm\n"; // Example: Keep function defs if applicable
     myfile << "Positive electrode OCP [V],[function]lico2_ocp_Dualfoil1998,,\n";
     myfile << ",,,\n";
     myfile << "# Microstructure,,,\n";
-    myfile << "Positive electrode porosity," << porosity << ",OpenImpala Calculated Parameter,electrolyte volume fraction (1 - vf_solid)\n";
-    myfile << "Positive electrode active material volume fraction," << m_vf_solid << ",OpenImpala Calculated Parameter,\n"; // Assuming vf_solid was input
-    myfile << "Positive particle radius [m]," << m_particle_radius << ",OpenImpala Calculated Parameter,\n";
-    myfile << "Positive electrode surface area density [m-1]," << surface_area_density << ",OpenImpala Calculated Parameter,Calculated as 3*vf_solid/R (Verify formula)\n";
-    // Assume Bruggeman coeffs are members initialized from CathodeParams, e.g., m_brugg_elec, m_brugg_solid
-    // myfile << "Positive electrode Bruggeman coefficient (electrolyte)," << m_brugg_elec << ",OpenImpala Calculated Parameter,\n";
-    // myfile << "Positive electrode Bruggeman coefficient (electrode)," << m_brugg_solid << ",OpenImpala Calculated Parameter,\n";
+    myfile << "Positive electrode porosity," << porosity
+           << ",OpenImpala Calculated Parameter,electrolyte volume fraction (1 - vf_solid)\n";
+    myfile << "Positive electrode active material volume fraction," << m_vf_solid
+           << ",OpenImpala Calculated Parameter,\n"; // Assuming vf_solid was input
+    myfile << "Positive particle radius [m]," << m_particle_radius
+           << ",OpenImpala Calculated Parameter,\n";
+    myfile << "Positive electrode surface area density [m-1]," << surface_area_density
+           << ",OpenImpala Calculated Parameter,Calculated as 3*vf_solid/R (Verify formula)\n";
+    // Assume Bruggeman coeffs are members initialized from CathodeParams, e.g., m_brugg_elec,
+    // m_brugg_solid myfile << "Positive electrode Bruggeman coefficient (electrolyte)," <<
+    // m_brugg_elec << ",OpenImpala Calculated Parameter,\n"; myfile << "Positive electrode
+    // Bruggeman coefficient (electrode)," << m_brugg_solid << ",OpenImpala Calculated
+    // Parameter,\n";
     myfile << ",,,\n";
     myfile << "# Interfacial reactions,,,\n";
     myfile << "Positive electrode cation signed stoichiometry,-1,,\n"; // Usually fixed
-    myfile << "Positive electrode electrons in reaction,1,,\n"; // Usually fixed
-    // myfile << "Positive electrode reference exchange-current density [A.m-2(m3.mol)1.5]," << m_exchange_current << ",OpenImpala Calculated Parameter,...\n"; // Example
+    myfile << "Positive electrode electrons in reaction,1,,\n";        // Usually fixed
+    // myfile << "Positive electrode reference exchange-current density [A.m-2(m3.mol)1.5]," <<
+    // m_exchange_current << ",OpenImpala Calculated Parameter,...\n"; // Example
     // ... Add ALL OTHER required parameters using member variables ...
     myfile << ",,,\n";
     // ... Other sections (Density, Thermal, Activation Energies) using member variables ...
@@ -162,9 +179,10 @@ bool CathodeWrite::writePyBammParameters(const std::string& filename) const
 
     // Check for write errors before returning
     if (!myfile.good()) {
-         amrex::Print() << "Error: An error occurred during file write operation for " << filename << "\n";
-         myfile.close(); // Attempt to close
-         return false;
+        amrex::Print() << "Error: An error occurred during file write operation for " << filename
+                       << "\n";
+        myfile.close(); // Attempt to close
+        return false;
     }
 
     myfile.close(); // Optional explicit close

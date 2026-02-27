@@ -41,8 +41,7 @@ namespace OpenImpala {
  * the first sample is used during thresholding.
  * @warning Copy operations disabled.
  */
-class TiffReader
-{
+class TiffReader {
 public:
     /**
      * @brief Default constructor. Creates an empty reader. Use readFile() or readFileSequence().
@@ -50,7 +49,8 @@ public:
     TiffReader();
 
     /**
-     * @brief Constructs a TiffReader, reads metadata from a single (potentially multi-directory) TIFF file.
+     * @brief Constructs a TiffReader, reads metadata from a single (potentially multi-directory)
+     * TIFF file.
      *
      * Reads dimensions and data type info on rank 0 and broadcasts.
      * Does NOT read pixel data. Throws on error.
@@ -71,12 +71,8 @@ public:
      * @param suffix File extension including dot (e.g., ".tif").
      * @throws std::runtime_error on file open/metadata read errors or inconsistent metadata.
      */
-    TiffReader(
-        const std::string& base_pattern,
-        int num_files,
-        int start_index = 0,
-        int digits = 1,
-        const std::string& suffix = ".tif");
+    TiffReader(const std::string& base_pattern, int num_files, int start_index = 0, int digits = 1,
+               const std::string& suffix = ".tif");
 
     /**
      * @brief Virtual default destructor.
@@ -114,12 +110,8 @@ public:
      * @param suffix File extension including dot (e.g., ".tif").
      * @return true on success (metadata broadcast), false otherwise. Aborts on critical errors.
      */
-    bool readFileSequence(
-        const std::string& base_pattern,
-        int num_files,
-        int start_index = 0,
-        int digits = 1,
-        const std::string& suffix = ".tif");
+    bool readFileSequence(const std::string& base_pattern, int num_files, int start_index = 0,
+                          int digits = 1, const std::string& suffix = ".tif");
 
     /**
      * @brief Reads data chunk-by-chunk into an iMultiFab based on thresholding (output 1/0).
@@ -129,7 +121,8 @@ public:
      * from the TIFF file(s) and fills the patch's FArrayBox based on the threshold.
      * Sets output cells to 1 if `native_value > raw_threshold`, else 0.
      * Requires metadata to have been read successfully first via readFile() or readFileSequence().
-     * Handles conversion from native TIFF type to double for comparison. Uses first sample if SPP > 1.
+     * Handles conversion from native TIFF type to double for comparison. Uses first sample if SPP
+     * > 1.
      *
      * @param raw_threshold The threshold value (compared against data converted to double).
      * @param mf Output amrex::iMultiFab reference to fill (must be defined and distributed).
@@ -138,14 +131,16 @@ public:
     void threshold(double raw_threshold, amrex::iMultiFab& mf) const;
 
     /**
-     * @brief Reads data chunk-by-chunk into an iMultiFab based on thresholding with custom output values.
+     * @brief Reads data chunk-by-chunk into an iMultiFab based on thresholding with custom output
+     * values.
      *
      * Performs distributed reading. Iterates through the patches (`MFIter`) of the output
      * iMultiFab `mf`. For each patch, reads the corresponding strips or tiles
      * from the TIFF file(s) and fills the patch's FArrayBox based on the threshold.
-     * Sets output cells to `value_if_true` if `native_value > raw_threshold`, else `value_if_false`.
-     * Requires metadata to have been read successfully first via readFile() or readFileSequence().
-     * Handles conversion from native TIFF type to double for comparison. Uses first sample if SPP > 1.
+     * Sets output cells to `value_if_true` if `native_value > raw_threshold`, else
+     * `value_if_false`. Requires metadata to have been read successfully first via readFile() or
+     * readFileSequence(). Handles conversion from native TIFF type to double for comparison. Uses
+     * first sample if SPP > 1.
      *
      * @param raw_threshold The threshold value (compared against data converted to double).
      * @param value_if_true Integer value if condition is true.
@@ -153,10 +148,12 @@ public:
      * @param mf Output amrex::iMultiFab reference to fill (must be defined and distributed).
      * @throws std::runtime_error on read errors or if metadata not ready.
      */
-    void threshold(double raw_threshold, int value_if_true, int value_if_false, amrex::iMultiFab& mf) const;
+    void threshold(double raw_threshold, int value_if_true, int value_if_false,
+                   amrex::iMultiFab& mf) const;
 
     // --- Metadata Getters ---
-    /** @brief Returns the index space Box covering the entire image domain [0, w-1]x[0, h-1]x[0, d-1]. */
+    /** @brief Returns the index space Box covering the entire image domain [0, w-1]x[0, h-1]x[0,
+     * d-1]. */
     amrex::Box box() const;
 
     /** @brief Get width (X-dimension) in pixels/voxels. Requires metadata to be read. */
@@ -168,48 +165,52 @@ public:
 
     /** @brief Get bits per sample (e.g., 8, 16, 32). Requires metadata to be read. */
     int bitsPerSample() const;
-    /** @brief Get sample format (e.g., SAMPLEFORMAT_UINT, SAMPLEFORMAT_INT, SAMPLEFORMAT_IEEEFP from tiff.h). Requires metadata to be read. */
+    /** @brief Get sample format (e.g., SAMPLEFORMAT_UINT, SAMPLEFORMAT_INT, SAMPLEFORMAT_IEEEFP
+     * from tiff.h). Requires metadata to be read. */
     int sampleFormat() const;
-    /** @brief Get samples per pixel (e.g., 1 for grayscale, 3 for RGB). Requires metadata to be read. */
+    /** @brief Get samples per pixel (e.g., 1 for grayscale, 3 for RGB). Requires metadata to be
+     * read. */
     int samplesPerPixel() const;
 
-    /** @brief Get TIFF FillOrder tag value (e.g., 1=MSB->LSB, 2=LSB->MSB). Requires metadata to be read. */
-    uint16_t getFillOrder() const { return m_fill_order; } // <<< NEW GETTER ADDED HERE <<<
+    /** @brief Get TIFF FillOrder tag value (e.g., 1=MSB->LSB, 2=LSB->MSB). Requires metadata to be
+     * read. */
+    uint16_t getFillOrder() const {
+        return m_fill_order;
+    } // <<< NEW GETTER ADDED HERE <<<
 
     /** @brief Check if metadata has been successfully read and broadcast. */
-    bool isRead() const { return m_is_read; }
+    bool isRead() const {
+        return m_is_read;
+    }
 
 
 private:
     // --- Member Variables ---
     // Source Info
-    std::string m_filename;       /**< Filename (single stack) */
-    std::string m_base_pattern;   /**< Base pattern for sequence */
-    std::string m_suffix;         /**< Suffix for sequence */
-    int m_start_index = 0;        /**< Starting index for sequence */
-    int m_digits = 1;             /**< Number of digits for sequence padding */
-    bool m_is_sequence = false;   /**< Flag indicating if source is a sequence */
+    std::string m_filename;     /**< Filename (single stack) */
+    std::string m_base_pattern; /**< Base pattern for sequence */
+    std::string m_suffix;       /**< Suffix for sequence */
+    int m_start_index = 0;      /**< Starting index for sequence */
+    int m_digits = 1;           /**< Number of digits for sequence padding */
+    bool m_is_sequence = false; /**< Flag indicating if source is a sequence */
 
     // Domain/Metadata Info (Read by Rank 0, Broadcast to all)
-    int m_width = 0;              /**< Width of the domain (X) */
-    int m_height = 0;             /**< Height of the domain (Y) */
-    int m_depth = 0;              /**< Depth of the domain (Z) */
-    bool m_is_read = false;       /**< Flag indicating if metadata has been successfully read and broadcast */
+    int m_width = 0;  /**< Width of the domain (X) */
+    int m_height = 0; /**< Height of the domain (Y) */
+    int m_depth = 0;  /**< Depth of the domain (Z) */
+    bool m_is_read =
+        false; /**< Flag indicating if metadata has been successfully read and broadcast */
 
     // TIFF Format Info (Read by Rank 0, Broadcast to all)
-    uint16_t m_bits_per_sample = 0; /**< TIFFTAG_BITSPERSAMPLE */
-    uint16_t m_sample_format = 0;   /**< TIFFTAG_SAMPLEFORMAT */
-    uint16_t m_samples_per_pixel = 0;/**< TIFFTAG_SAMPLESPERPIXEL */
-    uint16_t m_fill_order; // Initialized in constructor(s)
+    uint16_t m_bits_per_sample = 0;   /**< TIFFTAG_BITSPERSAMPLE */
+    uint16_t m_sample_format = 0;     /**< TIFFTAG_SAMPLEFORMAT */
+    uint16_t m_samples_per_pixel = 0; /**< TIFFTAG_SAMPLESPERPIXEL */
+    uint16_t m_fill_order;            // Initialized in constructor(s)
 
     // Private helper function implementing the core distributed read logic
     // Called by the public threshold methods.
-    void readDistributedIntoFab(
-        amrex::iMultiFab& dest_mf,
-        int value_if_true,
-        int value_if_false,
-        double raw_threshold
-    ) const;
+    void readDistributedIntoFab(amrex::iMultiFab& dest_mf, int value_if_true, int value_if_false,
+                                double raw_threshold) const;
 
 
 }; // class TiffReader

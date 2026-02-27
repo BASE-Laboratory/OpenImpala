@@ -30,23 +30,21 @@ namespace OpenImpala {
  * Solves a diffusion equation (-Div(Grad(phi)) = 0 with Dirichlet BCs)
  * on a masked subset of the domain derived from phase data, using HYPRE's
  * structured-grid solvers (PFMG, SMG, Krylov methods) to find the potential field.
- * Tortuosity is calculated from the resulting flux and **active** volume fraction, // <-- Doc update
- * including checks for solver convergence and flux conservation.
+ * Tortuosity is calculated from the resulting flux and **active** volume fraction, // <-- Doc
+ * update including checks for solver convergence and flux conservation.
  */
-class TortuosityHypre : public OpenImpala::Tortuosity
-{
+class TortuosityHypre : public OpenImpala::Tortuosity {
 
 public:
-
     /** @brief Specifies the HYPRE structured solver algorithm to use. */
     enum class SolverType {
-        Jacobi,     /**< HYPRE_StructJacobi */
-        GMRES,      /**< HYPRE_StructGMRES */
-        FlexGMRES,  /**< HYPRE_StructFlexGMRES */
-        PCG,        /**< HYPRE_StructPCG */
-        BiCGSTAB,   /**< HYPRE_StructBiCGSTAB */
-        SMG,        /**< HYPRE_StructSMG */
-        PFMG        /**< HYPRE_StructPFMG */
+        Jacobi,    /**< HYPRE_StructJacobi */
+        GMRES,     /**< HYPRE_StructGMRES */
+        FlexGMRES, /**< HYPRE_StructFlexGMRES */
+        PCG,       /**< HYPRE_StructPCG */
+        BiCGSTAB,  /**< HYPRE_StructBiCGSTAB */
+        SMG,       /**< HYPRE_StructSMG */
+        PFMG       /**< HYPRE_StructPFMG */
     };
 
     /** Construct new Tortuosity solver using HYPRE.
@@ -54,29 +52,27 @@ public:
      * @param geom AMReX Geometry object defining the domain.
      * @param ba AMReX BoxArray defining the distribution of grid patches.
      * @param dm AMReX DistributionMapping defining processor assignments.
-     * @param mf_phase_input Input iMultiFab containing phase IDs (expects 1 component, >=1 ghost cell).
-     * @param vf Volume fraction of the phase of interest (*total* VF, passed for potential reference). // <-- Doc update
+     * @param mf_phase_input Input iMultiFab containing phase IDs (expects 1 component, >=1 ghost
+     * cell).
+     * @param vf Volume fraction of the phase of interest (*total* VF, passed for potential
+     * reference). // <-- Doc update
      * @param phase Phase ID to calculate tortuosity for.
      * @param dir Direction across which to apply potential difference (X, Y, or Z).
      * @param solvertype Solver type to use (from SolverType enum).
      * @param resultspath Path to directory for writing output files (e.g., plotfiles).
-     * @param vlo Potential value applied at the low boundary in the specified direction. Default 0.0.
-     * @param vhi Potential value applied at the high boundary in the specified direction. Default 1.0.
+     * @param vlo Potential value applied at the low boundary in the specified direction. Default
+     * 0.0.
+     * @param vhi Potential value applied at the high boundary in the specified direction.
+     * Default 1.0.
      * @param verbose Verbosity level (0=silent, 1=basic, 2=detailed HYPRE output). Default 0.
-     * @param write_plotfile If true, write a plotfile of the solution potential field. Default false.
+     * @param write_plotfile If true, write a plotfile of the solution potential field. Default
+     * false.
      */
-    TortuosityHypre(const amrex::Geometry& geom,
-                    const amrex::BoxArray& ba,
-                    const amrex::DistributionMapping& dm,
-                    const amrex::iMultiFab& mf_phase_input,
-                    const amrex::Real vf,
-                    const int phase,
-                    const OpenImpala::Direction dir,
-                    const SolverType solvertype,
-                    const std::string& resultspath,
-                    const amrex::Real vlo = 0.0,
-                    const amrex::Real vhi = 1.0,
-                    int verbose = 0,
+    TortuosityHypre(const amrex::Geometry& geom, const amrex::BoxArray& ba,
+                    const amrex::DistributionMapping& dm, const amrex::iMultiFab& mf_phase_input,
+                    const amrex::Real vf, const int phase, const OpenImpala::Direction dir,
+                    const SolverType solvertype, const std::string& resultspath,
+                    const amrex::Real vlo = 0.0, const amrex::Real vhi = 1.0, int verbose = 0,
                     bool write_plotfile = false);
 
     /** Destructor. Cleans up allocated HYPRE resources. */
@@ -105,39 +101,53 @@ public:
      * @details Iterates over local cells, retrieves matrix/vector values using HYPRE
      * functions, and verifies properties like NaN/Inf absence, expected diagonal
      * values based on cell activity/BCs, and row sums for interior nodes.
-     * Intended for use in testing/debugging *after* object construction but *before* calling value() or solve().
+     * Intended for use in testing/debugging *after* object construction but *before* calling
+     * value() or solve().
      * @return True if all checks pass on all ranks, False otherwise.
      */
     bool checkMatrixProperties();
 
     // --- Public Getters for Status and Results ---
-    bool        getSolverConverged() const { return m_converged; }
-    amrex::Real getFinalRelativeResidualNorm() const { return m_final_res_norm; }
-    int         getSolverIterations() const { return m_num_iterations; }
-    amrex::Real getFluxIn() const { return m_flux_in; }
-    amrex::Real getFluxOut() const { return m_flux_out; }
+    bool getSolverConverged() const {
+        return m_converged;
+    }
+    amrex::Real getFinalRelativeResidualNorm() const {
+        return m_final_res_norm;
+    }
+    int getSolverIterations() const {
+        return m_num_iterations;
+    }
+    amrex::Real getFluxIn() const {
+        return m_flux_in;
+    }
+    amrex::Real getFluxOut() const {
+        return m_flux_out;
+    }
     // --- ADDED Getter for Active VF ---
-    amrex::Real getActiveVolumeFraction() const { return m_active_vf; }
+    amrex::Real getActiveVolumeFraction() const {
+        return m_active_vf;
+    }
     // --- END ADD ---
 
 
     // Static Helper Functions
-    static amrex::Array<HYPRE_Int,AMREX_SPACEDIM> loV (const amrex::Box& b);
-    static amrex::Array<HYPRE_Int,AMREX_SPACEDIM> hiV (const amrex::Box& b);
+    static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> loV(const amrex::Box& b);
+    static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> hiV(const amrex::Box& b);
 
 
 private:
-
     // --- Private Methods ---
     bool solve();
     void setupGrids();
     void setupStencil();
     void setupMatrixEquation();
     void preconditionPhaseFab();
-    void generateActivityMask(const amrex::iMultiFab& phaseFab, int phaseID, OpenImpala::Direction dir);
-    void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFab& phaseFab, int phaseID, const amrex::Vector<amrex::IntVect>& seedPoints);
-    void getSolution (amrex::MultiFab& soln, int ncomp=0); // Not implemented
-    void getCellTypes(amrex::MultiFab& phi, int ncomp=1); // Not implemented
+    void generateActivityMask(const amrex::iMultiFab& phaseFab, int phaseID,
+                              OpenImpala::Direction dir);
+    void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFab& phaseFab,
+                           int phaseID, const amrex::Vector<amrex::IntVect>& seedPoints);
+    void getSolution(amrex::MultiFab& soln, int ncomp = 0); // Not implemented
+    void getCellTypes(amrex::MultiFab& phi, int ncomp = 1); // Not implemented
     void global_fluxes();
 
     // --- Member Variables ---
@@ -169,7 +179,7 @@ private:
     // Solver Statistics and Results
     HYPRE_Int m_num_iterations = -1;
     amrex::Real m_final_res_norm = std::numeric_limits<amrex::Real>::quiet_NaN();
-    bool        m_converged = false;
+    bool m_converged = false;
     amrex::Real m_flux_in = 0.0;
     amrex::Real m_flux_out = 0.0;
     // --- ADDED: Active Volume Fraction ---
@@ -189,27 +199,17 @@ private:
 // --- Fortran Interface Declarations ---
 // (Remain the same as in your provided file)
 extern "C" {
-    void tortuosity_fillmtx(
-        amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit,
-        const int* nval,
-        const int* p, const int* p_lo, const int* p_hi,
-        const int* active_mask, const int* mask_lo, const int* mask_hi,
-        const int* bxlo, const int* bxhi,
-        const int* domlo, const int* domhi,
-        const amrex::Real* dxinv,
-        const amrex::Real* vlo, const amrex::Real* vhi,
-        const int* phase_unused, const int* dir,
-        const int* debug_print_level
-    );
+void tortuosity_fillmtx(amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, const int* nval,
+                        const int* p, const int* p_lo, const int* p_hi, const int* active_mask,
+                        const int* mask_lo, const int* mask_hi, const int* bxlo, const int* bxhi,
+                        const int* domlo, const int* domhi, const amrex::Real* dxinv,
+                        const amrex::Real* vlo, const amrex::Real* vhi, const int* phase_unused,
+                        const int* dir, const int* debug_print_level);
 
-    void tortuosity_remspot(
-        int* q, const int* q_lo, const int* q_hi,
-        const int* ncomp,
-        const int* bxlo, const int* bxhi,
-        const int* domlo, const int* domhi
-    );
+void tortuosity_remspot(int* q, const int* q_lo, const int* q_hi, const int* ncomp, const int* bxlo,
+                        const int* bxhi, const int* domlo, const int* domhi);
 
-    // Add others if needed...
+// Add others if needed...
 }
 
 
