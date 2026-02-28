@@ -53,16 +53,12 @@ extern "C" {
  * calculation. Verify this!
  */
 void tortuosity_fillmtx(amrex_real* a, amrex_real* rhs, amrex_real* xinit, const int* nval,
-                        const int* p, const int* p_lo, const int* p_hi,
-                        const int* active_mask, // <<< NEW
-                        const int* mask_lo,     // <<< NEW
-                        const int* mask_hi,     // <<< NEW
-                        const int* bxlo, const int* bxhi, const int* domlo, const int* domhi,
-                        const amrex_real* dxinv, const amrex_real* vlo, const amrex_real* vhi,
-                        const int* phase_unused, // <<< Renamed
-                        const int* dir,
-                        const int* debug_print_level // <<< ADDED THIS LINE
-);
+                        const int* p, const int* p_lo, const int* p_hi, const int* active_mask,
+                        const int* mask_lo, const int* mask_hi, const amrex_real* diff_coeff,
+                        const int* dc_lo, const int* dc_hi, const int* bxlo, const int* bxhi,
+                        const int* domlo, const int* domhi, const amrex_real* dxinv,
+                        const amrex_real* vlo, const amrex_real* vhi, const int* phase_unused,
+                        const int* dir, const int* debug_print_level);
 
 #ifdef __cplusplus
 } // extern "C"
