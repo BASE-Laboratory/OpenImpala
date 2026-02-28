@@ -289,11 +289,9 @@ int main(int argc, char* argv[]) {
         }
 
         // Check for unused input parameters (likely typos)
-        if (amrex::ParmParse::QueryUnusedInputs() &&
-            amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Warning(
-                "There are unused parameters in the inputs file (see list above). "
-                "These may be typos.");
+        if (amrex::ParmParse::QueryUnusedInputs() && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Warning("There are unused parameters in the inputs file (see list above). "
+                           "These may be typos.");
         }
 
         amrex::Print() << "tTiffReader Test Completed Successfully.\n";

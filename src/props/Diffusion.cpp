@@ -377,7 +377,8 @@ int main(int argc, char* argv[]) {
                 amrex::Print() << "  Total voxels:  " << domain_box_full.numPts() << "\n";
                 amrex::Print() << "  Box size:      " << main_box_size << "\n";
                 amrex::Print() << "  Num boxes:     " << ba_full.size() << "\n";
-                amrex::Print() << "  MPI ranks:     " << amrex::ParallelDescriptor::NProcs() << "\n";
+                amrex::Print() << "  MPI ranks:     " << amrex::ParallelDescriptor::NProcs()
+                               << "\n";
                 amrex::Print() << "  Threshold:     " << main_threshold_val << "\n";
                 amrex::Print() << "  Analysis phase:" << main_phase_id_analysis << "\n";
                 amrex::Print() << "  Calc method:   " << main_calculation_method << "\n";
@@ -392,15 +393,15 @@ int main(int argc, char* argv[]) {
                 OpenImpala::VolumeFraction vf_calc(mf_phase_full, pid);
                 long long phase_count = 0, total_count = 0;
                 vf_calc.value(phase_count, total_count, false);
-                amrex::Real vf = (total_count > 0)
-                                     ? static_cast<amrex::Real>(phase_count) /
-                                           static_cast<amrex::Real>(total_count)
-                                     : 0.0;
+                amrex::Real vf = (total_count > 0) ? static_cast<amrex::Real>(phase_count) /
+                                                         static_cast<amrex::Real>(total_count)
+                                                   : 0.0;
                 if (amrex::ParallelDescriptor::IOProcessor()) {
-                    std::string marker = (pid == main_phase_id_analysis) ? " <-- analysis phase" : "";
-                    amrex::Print() << "  Phase " << pid << ": " << std::fixed << std::setprecision(6)
-                                   << vf << " (" << phase_count << " / " << total_count
-                                   << " voxels)" << marker << "\n";
+                    std::string marker =
+                        (pid == main_phase_id_analysis) ? " <-- analysis phase" : "";
+                    amrex::Print() << "  Phase " << pid << ": " << std::fixed
+                                   << std::setprecision(6) << vf << " (" << phase_count << " / "
+                                   << total_count << " voxels)" << marker << "\n";
                 }
             }
 
@@ -423,17 +424,17 @@ int main(int argc, char* argv[]) {
 
             for (const auto& dir : check_dirs) {
                 OpenImpala::PercolationCheck pc(geom_nonperiodic, ba_full, dm_full, mf_phase_full,
-                                               main_phase_id_analysis, dir, main_verbose);
+                                                main_phase_id_analysis, dir, main_verbose);
                 std::string dir_str = OpenImpala::PercolationCheck::directionString(dir);
                 if (amrex::ParallelDescriptor::IOProcessor()) {
                     if (pc.percolates()) {
-                        amrex::Print() << "  " << dir_str
-                                       << "-direction: SUCCESS (percolates, active VF = "
-                                       << std::fixed << std::setprecision(6)
-                                       << pc.activeVolumeFraction() << ")\n";
+                        amrex::Print()
+                            << "  " << dir_str
+                            << "-direction: SUCCESS (percolates, active VF = " << std::fixed
+                            << std::setprecision(6) << pc.activeVolumeFraction() << ")\n";
                     } else {
-                        amrex::Print() << "  " << dir_str
-                                       << "-direction: FAILURE (does not percolate)\n";
+                        amrex::Print()
+                            << "  " << dir_str << "-direction: FAILURE (does not percolate)\n";
                         any_failure = true;
                     }
                 }
@@ -451,12 +452,12 @@ int main(int argc, char* argv[]) {
                     amrex::Print() << "  All checks passed. The dataset looks suitable for a "
                                    << main_calculation_method << " calculation.\n";
                 }
-                amrex::Print() << "\n"
-                               << "============================================================\n"
-                               << "  Dry run complete. No solver was executed.\n"
-                               << "============================================================\n\n";
+                amrex::Print()
+                    << "\n"
+                    << "============================================================\n"
+                    << "  Dry run complete. No solver was executed.\n"
+                    << "============================================================\n\n";
             }
-
         }
 
 
@@ -983,11 +984,10 @@ int main(int argc, char* argv[]) {
 
 
         // Check for unused input parameters (likely typos)
-        if (amrex::ParmParse::QueryUnusedInputs() &&
-            amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Warning(
-                "There are unused parameters in the inputs file (see list above). "
-                "These may be typos. Set amrex.abort_on_unused_inputs=1 to treat this as an error.");
+        if (amrex::ParmParse::QueryUnusedInputs() && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Warning("There are unused parameters in the inputs file (see list above). "
+                           "These may be typos. Set amrex.abort_on_unused_inputs=1 to treat this "
+                           "as an error.");
         }
 
         amrex::Real master_stop_time = amrex::second() - master_strt_time;

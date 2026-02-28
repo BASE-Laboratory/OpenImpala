@@ -23,17 +23,21 @@ PercolationCheck::PercolationCheck(const amrex::Geometry& geom, const amrex::Box
                                    const amrex::iMultiFab& mf_phase, int phase_id,
                                    OpenImpala::Direction dir, int verbose)
     : m_geom(geom), m_ba(ba), m_dm(dm), m_verbose(verbose) {
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(mf_phase.nGrow() >= 1,
-                                     "PercolationCheck: input iMultiFab must have >= 1 ghost cell.");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        mf_phase.nGrow() >= 1, "PercolationCheck: input iMultiFab must have >= 1 ghost cell.");
     run(mf_phase, phase_id, dir);
 }
 
 std::string PercolationCheck::directionString(OpenImpala::Direction dir) {
     switch (dir) {
-    case OpenImpala::Direction::X: return "X";
-    case OpenImpala::Direction::Y: return "Y";
-    case OpenImpala::Direction::Z: return "Z";
-    default: return "?";
+    case OpenImpala::Direction::X:
+        return "X";
+    case OpenImpala::Direction::Y:
+        return "Y";
+    case OpenImpala::Direction::Z:
+        return "Z";
+    default:
+        return "?";
     }
 }
 
@@ -89,8 +93,8 @@ void PercolationCheck::run(const amrex::iMultiFab& mf_phase, int phase_id,
     MPI_Comm comm = amrex::ParallelDescriptor::Communicator();
     int mpi_size = amrex::ParallelDescriptor::NProcs();
 
-    auto gatherSeeds = [&](const amrex::Vector<amrex::IntVect>& local_seeds)
-        -> amrex::Vector<amrex::IntVect> {
+    auto gatherSeeds =
+        [&](const amrex::Vector<amrex::IntVect>& local_seeds) -> amrex::Vector<amrex::IntVect> {
         const size_t n_local = local_seeds.size();
         std::vector<int> flat_local(n_local * AMREX_SPACEDIM);
         for (size_t i = 0; i < n_local; ++i) {
@@ -172,9 +176,9 @@ void PercolationCheck::run(const amrex::iMultiFab& mf_phase, int phase_id,
 
     long num_active = mf_active_mask.sum(0);
     long total_cells = m_geom.Domain().numPts();
-    m_active_vf =
-        (total_cells > 0) ? static_cast<amrex::Real>(num_active) / static_cast<amrex::Real>(total_cells)
-                          : 0.0;
+    m_active_vf = (total_cells > 0)
+                      ? static_cast<amrex::Real>(num_active) / static_cast<amrex::Real>(total_cells)
+                      : 0.0;
     m_percolates = (num_active > 0);
 }
 
@@ -259,8 +263,8 @@ void PercolationCheck::parallelFloodFill(amrex::iMultiFab& reachabilityMask,
     }
 
     if (iter >= max_flood_iter && changed_globally) {
-        amrex::Warning(
-            "PercolationCheck::parallelFloodFill reached max iterations - result may be incomplete.");
+        amrex::Warning("PercolationCheck::parallelFloodFill reached max iterations - result may be "
+                       "incomplete.");
     }
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "    Flood fill completed in " << iter << " iterations.\n";

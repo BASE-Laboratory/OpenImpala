@@ -41,10 +41,14 @@ public:
                      int phase_id, OpenImpala::Direction dir, int verbose = 0);
 
     /** @brief Returns true if the phase percolates in the specified direction. */
-    bool percolates() const { return m_percolates; }
+    bool percolates() const {
+        return m_percolates;
+    }
 
     /** @brief Returns the volume fraction of the percolating (active) subset of the phase. */
-    amrex::Real activeVolumeFraction() const { return m_active_vf; }
+    amrex::Real activeVolumeFraction() const {
+        return m_active_vf;
+    }
 
     /** @brief Returns a human-readable direction string ("X", "Y", or "Z"). */
     static std::string directionString(OpenImpala::Direction dir);

@@ -70,9 +70,9 @@ int main(int argc, char* argv[]) {
         {
             std::ifstream test_ifs(hdf5_filename);
             if (!test_ifs) {
-                amrex::Abort("Error: Cannot open input HDF5 file specified by 'filename': " +
-                             hdf5_filename +
-                             "\n       Check the 'filename' parameter in your inputs file.");
+                amrex::Abort(
+                    "Error: Cannot open input HDF5 file specified by 'filename': " + hdf5_filename +
+                    "\n       Check the 'filename' parameter in your inputs file.");
             }
         }
 
@@ -209,11 +209,9 @@ int main(int argc, char* argv[]) {
         }
 
         // Check for unused input parameters (likely typos)
-        if (amrex::ParmParse::QueryUnusedInputs() &&
-            amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Warning(
-                "There are unused parameters in the inputs file (see list above). "
-                "These may be typos.");
+        if (amrex::ParmParse::QueryUnusedInputs() && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Warning("There are unused parameters in the inputs file (see list above). "
+                           "These may be typos.");
         }
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
