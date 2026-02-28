@@ -2,7 +2,8 @@
 #
 # Creates a 32^3 domain with alternating layers of phase 0 and phase 1,
 # both assigned D=1.0. Since all cells have the same diffusivity,
-# the problem is equivalent to a uniform material and tau should be 1.0.
+# the problem is equivalent to a uniform material.
+# On a discrete N-cell grid, tau = (N-1)/N = 31/32 = 0.96875.
 #
 # This validates:
 #   - Two-phase coefficient field construction
@@ -18,9 +19,9 @@ num_phases_fill = 2
 direction = X
 solver = FlexGMRES
 
-# Expected result: uniform D across all cells -> tau = 1.0
-expected_tau = 1.0
-tau_tolerance = 0.01
+# Expected result: tau = (N-1)/N = 31/32 = 0.96875 for N=32 grid
+expected_tau = 0.96875
+tau_tolerance = 0.001
 
 resultsdir = ./tMultiPhaseTransport_twophase_results
 

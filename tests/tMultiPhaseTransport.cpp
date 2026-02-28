@@ -39,26 +39,34 @@ namespace {
 
 OpenImpala::TortuosityHypre::SolverType stringToSolverType(const std::string& solver_str) {
     std::string s = solver_str;
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    if (s == "jacobi")    return OpenImpala::TortuosityHypre::SolverType::Jacobi;
-    if (s == "gmres")     return OpenImpala::TortuosityHypre::SolverType::GMRES;
-    if (s == "flexgmres") return OpenImpala::TortuosityHypre::SolverType::FlexGMRES;
-    if (s == "pcg")       return OpenImpala::TortuosityHypre::SolverType::PCG;
-    if (s == "bicgstab")  return OpenImpala::TortuosityHypre::SolverType::BiCGSTAB;
-    if (s == "smg")       return OpenImpala::TortuosityHypre::SolverType::SMG;
-    if (s == "pfmg")      return OpenImpala::TortuosityHypre::SolverType::PFMG;
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+    if (s == "jacobi")
+        return OpenImpala::TortuosityHypre::SolverType::Jacobi;
+    if (s == "gmres")
+        return OpenImpala::TortuosityHypre::SolverType::GMRES;
+    if (s == "flexgmres")
+        return OpenImpala::TortuosityHypre::SolverType::FlexGMRES;
+    if (s == "pcg")
+        return OpenImpala::TortuosityHypre::SolverType::PCG;
+    if (s == "bicgstab")
+        return OpenImpala::TortuosityHypre::SolverType::BiCGSTAB;
+    if (s == "smg")
+        return OpenImpala::TortuosityHypre::SolverType::SMG;
+    if (s == "pfmg")
+        return OpenImpala::TortuosityHypre::SolverType::PFMG;
     amrex::Abort("Invalid solver string: '" + solver_str + "'.");
     return OpenImpala::TortuosityHypre::SolverType::FlexGMRES;
 }
 
 OpenImpala::Direction stringToDirection(const std::string& dir_str) {
     std::string s = dir_str;
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    if (s == "x") return OpenImpala::Direction::X;
-    if (s == "y") return OpenImpala::Direction::Y;
-    if (s == "z") return OpenImpala::Direction::Z;
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+    if (s == "x")
+        return OpenImpala::Direction::X;
+    if (s == "y")
+        return OpenImpala::Direction::Y;
+    if (s == "z")
+        return OpenImpala::Direction::Z;
     amrex::Abort("Invalid direction string: " + dir_str + ". Use X, Y, or Z.");
     return OpenImpala::Direction::X;
 }
@@ -132,10 +140,9 @@ int main(int argc, char* argv[]) {
         // --- Create synthetic domain ---
         amrex::Box domain_box(amrex::IntVect(0, 0, 0),
                               amrex::IntVect(domain_size - 1, domain_size - 1, domain_size - 1));
-        amrex::RealBox rb(
-            {AMREX_D_DECL(0.0, 0.0, 0.0)},
-            {AMREX_D_DECL(amrex::Real(domain_size), amrex::Real(domain_size),
-                          amrex::Real(domain_size))});
+        amrex::RealBox rb({AMREX_D_DECL(0.0, 0.0, 0.0)},
+                          {AMREX_D_DECL(amrex::Real(domain_size), amrex::Real(domain_size),
+                                        amrex::Real(domain_size))});
         amrex::Array<int, AMREX_SPACEDIM> is_periodic{AMREX_D_DECL(0, 0, 0)};
         amrex::Geometry geom;
         geom.define(domain_box, &rb, 0, is_periodic.data());
@@ -168,8 +175,8 @@ int main(int argc, char* argv[]) {
                 });
             }
             if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
-                amrex::Print() << " Phase field: alternating layers along "
-                               << direction_str << " (phases 0 and 1)\n";
+                amrex::Print() << " Phase field: alternating layers along " << direction_str
+                               << " (phases 0 and 1)\n";
             }
         }
         mf_phase.FillBoundary(geom.periodicity());
@@ -208,8 +215,7 @@ int main(int argc, char* argv[]) {
                 test_passed = false;
                 fail_reason = "isMultiPhase() returned " +
                               std::string(tort->isMultiPhase() ? "true" : "false") +
-                              " but expected " +
-                              std::string(expect_multi_phase ? "true" : "false");
+                              " but expected " + std::string(expect_multi_phase ? "true" : "false");
             } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Multi-phase API check:    PASS (isMultiPhase()="
                                << (tort->isMultiPhase() ? "true" : "false") << ")\n";
@@ -276,9 +282,9 @@ int main(int argc, char* argv[]) {
                 test_passed = false;
                 fail_reason = "Solver did not converge";
             } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
-                amrex::Print() << " Solver convergence:       PASS ("
-                               << tort->getSolverIterations() << " iterations, residual="
-                               << tort->getFinalRelativeResidualNorm() << ")\n";
+                amrex::Print() << " Solver convergence:       PASS (" << tort->getSolverIterations()
+                               << " iterations, residual=" << tort->getFinalRelativeResidualNorm()
+                               << ")\n";
             }
         }
 
@@ -293,8 +299,7 @@ int main(int argc, char* argv[]) {
                               ", Tolerance: " + std::to_string(tau_tolerance);
             } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Tortuosity value check:   PASS (tau=" << actual_tau
-                               << ", expected=" << expected_tau
-                               << ", diff=" << diff << ")\n";
+                               << ", expected=" << expected_tau << ", diff=" << diff << ")\n";
             }
         }
 
@@ -304,18 +309,19 @@ int main(int argc, char* argv[]) {
             // For uniform material, all cells should be active
             if (active_vf < 0.99) {
                 test_passed = false;
-                fail_reason = "Active volume fraction unexpectedly low: " +
-                              std::to_string(active_vf) + " (expected ~1.0)";
+                fail_reason =
+                    "Active volume fraction unexpectedly low: " + std::to_string(active_vf) +
+                    " (expected ~1.0)";
             } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
-                amrex::Print() << " Active VF check:          PASS (active_vf="
-                               << active_vf << ")\n";
+                amrex::Print() << " Active VF check:          PASS (active_vf=" << active_vf
+                               << ")\n";
             }
         }
 
         // --- Final summary ---
         amrex::Real stop_time = amrex::second() - strt_time;
-        amrex::ParallelDescriptor::ReduceRealMax(
-            stop_time, amrex::ParallelDescriptor::IOProcessorNumber());
+        amrex::ParallelDescriptor::ReduceRealMax(stop_time,
+                                                 amrex::ParallelDescriptor::IOProcessorNumber());
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "\n Run time = " << stop_time << " sec\n";
