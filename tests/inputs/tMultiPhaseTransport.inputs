@@ -1,0 +1,36 @@
+# Input file for synthetic multi-phase transport test
+#
+# Creates a uniform 32^3 domain (all cells = phase 0) with D=1.0.
+# For a uniform material on a discrete grid of N cells, the boundary flux
+# calculation uses a one-sided gradient with the first interior cell,
+# giving Deff = N/(N-1) and tau = (N-1)/N = 31/32 = 0.96875.
+#
+# This validates:
+#   - Multi-phase ParmParse parsing (tortuosity.active_phases / phase_diffusivities)
+#   - isMultiPhase() API returns true
+#   - getPhaseCoeffMap() returns correct entries
+#   - Solver converges on synthetic uniform geometry
+#   - Tortuosity matches expected discrete-grid value
+
+domain_size = 32
+box_size = 16
+verbose = 2
+num_phases_fill = 1
+direction = X
+solver = FlexGMRES
+
+# Expected result: tau = (N-1)/N = 31/32 = 0.96875 for N=32 grid
+expected_tau = 0.96875
+tau_tolerance = 0.001
+
+resultsdir = ./tMultiPhaseTransport_results
+
+# --- Solver Controls ---
+hypre.maxiter = 500
+hypre.eps = 1e-9
+
+# --- Multi-phase configuration ---
+# Single active phase with D=1.0 (exercises explicit multi-phase code path)
+tortuosity.active_phases = 0
+tortuosity.phase_diffusivities = 1.0
+tortuosity.remspot_passes = 0

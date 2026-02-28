@@ -1,0 +1,36 @@
+# Input file for synthetic two-phase transport test
+#
+# Creates a 32^3 domain with alternating layers of phase 0 and phase 1,
+# both assigned D=1.0. Since all cells have the same diffusivity,
+# the problem is equivalent to a uniform material.
+# On a discrete N-cell grid, tau = (N-1)/N = 31/32 = 0.96875.
+#
+# This validates:
+#   - Two-phase coefficient field construction
+#   - Binary traversable mask across phase boundaries
+#   - Flood fill connectivity across alternating phases
+#   - Harmonic mean face coefficients at phase interfaces (D_face = 2*1*1/(1+1) = 1)
+#   - Correct tortuosity for multi-phase uniform-D case
+
+domain_size = 32
+box_size = 16
+verbose = 2
+num_phases_fill = 2
+direction = X
+solver = FlexGMRES
+
+# Expected result: tau = (N-1)/N = 31/32 = 0.96875 for N=32 grid
+expected_tau = 0.96875
+tau_tolerance = 0.001
+
+resultsdir = ./tMultiPhaseTransport_twophase_results
+
+# --- Solver Controls ---
+hypre.maxiter = 500
+hypre.eps = 1e-9
+
+# --- Multi-phase configuration ---
+# Two phases, both with D=1.0 (effectively uniform)
+tortuosity.active_phases = 0 1
+tortuosity.phase_diffusivities = 1.0 1.0
+tortuosity.remspot_passes = 0

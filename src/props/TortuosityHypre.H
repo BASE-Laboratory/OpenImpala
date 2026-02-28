@@ -4,6 +4,7 @@
 #include <string> // Needed for std::string
 #include <vector> // Needed for Vector<IntVect> in helper functions
 #include <limits> // Needed for std::numeric_limits
+#include <map>    // Needed for phase-coefficient mapping
 
 #include <AMReX.H>
 #include <AMReX_iMultiFab.H>
@@ -129,6 +130,30 @@ public:
     }
     // --- END ADD ---
 
+    /** @brief Returns the per-plane flux profile computed after solving.
+     *  Element i holds the total flux through the face between cell-plane i and i+1
+     *  in the flow direction.  The vector has (N-1) entries where N is the number
+     *  of cells in the flow direction.  Empty until value() has been called. */
+    const std::vector<amrex::Real>& getPlaneFluxes() const {
+        return m_plane_fluxes;
+    }
+
+    /** @brief Maximum relative deviation across interior plane fluxes.
+     *  Defined as max(|F_i - F_mean|) / |F_mean|.  Returns 0 if not yet computed. */
+    amrex::Real getPlaneFluxMaxDeviation() const {
+        return m_plane_flux_max_dev;
+    }
+
+    /** @brief Returns true if multi-phase transport coefficients are configured. */
+    bool isMultiPhase() const {
+        return m_is_multi_phase;
+    }
+
+    /** @brief Returns the phase-to-coefficient mapping. */
+    const std::map<int, amrex::Real>& getPhaseCoeffMap() const {
+        return m_phase_coeff_map;
+    }
+
 
     // Static Helper Functions
     static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> loV(const amrex::Box& b);
@@ -149,6 +174,7 @@ private:
     void getSolution(amrex::MultiFab& soln, int ncomp = 0); // Not implemented
     void getCellTypes(amrex::MultiFab& phi, int ncomp = 1); // Not implemented
     void global_fluxes();
+    void computePlaneFluxes(const amrex::MultiFab& mf_soln);
 
     // --- Member Variables ---
     // Configuration
@@ -171,6 +197,11 @@ private:
     amrex::iMultiFab m_mf_phase;
     amrex::MultiFab m_mf_phi;
     amrex::iMultiFab m_mf_active_mask;
+    amrex::MultiFab m_mf_diff_coeff; ///< Spatially varying transport coefficient D(x)
+
+    // Multi-phase configuration
+    std::map<int, amrex::Real> m_phase_coeff_map; ///< Maps phase ID -> transport coefficient
+    bool m_is_multi_phase = false;                ///< True if multiple conducting phases configured
 
     // State
     amrex::Real m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
@@ -185,6 +216,10 @@ private:
     // --- ADDED: Active Volume Fraction ---
     amrex::Real m_active_vf = 0.0; // Volume fraction of the percolating phase
     // --- END ADD ---
+
+    // Interior plane flux profile (one entry per inter-cell face along flow direction)
+    std::vector<amrex::Real> m_plane_fluxes;
+    amrex::Real m_plane_flux_max_dev = 0.0; ///< max |F_i - F_mean| / |F_mean|
 
 
     // HYPRE Data Structures
@@ -201,7 +236,8 @@ private:
 extern "C" {
 void tortuosity_fillmtx(amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, const int* nval,
                         const int* p, const int* p_lo, const int* p_hi, const int* active_mask,
-                        const int* mask_lo, const int* mask_hi, const int* bxlo, const int* bxhi,
+                        const int* mask_lo, const int* mask_hi, const amrex::Real* diff_coeff,
+                        const int* dc_lo, const int* dc_hi, const int* bxlo, const int* bxhi,
                         const int* domlo, const int* domhi, const amrex::Real* dxinv,
                         const amrex::Real* vlo, const amrex::Real* vhi, const int* phase_unused,
                         const int* dir, const int* debug_print_level);

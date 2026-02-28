@@ -24,6 +24,7 @@
 #include <sstream>
 #include <fstream>
 #include <algorithm> // For std::transform
+#include <map>       // For std::map (multi-phase coefficient map)
 
 namespace { // Anonymous namespace for test-local helpers
 
@@ -69,8 +70,9 @@ void calculate_Deff_tensor_homogenization(amrex::Real Deff_tensor[AMREX_SPACEDIM
                                           const amrex::MultiFab& mf_chi_y_in,
                                           const amrex::MultiFab& mf_chi_z_in,
                                           const amrex::iMultiFab& active_mask,
+                                          const amrex::MultiFab& diff_coeff,
                                           const amrex::Geometry& geom, int verbose_level) {
-    BL_PROFILE("calculate_Deff_tensor_homogenization_reverted_omp");
+    BL_PROFILE("calculate_Deff_tensor_homogenization");
     for (int i = 0; i < AMREX_SPACEDIM; ++i) {
         for (int j = 0; j < AMREX_SPACEDIM; ++j) {
             Deff_tensor[i][j] = 0.0;
@@ -82,6 +84,7 @@ void calculate_Deff_tensor_homogenization(amrex::Real Deff_tensor[AMREX_SPACEDIM
         AMREX_ASSERT(mf_chi_z_in.isDefined() && mf_chi_z_in.nGrow() >= 1);
     }
     AMREX_ASSERT(active_mask.nGrow() == 0);
+    AMREX_ASSERT(diff_coeff.nGrow() == 0);
 
     const amrex::Real* dx_arr = geom.CellSize();
     amrex::Real inv_2dx[AMREX_SPACEDIM];
@@ -102,6 +105,7 @@ void calculate_Deff_tensor_homogenization(amrex::Real Deff_tensor[AMREX_SPACEDIM
     for (amrex::MFIter mfi(active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.tilebox();
         amrex::Array4<const int> const mask_arr = active_mask.const_array(mfi);
+        amrex::Array4<const amrex::Real> const dc_arr = diff_coeff.const_array(mfi);
         amrex::Array4<const amrex::Real> const chi_x_arr = mf_chi_x_in.const_array(mfi);
         amrex::Array4<const amrex::Real> const chi_y_arr = mf_chi_y_in.const_array(mfi);
         amrex::Array4<const amrex::Real> const chi_z_arr =
@@ -110,6 +114,7 @@ void calculate_Deff_tensor_homogenization(amrex::Real Deff_tensor[AMREX_SPACEDIM
 
         amrex::LoopOnCpu(bx, [=, &sum_integrand_tensor_comp_local](int i, int j, int k) noexcept {
             if (mask_arr(i, j, k, 0) == 1) {
+                amrex::Real D_val = dc_arr(i, j, k, 0);
                 amrex::Real grad_chi_x[AMREX_SPACEDIM] = {0.0};
                 amrex::Real grad_chi_y[AMREX_SPACEDIM] = {0.0};
                 amrex::Real grad_chi_z[AMREX_SPACEDIM] = {0.0};
@@ -139,17 +144,18 @@ void calculate_Deff_tensor_homogenization(amrex::Real Deff_tensor[AMREX_SPACEDIM
                         (chi_z_arr(i, j, k + 1, 0) - chi_z_arr(i, j, k - 1, 0)) * inv_2dx[2];
                 }
 
-                sum_integrand_tensor_comp_local[0][0] += (1.0 - grad_chi_x[0]);
-                sum_integrand_tensor_comp_local[0][1] += (-grad_chi_y[0]);
-                sum_integrand_tensor_comp_local[1][0] += (-grad_chi_x[1]);
-                sum_integrand_tensor_comp_local[1][1] += (1.0 - grad_chi_y[1]);
+                // D_eff[i][j] = (1/|V|) * sum( D(x) * (delta_ij + d_chi_j/d_x_i) )
+                sum_integrand_tensor_comp_local[0][0] += D_val * (1.0 - grad_chi_x[0]);
+                sum_integrand_tensor_comp_local[0][1] += D_val * (-grad_chi_y[0]);
+                sum_integrand_tensor_comp_local[1][0] += D_val * (-grad_chi_x[1]);
+                sum_integrand_tensor_comp_local[1][1] += D_val * (1.0 - grad_chi_y[1]);
 
                 if (AMREX_SPACEDIM == 3) {
-                    sum_integrand_tensor_comp_local[0][2] += (-grad_chi_z[0]);
-                    sum_integrand_tensor_comp_local[2][0] += (-grad_chi_x[2]);
-                    sum_integrand_tensor_comp_local[1][2] += (-grad_chi_z[1]);
-                    sum_integrand_tensor_comp_local[2][1] += (-grad_chi_y[2]);
-                    sum_integrand_tensor_comp_local[2][2] += (1.0 - grad_chi_z[2]);
+                    sum_integrand_tensor_comp_local[0][2] += D_val * (-grad_chi_z[0]);
+                    sum_integrand_tensor_comp_local[2][0] += D_val * (-grad_chi_x[2]);
+                    sum_integrand_tensor_comp_local[1][2] += D_val * (-grad_chi_z[1]);
+                    sum_integrand_tensor_comp_local[2][1] += D_val * (-grad_chi_y[2]);
+                    sum_integrand_tensor_comp_local[2][2] += D_val * (1.0 - grad_chi_z[2]);
                 }
             }
         });
@@ -176,7 +182,7 @@ void calculate_Deff_tensor_homogenization(amrex::Real Deff_tensor[AMREX_SPACEDIM
     }
 
     if (verbose_level > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  [TestCalcDeff SIGN CORRECTED] Raw summed (1-dchi_x_dx): "
+        amrex::Print() << "  [TestCalcDeff] Raw summed D*(1-dchi_x_dx): "
                        << sum_integrand_tensor_comp_local[0][0]
                        << ", N_total_cells: " << N_total_cells_in_domain << std::endl;
     }
@@ -451,6 +457,30 @@ int main(int argc, char* argv[]) {
                 amrex::Print() << "\n--- Calculating D_eff Tensor from Converged Chi Fields ---\n";
             }
 
+            // Build coefficient map (same logic as solver constructors)
+            std::map<int, amrex::Real> phase_coeff_map_test;
+            {
+                amrex::ParmParse pp_tort("tortuosity");
+                amrex::Vector<int> active_phases_vec;
+                amrex::Vector<amrex::Real> phase_diffs_vec;
+                pp_tort.queryarr("active_phases", active_phases_vec);
+                pp_tort.queryarr("phase_diffusivities", phase_diffs_vec);
+                if (!active_phases_vec.empty() && !phase_diffs_vec.empty()) {
+                    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                        active_phases_vec.size() == phase_diffs_vec.size(),
+                        "tortuosity.active_phases and tortuosity.phase_diffusivities must have the "
+                        "same length");
+                    for (size_t idx = 0; idx < active_phases_vec.size(); ++idx) {
+                        phase_coeff_map_test[active_phases_vec[idx]] = phase_diffs_vec[idx];
+                    }
+                } else {
+                    phase_coeff_map_test[phase_id_param] = 1.0;
+                }
+            }
+
+            // Build diff_coeff and active_mask for D_eff tensor calculation
+            amrex::MultiFab diff_coeff_for_deff(ba_main_sim, dm_main_sim, 1, 0);
+            diff_coeff_for_deff.setVal(0.0);
             amrex::iMultiFab active_mask_for_deff(ba_main_sim, dm_main_sim, 1, 0);
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
@@ -459,14 +489,21 @@ int main(int argc, char* argv[]) {
                  ++mfi) {
                 const amrex::Box& tilebox = mfi.tilebox();
                 amrex::Array4<int> const mask_arr = active_mask_for_deff.array(mfi);
+                amrex::Array4<amrex::Real> const dc_arr = diff_coeff_for_deff.array(mfi);
                 amrex::Array4<const int> const phase_arr = mf_phase_input.const_array(mfi);
-                amrex::LoopOnCpu(tilebox, [=](int i, int j, int k) noexcept {
-                    mask_arr(i, j, k, 0) = (phase_arr(i, j, k, 0) == phase_id_param) ? 1 : 0;
+                const auto& coeff_map = phase_coeff_map_test;
+                amrex::LoopOnCpu(tilebox, [&](int i, int j, int k) noexcept {
+                    int pid = phase_arr(i, j, k, 0);
+                    auto it = coeff_map.find(pid);
+                    amrex::Real D_val = (it != coeff_map.end()) ? it->second : 0.0;
+                    dc_arr(i, j, k, 0) = D_val;
+                    mask_arr(i, j, k, 0) = (D_val > 0.0) ? 1 : 0;
                 });
             }
 
             calculate_Deff_tensor_homogenization(Deff_tensor_vals, mf_chi_x, mf_chi_y, mf_chi_z,
-                                                 active_mask_for_deff, geom_main_sim, verbose);
+                                                 active_mask_for_deff, diff_coeff_for_deff,
+                                                 geom_main_sim, verbose);
 
             if (amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print()
