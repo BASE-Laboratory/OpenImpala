@@ -76,3 +76,4 @@ openimpala_add_test(tHDF5Reader    "${CMAKE_CURRENT_SOURCE_DIR}/tHDF5Reader.cpp"
 openimpala_add_test(tTortuosity             "${CMAKE_CURRENT_SOURCE_DIR}/tTortuosity.cpp")
 openimpala_add_test(tVolumeFraction         "${CMAKE_CURRENT_SOURCE_DIR}/tVolumeFraction.cpp")
 openimpala_add_test(tEffectiveDiffusivity   "${CMAKE_CURRENT_SOURCE_DIR}/tEffectiveDiffusivity.cpp")
+openimpala_add_test(tPercolationCheck       "${CMAKE_CURRENT_SOURCE_DIR}/tPercolationCheck.cpp")

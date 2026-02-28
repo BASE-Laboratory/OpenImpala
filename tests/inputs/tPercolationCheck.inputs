@@ -1,0 +1,34 @@
+#==============================================================================
+# Input file for tPercolationCheck test
+#
+# Tests the PercolationCheck class by reading a TIFF file, thresholding it,
+# and checking whether the specified phase percolates in X, Y, and Z directions.
+#==============================================================================
+
+# Path to the input image file
+tifffile = data/SampleData_2Phase_stack_3d_1bit.tif
+
+# --- Phase Definition Parameters ---
+
+# Threshold value applied to the raw data
+threshold = 0.5
+
+# Phase ID to check percolation for (1 = voxels above threshold)
+phase_id = 1
+
+# --- AMReX Grid Setup ---
+
+# Maximum grid size for BoxArray decomposition
+box_size = 32
+
+# --- Test Behavior ---
+
+# Verbosity level (0=minimal, 1=standard, 2=detailed)
+verbose = 1
+
+# --- Optional Expected Values ---
+# Set to 0 (expect no percolation) or 1 (expect percolation) to enable checking.
+# Set to -1 to skip the check for that direction.
+expected_percolates_x = -1
+expected_percolates_y = -1
+expected_percolates_z = -1
