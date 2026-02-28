@@ -77,3 +77,55 @@ openimpala_add_test(tTortuosity             "${CMAKE_CURRENT_SOURCE_DIR}/tTortuo
 openimpala_add_test(tVolumeFraction         "${CMAKE_CURRENT_SOURCE_DIR}/tVolumeFraction.cpp")
 openimpala_add_test(tEffectiveDiffusivity   "${CMAKE_CURRENT_SOURCE_DIR}/tEffectiveDiffusivity.cpp")
 openimpala_add_test(tPercolationCheck       "${CMAKE_CURRENT_SOURCE_DIR}/tPercolationCheck.cpp")
+
+# ==============================================================================
+# Multi-Phase Transport Tests
+# ==============================================================================
+
+# Synthetic multi-phase test with analytical verification (uniform domain, tau=1.0)
+openimpala_add_test(tMultiPhaseTransport    "${CMAKE_CURRENT_SOURCE_DIR}/tMultiPhaseTransport.cpp")
+
+# Two-phase synthetic variant (alternating layers, both D=1.0, tau=1.0)
+add_test(
+    NAME tMultiPhaseTransport_twophase
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_twophase.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tMultiPhaseTransport_twophase PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# Multi-phase variant of tortuosity test (reuses tTortuosity executable with multi-phase inputs)
+add_test(
+    NAME tTortuosity_multiphase
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tTortuosity>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tTortuosity_multiphase.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tTortuosity_multiphase PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# Multi-phase variant of effective diffusivity test (reuses tEffectiveDiffusivity executable)
+add_test(
+    NAME tEffectiveDiffusivity_multiphase
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tEffectiveDiffusivity>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tEffectiveDiffusivity_multiphase.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tEffectiveDiffusivity_multiphase PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
