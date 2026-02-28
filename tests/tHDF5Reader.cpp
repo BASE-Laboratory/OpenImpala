@@ -62,14 +62,18 @@ int main(int argc, char* argv[]) {
 
         } // End of ParmParse scope
 
-        // Check the HDF5 file using the path read
+        // --- Validate parsed parameters ---
+        if (box_size <= 0) {
+            amrex::Abort("Error: 'box_size' must be positive (got " + std::to_string(box_size) +
+                         ").");
+        }
         {
             std::ifstream test_ifs(hdf5_filename);
             if (!test_ifs) {
-                amrex::Error("Error: Cannot open input HDF5 file specified by 'filename': " +
-                             hdf5_filename);
+                amrex::Abort("Error: Cannot open input HDF5 file specified by 'filename': " +
+                             hdf5_filename +
+                             "\n       Check the 'filename' parameter in your inputs file.");
             }
-            // (Removed DEBUG print for successful open)
         }
 
         // --- Parameter Summary ---
@@ -202,6 +206,14 @@ int main(int argc, char* argv[]) {
             if (amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << "Plotfile writing complete.\n";
             }
+        }
+
+        // Check for unused input parameters (likely typos)
+        if (amrex::ParmParse::QueryUnusedInputs() &&
+            amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Warning(
+                "There are unused parameters in the inputs file (see list above). "
+                "These may be typos.");
         }
 
         if (amrex::ParallelDescriptor::IOProcessor()) {

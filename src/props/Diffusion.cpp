@@ -237,9 +237,27 @@ int main(int argc, char* argv[]) {
             ppr.query("verbose", rev_verbose_level);
         }
 
+        // --- Validate parsed parameters ---
+        if (main_box_size <= 0) {
+            amrex::Abort("Error: 'box_size' must be positive (got " +
+                         std::to_string(main_box_size) + ").");
+        }
+        if (main_threshold_val < 0.0) {
+            amrex::Abort("Error: 'threshold_val' must be non-negative (got " +
+                         std::to_string(main_threshold_val) + ").");
+        }
+
         std::filesystem::path main_data_path(main_data_path_str);
         std::filesystem::path main_results_path(main_results_path_str);
 
+        // Check that the input file exists before starting computation
+        std::filesystem::path full_input_path = main_data_path / main_filename;
+        if (!std::filesystem::exists(full_input_path)) {
+            amrex::Abort("Error: Input file does not exist: " + full_input_path.string() +
+                         "\n       Check 'filename' and 'data_path' parameters.");
+        }
+
+        // Create results directory if it doesn't exist
         if (amrex::ParallelDescriptor::IOProcessor()) {
             if (!std::filesystem::exists(main_results_path)) {
                 std::filesystem::create_directories(main_results_path);
@@ -249,7 +267,6 @@ int main(int argc, char* argv[]) {
             }
         }
         amrex::ParallelDescriptor::Barrier();
-        std::filesystem::path full_input_path = main_data_path / main_filename;
 
 
         amrex::Geometry geom_full;
@@ -856,6 +873,14 @@ int main(int argc, char* argv[]) {
             }
         }
 
+
+        // Check for unused input parameters (likely typos)
+        if (amrex::ParmParse::QueryUnusedInputs() &&
+            amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Warning(
+                "There are unused parameters in the inputs file (see list above). "
+                "These may be typos. Set amrex.abort_on_unused_inputs=1 to treat this as an error.");
+        }
 
         amrex::Real master_stop_time = amrex::second() - master_strt_time;
         amrex::ParallelDescriptor::ReduceRealMax(master_stop_time,
