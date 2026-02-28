@@ -318,6 +318,37 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // --- Check interior plane flux conservation ---
+        if (test_passed && tort) {
+            const auto& plane_fluxes = tort->getPlaneFluxes();
+            amrex::Real max_dev = tort->getPlaneFluxMaxDeviation();
+            constexpr amrex::Real plane_flux_tol = 1.0e-6;
+
+            if (plane_fluxes.empty()) {
+                test_passed = false;
+                fail_reason = "Plane fluxes vector is empty (not computed)";
+            } else if (max_dev > plane_flux_tol) {
+                test_passed = false;
+                fail_reason = "Interior plane flux conservation failed. Max deviation: " +
+                              std::to_string(max_dev) +
+                              ", Tolerance: " + std::to_string(plane_flux_tol);
+            } else {
+                // For a uniform domain, all interior plane fluxes should be identical.
+                // Additionally verify the expected number of faces.
+                int expected_faces = domain_size - 1;
+                if (static_cast<int>(plane_fluxes.size()) != expected_faces) {
+                    test_passed = false;
+                    fail_reason = "Plane fluxes count mismatch: got " +
+                                  std::to_string(plane_fluxes.size()) + ", expected " +
+                                  std::to_string(expected_faces);
+                } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+                    amrex::Print() << " Plane flux conservation:  PASS (" << plane_fluxes.size()
+                                   << " faces, max_dev=" << std::scientific << max_dev
+                                   << std::defaultfloat << ")\n";
+                }
+            }
+        }
+
         // --- Final summary ---
         amrex::Real stop_time = amrex::second() - strt_time;
         amrex::ParallelDescriptor::ReduceRealMax(stop_time,

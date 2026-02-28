@@ -130,6 +130,20 @@ public:
     }
     // --- END ADD ---
 
+    /** @brief Returns the per-plane flux profile computed after solving.
+     *  Element i holds the total flux through the face between cell-plane i and i+1
+     *  in the flow direction.  The vector has (N-1) entries where N is the number
+     *  of cells in the flow direction.  Empty until value() has been called. */
+    const std::vector<amrex::Real>& getPlaneFluxes() const {
+        return m_plane_fluxes;
+    }
+
+    /** @brief Maximum relative deviation across interior plane fluxes.
+     *  Defined as max(|F_i - F_mean|) / |F_mean|.  Returns 0 if not yet computed. */
+    amrex::Real getPlaneFluxMaxDeviation() const {
+        return m_plane_flux_max_dev;
+    }
+
     /** @brief Returns true if multi-phase transport coefficients are configured. */
     bool isMultiPhase() const {
         return m_is_multi_phase;
@@ -160,6 +174,7 @@ private:
     void getSolution(amrex::MultiFab& soln, int ncomp = 0); // Not implemented
     void getCellTypes(amrex::MultiFab& phi, int ncomp = 1); // Not implemented
     void global_fluxes();
+    void computePlaneFluxes(const amrex::MultiFab& mf_soln);
 
     // --- Member Variables ---
     // Configuration
@@ -201,6 +216,10 @@ private:
     // --- ADDED: Active Volume Fraction ---
     amrex::Real m_active_vf = 0.0; // Volume fraction of the percolating phase
     // --- END ADD ---
+
+    // Interior plane flux profile (one entry per inter-cell face along flow direction)
+    std::vector<amrex::Real> m_plane_fluxes;
+    amrex::Real m_plane_flux_max_dev = 0.0; ///< max |F_i - F_mean| / |F_mean|
 
 
     // HYPRE Data Structures
