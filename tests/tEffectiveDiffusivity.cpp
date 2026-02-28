@@ -22,6 +22,7 @@
 #include <memory>
 #include <iomanip>
 #include <sstream>
+#include <fstream>
 #include <algorithm> // For std::transform
 
 namespace { // Anonymous namespace for test-local helpers
@@ -214,6 +215,19 @@ int main(int argc, char* argv[]) {
             pp.query("verbose", verbose);
             pp.query("write_plotfile", write_plotfile);
             pp.query("threshold_val", threshold_val);
+        }
+
+        // --- Validate parsed parameters ---
+        if (box_size <= 0) {
+            amrex::Abort("Error: 'box_size' must be positive (got " + std::to_string(box_size) +
+                         ").");
+        }
+        {
+            std::ifstream test_ifs(tifffile);
+            if (!test_ifs) {
+                amrex::Abort("Error: Cannot open input file: " + tifffile +
+                             "\n       Specify path using 'tifffile=/path/to/file.tif'");
+            }
         }
 
         if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
@@ -511,6 +525,14 @@ int main(int argc, char* argv[]) {
                     << "Skipping D_eff tensor calculation due to chi_k solver non-convergence.\n";
             }
             test_passed_overall = false;
+        }
+
+        // Check for unused input parameters (likely typos)
+        if (amrex::ParmParse::QueryUnusedInputs() &&
+            amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Warning(
+                "There are unused parameters in the inputs file (see list above). "
+                "These may be typos.");
         }
 
         amrex::Real stop_time = amrex::second() - strt_time;

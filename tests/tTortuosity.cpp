@@ -23,6 +23,7 @@
 #include <limits>
 #include <memory>
 #include <iomanip>
+#include <fstream>
 #include <stdio.h>
 #include <algorithm>
 #include <vector>
@@ -177,6 +178,19 @@ int main(int argc, char* argv[]) {
             pp.query("threshold_val", threshold_val);
             pp.query("v_lo", v_lo);
             pp.query("v_hi", v_hi);
+        }
+
+        // --- Validate parsed parameters ---
+        if (box_size <= 0) {
+            amrex::Abort("Error: 'box_size' must be positive (got " + std::to_string(box_size) +
+                         ").");
+        }
+        {
+            std::ifstream test_ifs(tifffile);
+            if (!test_ifs) {
+                amrex::Abort("Error: Cannot open input file: " + tifffile +
+                             "\n       Specify path using 'tifffile=/path/to/file.tif'");
+            }
         }
 
         OpenImpala::Direction direction = stringToDirection(direction_str);
@@ -409,6 +423,14 @@ int main(int argc, char* argv[]) {
                 test_status.recordFail(
                     "Volume Fraction is zero, but an expected_tau > 0 was provided.");
             }
+        }
+
+        // --- Check for unused input parameters (likely typos) ---
+        if (amrex::ParmParse::QueryUnusedInputs() &&
+            amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Warning(
+                "There are unused parameters in the inputs file (see list above). "
+                "These may be typos.");
         }
 
         // --- Final Verdict ---
