@@ -5,8 +5,8 @@
 // summation using AMReX tools, and reports PASS/FAIL.
 // Configuration is handled via ParmParse inputs.
 
-#include "TiffReader.H" // Assuming defines OpenImpala::TiffReader
-#include "VolumeFraction.H"   // Assuming defines OpenImpala::VolumeFraction
+#include "TiffReader.H"     // Assuming defines OpenImpala::TiffReader
+#include "VolumeFraction.H" // Assuming defines OpenImpala::VolumeFraction
 
 #include <cstdlib>
 #include <string>
@@ -134,11 +134,16 @@ int main(int argc, char* argv[]) {
 
         amrex::SetVerbose(verbose); // <<<====== ADD THIS LINE
 
-        // Check if input file exists
+        // --- Validate parsed parameters ---
+        if (box_size <= 0) {
+            amrex::Abort("Error: 'box_size' must be positive (got " + std::to_string(box_size) +
+                         ").");
+        }
         {
             std::ifstream test_ifs(tifffile);
             if (!test_ifs) {
-                amrex::Abort("Error: Cannot open input tifffile: " + tifffile);
+                amrex::Abort("Error: Cannot open input tifffile: " + tifffile +
+                             "\n       Specify path using 'tifffile=/path/to/file.tif'");
             }
         }
 
@@ -502,6 +507,12 @@ int main(int argc, char* argv[]) {
         // --- Optional Synthetic Test Case ---
         /* ... remains the same ... */
 
+
+        // --- Check for unused input parameters (likely typos) ---
+        if (amrex::ParmParse::QueryUnusedInputs() && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Warning("There are unused parameters in the inputs file (see list above). "
+                           "These may be typos.");
+        }
 
         // --- Final Success ---
         amrex::Print() << "\n tVolumeFraction Test Completed Successfully.\n";
