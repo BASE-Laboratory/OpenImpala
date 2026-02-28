@@ -30,7 +30,7 @@ jobs:
 
       - name: Run clang-format check
         run: |
-          find src/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.c" \) \
+          find src/ tests/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.c" \) \
             -exec clang-format --dry-run --Werror {} +
 
   static-analysis:
@@ -69,13 +69,13 @@ jobs:
               echo "clang-tidy version: $(clang-tidy --version 2>&1 | head -1)"
               cd /src
               ERRORS=0
-              for f in $(find src/ -type f -name "*.cpp"); do
+              for f in $(find src/ tests/ -type f -name "*.cpp"); do
                 echo "Analyzing $f..."
                 clang-tidy "$f" \
                   -warnings-as-errors="*" \
                   -header-filter="src/.*" \
                   -- -std=c++17 -fopenmp -DOMPI_SKIP_MPICXX \
-                  -Isrc -Isrc/props \
+                  -Isrc -Isrc/io -Isrc/props \
                   -I/opt/amrex/25.03/include \
                   -I/opt/hypre/v2.32.0/include \
                   -I/opt/hdf5/1.12.3/include \
