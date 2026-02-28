@@ -4,6 +4,7 @@
 #include <string> // Needed for std::string
 #include <vector> // Needed for Vector<IntVect> in helper functions
 #include <limits> // Needed for std::numeric_limits
+#include <map>    // Needed for phase-coefficient mapping
 
 #include <AMReX.H>
 #include <AMReX_iMultiFab.H>
@@ -129,6 +130,16 @@ public:
     }
     // --- END ADD ---
 
+    /** @brief Returns true if multi-phase transport coefficients are configured. */
+    bool isMultiPhase() const {
+        return m_is_multi_phase;
+    }
+
+    /** @brief Returns the phase-to-coefficient mapping. */
+    const std::map<int, amrex::Real>& getPhaseCoeffMap() const {
+        return m_phase_coeff_map;
+    }
+
 
     // Static Helper Functions
     static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> loV(const amrex::Box& b);
@@ -171,6 +182,11 @@ private:
     amrex::iMultiFab m_mf_phase;
     amrex::MultiFab m_mf_phi;
     amrex::iMultiFab m_mf_active_mask;
+    amrex::MultiFab m_mf_diff_coeff; ///< Spatially varying transport coefficient D(x)
+
+    // Multi-phase configuration
+    std::map<int, amrex::Real> m_phase_coeff_map; ///< Maps phase ID -> transport coefficient
+    bool m_is_multi_phase = false;                ///< True if multiple conducting phases configured
 
     // State
     amrex::Real m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
@@ -201,7 +217,8 @@ private:
 extern "C" {
 void tortuosity_fillmtx(amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, const int* nval,
                         const int* p, const int* p_lo, const int* p_hi, const int* active_mask,
-                        const int* mask_lo, const int* mask_hi, const int* bxlo, const int* bxhi,
+                        const int* mask_lo, const int* mask_hi, const amrex::Real* diff_coeff,
+                        const int* dc_lo, const int* dc_hi, const int* bxlo, const int* bxhi,
                         const int* domlo, const int* domhi, const amrex::Real* dxinv,
                         const amrex::Real* vlo, const amrex::Real* vhi, const int* phase_unused,
                         const int* dir, const int* debug_print_level);

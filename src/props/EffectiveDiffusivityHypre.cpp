@@ -115,8 +115,8 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
       m_phase_id(phase_id_arg), m_dir_solve(dir_of_chi_k), m_solvertype(solver_type), m_eps(1e-9),
       m_maxiter(1000), m_resultspath(resultspath), m_verbose(verbose_level),
       m_write_plotfile(write_plotfile_flag), m_mf_chi(ba, dm, numComponentsChi, 1),
-      m_mf_active_mask(ba, dm, 1, 1), m_grid(nullptr), m_stencil(nullptr), m_A(nullptr),
-      m_b(nullptr), m_x(nullptr), m_num_iterations(-1),
+      m_mf_active_mask(ba, dm, 1, 1), m_mf_diff_coeff(ba, dm, 1, 1), m_grid(nullptr),
+      m_stencil(nullptr), m_A(nullptr), m_b(nullptr), m_x(nullptr), m_num_iterations(-1),
       m_final_res_norm(std::numeric_limits<amrex::Real>::quiet_NaN()), m_converged(false) {
     BL_PROFILE("EffectiveDiffusivityHypre::Constructor");
 
@@ -158,6 +158,47 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
         m_dx[i_dim] = dx_tmp[i_dim];
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_dx[i_dim] > 0.0, "Cell size must be positive.");
     }
+
+    // --- Multi-phase transport coefficient parsing ---
+    {
+        amrex::ParmParse pp_tort("tortuosity");
+        amrex::Vector<int> active_phases_vec;
+        amrex::Vector<amrex::Real> phase_diffs_vec;
+        pp_tort.queryarr("active_phases", active_phases_vec);
+        pp_tort.queryarr("phase_diffusivities", phase_diffs_vec);
+
+        if (!active_phases_vec.empty() && !phase_diffs_vec.empty()) {
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                active_phases_vec.size() == phase_diffs_vec.size(),
+                "tortuosity.active_phases and tortuosity.phase_diffusivities must have the same "
+                "length");
+            for (size_t idx = 0; idx < active_phases_vec.size(); ++idx) {
+                m_phase_coeff_map[active_phases_vec[idx]] = phase_diffs_vec[idx];
+            }
+            m_is_multi_phase = true;
+        } else {
+            m_phase_coeff_map[m_phase_id] = 1.0;
+            m_is_multi_phase = false;
+        }
+    }
+
+    // Build coefficient MultiFab
+    m_mf_diff_coeff.setVal(0.0);
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+    for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.growntilebox();
+        amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
+        amrex::Array4<const int> const phase_arr = m_mf_phase_original.const_array(mfi);
+        const auto& coeff_map = m_phase_coeff_map;
+        amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+            int pid = phase_arr(i, j, k, 0);
+            auto it = coeff_map.find(pid);
+            dc_arr(i, j, k, 0) = (it != coeff_map.end()) ? it->second : 0.0;
+        });
+    }
+    m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
     m_mf_active_mask.setVal(cell_inactive);
     generateActiveMask();
@@ -259,33 +300,30 @@ void EffectiveDiffusivityHypre::generateActiveMask() {
 
         const amrex::Box& valid_bx_for_debug = mfi.validbox();
 
+        amrex::Array4<const amrex::Real> const dc_arr = m_mf_diff_coeff.const_array(mfi);
+
         amrex::LoopOnCpu(
             current_tile_box, [=, &cells_not_target_became_active, &cells_target_became_active,
                                &cells_target_became_inactive](int i, int j, int k) noexcept {
-                int original_phase_val = phase_arr(i, j, k, 0);
-                bool is_target_phase = (original_phase_val == local_m_phase_id);
+                // In multi-phase mode, mark active if D > 0.
+                // In single-phase mode, mark active if phase matches target.
+                bool should_be_active = (dc_arr(i, j, k, 0) > 0.0);
 
-                if (is_target_phase) {
+                if (should_be_active) {
                     mask_arr(i, j, k, MaskComp) = cell_active;
                     if (valid_bx_for_debug.contains(i, j, k)) {
                         cells_target_became_active++;
                     }
                 } else {
                     mask_arr(i, j, k, MaskComp) = cell_inactive;
-                    if (valid_bx_for_debug.contains(i, j, k)) {
-                        // This cell was not target_phase and correctly made inactive.
-                        // If it *was* target phase but made inactive (error in logic), this counter
-                        // is not for it.
-                    }
                 }
                 // Separate check for errors in valid region
+                int original_phase_val = phase_arr(i, j, k, 0);
+                bool is_target_phase = (original_phase_val == local_m_phase_id);
                 if (valid_bx_for_debug.contains(i, j, k)) {
-                    if (!is_target_phase && mask_arr(i, j, k, MaskComp) ==
-                                                cell_active) { // Was not target, but became active
+                    if (!is_target_phase && mask_arr(i, j, k, MaskComp) == cell_active) {
                         cells_not_target_became_active++;
-                    } else if (is_target_phase &&
-                               mask_arr(i, j, k, MaskComp) ==
-                                   cell_inactive) { // Was target, but became inactive
+                    } else if (is_target_phase && mask_arr(i, j, k, MaskComp) == cell_inactive) {
                         cells_target_became_inactive++;
                     }
                 }
@@ -529,6 +567,7 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
                            << sum_check << std::endl;
         }
     }
+    m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
@@ -560,11 +599,16 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
         const auto* mask_fab_lo = mask_fab.loVect();
         const auto* mask_fab_hi = mask_fab.hiVect();
 
+        const amrex::FArrayBox& dc_fab = m_mf_diff_coeff[mfi];
+        const amrex::Real* dc_ptr = dc_fab.dataPtr(0);
+        const auto* dc_fab_lo = dc_fab.loVect();
+        const auto* dc_fab_hi = dc_fab.hiVect();
+
         effdiff_fillmtx(matrix_values_buffer.data(), rhs_values_buffer.data(),
                         initial_guess_buffer.data(), &npts_valid, mask_ptr, mask_fab_lo,
-                        mask_fab_hi, valid_bx.loVect(), valid_bx.hiVect(),
-                        domain_for_kernel.loVect(), domain_for_kernel.hiVect(), m_dx.dataPtr(),
-                        &current_dir_int, &m_verbose);
+                        mask_fab_hi, dc_ptr, dc_fab_lo, dc_fab_hi, valid_bx.loVect(),
+                        valid_bx.hiVect(), domain_for_kernel.loVect(), domain_for_kernel.hiVect(),
+                        m_dx.dataPtr(), &current_dir_int, &m_verbose);
 
         auto hypre_lo_valid = EffectiveDiffusivityHypre::loV(valid_bx);
         auto hypre_hi_valid = EffectiveDiffusivityHypre::hiV(valid_bx);
