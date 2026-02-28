@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <limits>
+#include <map>
 
 #include <AMReX.H>
 #include <AMReX_iMultiFab.H>
@@ -113,7 +114,10 @@ public:
     }
     const amrex::iMultiFab& getActiveMask() const {
         return m_mf_active_mask;
-    } // Useful for D_eff calc
+    }
+    const amrex::MultiFab& getDiffCoeff() const {
+        return m_mf_diff_coeff;
+    }
 
     // Static Helper Functions for HYPRE box conversion (can be shared if moved to a common utility)
     static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> loV(const amrex::Box& b);
@@ -145,7 +149,12 @@ private:
     const amrex::DistributionMapping& m_dm;
     amrex::iMultiFab m_mf_phase_original; // Stores the input phase data
     amrex::iMultiFab m_mf_active_mask;    // Binary mask (1 for active phase, 0 otherwise)
+    amrex::MultiFab m_mf_diff_coeff;      // Spatially varying transport coefficient D(x)
     amrex::MultiFab m_mf_chi;             // Stores the solved chi_k for internal use/plotting
+
+    // Multi-phase configuration
+    std::map<int, amrex::Real> m_phase_coeff_map; // Maps phase ID -> transport coefficient
+    bool m_is_multi_phase = false;
 
     // Solver Statistics
     HYPRE_Int m_num_iterations;
@@ -182,12 +191,12 @@ extern "C" {
  * @param dir_k Integer representing the direction of ê_k (0 for X, 1 for Y, 2 for Z).
  * @param verbose_level Verbosity level for debugging in Fortran.
  */
-void effdiff_fillmtx( // Name matches the one used in the .cpp
-    amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, const int* npts_valid,
-    const int* active_mask_ptr, const int* mask_lo, const int* mask_hi, const int* valid_bx_lo,
-    const int* valid_bx_hi, const int* domain_lo, const int* domain_hi,
-    const amrex::Real* cell_sizes, // Pass dx, dy, dz
-    const int* dir_k, const int* verbose_level);
+void effdiff_fillmtx(amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, const int* npts_valid,
+                     const int* active_mask_ptr, const int* mask_lo, const int* mask_hi,
+                     const amrex::Real* diff_coeff_ptr, const int* dc_lo, const int* dc_hi,
+                     const int* valid_bx_lo, const int* valid_bx_hi, const int* domain_lo,
+                     const int* domain_hi, const amrex::Real* cell_sizes, const int* dir_k,
+                     const int* verbose_level);
 }
 
 

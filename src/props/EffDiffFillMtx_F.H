@@ -59,7 +59,8 @@ extern "C" {
  */
 void effdiff_fillmtx(amrex_real* a_out, amrex_real* rhs_out, amrex_real* xinit_out,
                      const int* npts_valid, const int* active_mask_ptr, const int* mask_lo,
-                     const int* mask_hi, const int* valid_bx_lo, const int* valid_bx_hi,
+                     const int* mask_hi, const amrex_real* diff_coeff_ptr, const int* dc_lo,
+                     const int* dc_hi, const int* valid_bx_lo, const int* valid_bx_hi,
                      const int* domain_lo, const int* domain_hi, const amrex_real* cell_sizes_in,
                      const int* dir_k_in, const int* verbose_level_in);
 
