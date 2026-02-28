@@ -2,7 +2,7 @@
 # OpenImpala - tests/ CMakeLists.txt
 # Builds test executables and registers them with CTest.
 #
-# Test source files currently live in src/io/ and src/props/ (prefixed with 't').
+# Test source files live in this directory (prefixed with 't').
 # Each test is an independent executable that links against the project libraries.
 # Tests are run via: mpirun -np 1 <test_exe> <inputs_file>
 # ==============================================================================
@@ -66,13 +66,13 @@ endfunction()
 # ==============================================================================
 # IO Tests
 # ==============================================================================
-openimpala_add_test(tTiffReader    "${CMAKE_SOURCE_DIR}/src/io/tTiffReader.cpp")
-openimpala_add_test(tRawReader     "${CMAKE_SOURCE_DIR}/src/io/tRawReader.cpp")
-openimpala_add_test(tHDF5Reader    "${CMAKE_SOURCE_DIR}/src/io/tHDF5Reader.cpp")
+openimpala_add_test(tTiffReader    "${CMAKE_CURRENT_SOURCE_DIR}/tTiffReader.cpp")
+openimpala_add_test(tRawReader     "${CMAKE_CURRENT_SOURCE_DIR}/tRawReader.cpp")
+openimpala_add_test(tHDF5Reader    "${CMAKE_CURRENT_SOURCE_DIR}/tHDF5Reader.cpp")
 
 # ==============================================================================
 # Props Tests
 # ==============================================================================
-openimpala_add_test(tTortuosity             "${CMAKE_SOURCE_DIR}/src/props/tTortuosity.cpp")
-openimpala_add_test(tVolumeFraction         "${CMAKE_SOURCE_DIR}/src/props/tVolumeFraction.cpp")
-openimpala_add_test(tEffectiveDiffusivity   "${CMAKE_SOURCE_DIR}/src/props/tEffectiveDiffusivity.cpp")
+openimpala_add_test(tTortuosity             "${CMAKE_CURRENT_SOURCE_DIR}/tTortuosity.cpp")
+openimpala_add_test(tVolumeFraction         "${CMAKE_CURRENT_SOURCE_DIR}/tVolumeFraction.cpp")
+openimpala_add_test(tEffectiveDiffusivity   "${CMAKE_CURRENT_SOURCE_DIR}/tEffectiveDiffusivity.cpp")

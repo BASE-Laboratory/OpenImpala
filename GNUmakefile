@@ -35,6 +35,7 @@ F90FLAGS      := -g -O3 -fbounds-check
 
 # Include project source dir and dependency includes
 INCLUDE       := -Isrc \
+		 -Isrc/io \
 		 -Isrc/props \
                  -I$(AMREX_HOME)/include \
                  -I$(HYPRE_HOME)/include \
@@ -70,25 +71,21 @@ SOURCES_IO_ALL     := $(wildcard src/io/*.cpp)
 SOURCES_PRP_ALL    := $(wildcard src/props/*.cpp)
 SOURCES_F90_ALL    := $(wildcard src/props/*.F90) # Assuming Fortran only in props
 
-# --- Identify Drivers (containing main()) ---
-SOURCES_APP_DRIVER := src/props/Diffusion.cpp
-SOURCES_IO_TESTS   := $(filter src/io/t%.cpp, $(SOURCES_IO_ALL))
-SOURCES_PRP_TESTS  := $(filter src/props/t%.cpp, $(SOURCES_PRP_ALL))
-SOURCES_TEST_DRIVERS:= $(SOURCES_IO_TESTS) $(SOURCES_PRP_TESTS)
+# --- Test drivers (now in tests/ directory) ---
+SOURCES_TESTS      := $(wildcard tests/t*.cpp)
 
-# --- Identify Library Sources (excluding drivers) ---
-SOURCES_IO_LIB     := $(filter-out $(SOURCES_IO_TESTS), $(SOURCES_IO_ALL))
-SOURCES_PRP_LIB    := $(filter-out $(SOURCES_PRP_TESTS) $(SOURCES_APP_DRIVER) src/props/hypre_test.cpp, $(SOURCES_PRP_ALL)) 
+# --- Identify App Driver ---
+SOURCES_APP_DRIVER := src/props/Diffusion.cpp
+
+# --- Identify Library Sources (excluding app driver and auxiliary files) ---
+SOURCES_IO_LIB     := $(SOURCES_IO_ALL)
+SOURCES_PRP_LIB    := $(filter-out $(SOURCES_APP_DRIVER) src/props/hypre_test.cpp, $(SOURCES_PRP_ALL))
 SOURCES_F90_LIB    := $(SOURCES_F90_ALL) # Assuming all F90 are library code
 
 # --- Define Object Files based on Categories ---
 OBJECTS_APP_DRIVER := $(patsubst src/props/%.cpp,$(PROPS_DIR)/%.o,$(SOURCES_APP_DRIVER))
-OBJECTS_IO_TESTS   := $(patsubst src/io/%.cpp,$(IO_DIR)/%.o,$(SOURCES_IO_TESTS))
-OBJECTS_PRP_TESTS  := $(patsubst src/props/%.cpp,$(PROPS_DIR)/%.o,$(SOURCES_PRP_TESTS))
-OBJECTS_TEST_DRIVERS:= $(OBJECTS_IO_TESTS) $(OBJECTS_PRP_TESTS)
-
-TEST_EXECS_IO      := $(patsubst src/io/%.cpp,$(TST_DIR)/%,$(SOURCES_IO_TESTS))
-TEST_EXECS_PRP      := $(patsubst src/props/%.cpp,$(TST_DIR)/%,$(SOURCES_PRP_TESTS))
+OBJECTS_TESTS      := $(patsubst tests/%.cpp,$(TST_DIR)/%.o,$(SOURCES_TESTS))
+TEST_EXECS         := $(patsubst tests/%.cpp,$(TST_DIR)/%,$(SOURCES_TESTS))
 
 OBJECTS_IO_LIB     := $(patsubst src/io/%.cpp,$(IO_DIR)/%.o,$(SOURCES_IO_LIB))
 OBJECTS_PRP_LIB    := $(patsubst src/props/%.cpp,$(PROPS_DIR)/%.o,$(SOURCES_PRP_LIB))
@@ -110,16 +107,15 @@ all: main tests
 # Main application executable (Diffusion)
 main: $(APP_DIR)/Diffusion
 
-# Define test executables based on found test sources
-TEST_EXECS := $(patsubst src/props/%.cpp,$(TST_DIR)/%,$(SOURCES_TST_CPP))
-tests: $(TEST_EXECS_IO) $(TEST_EXECS_PRP)
+# All test executables (sources now in tests/ directory)
+tests: $(TEST_EXECS)
 
 # Target to run the tests after they are built, linking specific input files
 test: tests
 	@echo ""
 	@echo "--- Running Tests ---"
 	@passed_all=true; \
-	list_of_tests='$(TEST_EXECS_IO) $(TEST_EXECS_PRP)'; \
+	list_of_tests='$(TEST_EXECS)'; \
 	rm -f ./inputs; \
 	if [ -z "$$list_of_tests" ]; then \
 	    echo "No test executables found to run."; \
@@ -170,9 +166,9 @@ $(OBJECTS_IO_LIB): $(IO_DIR)/%.o: src/io/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(INCLUDE) -c $< -o $@
 
-# Static Pattern Rule for IO Test C++ objects
-$(OBJECTS_IO_TESTS): $(IO_DIR)/%.o: src/io/%.cpp
-	@echo "Compiling (IO Test) $< ..."
+# Static Pattern Rule for Test C++ objects (sources in tests/)
+$(OBJECTS_TESTS): $(TST_DIR)/%.o: tests/%.cpp
+	@echo "Compiling (Test) $< ..."
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(INCLUDE) -c $< -o $@
 
@@ -185,12 +181,6 @@ $(OBJECTS_PRP_LIB): $(PROPS_DIR)/%.o: src/props/%.cpp
 # Static Pattern Rule for Props App Driver C++ object
 $(OBJECTS_APP_DRIVER): $(PROPS_DIR)/%.o: src/props/%.cpp
 	@echo "Compiling (App Driver) $< ..."
-	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) $(INCLUDE) -c $< -o $@
-
-# Static Pattern Rule for Props Test C++ objects
-$(OBJECTS_PRP_TESTS): $(PROPS_DIR)/%.o: src/props/%.cpp
-	@echo "Compiling (Props Test) $< ..."
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(INCLUDE) -c $< -o $@
 
@@ -210,16 +200,8 @@ $(APP_DIR)/Diffusion: $(OBJECTS_APP_DRIVER) $(OBJECTS_LIB_ALL)
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) # Use $^ for all prerequisites
 
-# Test executables from src/props
-# Note: This relies on OBJECTS_PRP_TESTS defining the specific .o files
-$(TEST_EXECS_PRP): $(TST_DIR)/%: $(PROPS_DIR)/%.o $(OBJECTS_LIB_ALL)
-	@echo "Linking Test $@ ..."
-	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) # Use $^ for all prerequisites
-
-# Test executables from src/io
-# Note: This relies on OBJECTS_IO_TESTS defining the specific .o files
-$(TEST_EXECS_IO): $(TST_DIR)/%: $(IO_DIR)/%.o $(OBJECTS_LIB_ALL)
+# Test executables (sources in tests/)
+$(TEST_EXECS): $(TST_DIR)/%: $(TST_DIR)/%.o $(OBJECTS_LIB_ALL)
 	@echo "Linking Test $@ ..."
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) # Use $^ for all prerequisites
@@ -239,7 +221,7 @@ release: all
 # Static analysis with clang-tidy (requires clang-tidy to be installed)
 CLANG_TIDY    ?= clang-tidy
 TIDY_FLAGS    := -- -std=c++17 -fopenmp -DOMPI_SKIP_MPICXX $(INCLUDE)
-SOURCES_CPP_ALL := $(SOURCES_IO_ALL) $(SOURCES_PRP_ALL)
+SOURCES_CPP_ALL := $(SOURCES_IO_ALL) $(SOURCES_PRP_ALL) $(SOURCES_TESTS)
 
 tidy:
 	@echo "--- Running clang-tidy ---"
@@ -262,7 +244,7 @@ clean:
 # ============================================================
 # Include the .d files generated by CXXFLAGS -MMD -MP for C++ files
 # Includes both app and test objects dependencies now
--include $(OBJECTS_IO_LIB:.o=.d) $(OBJECTS_PRP_LIB:.o=.d) $(OBJECTS_APP_DRIVER:.o=.d) $(OBJECTS_TEST_DRIVERS:.o=.d)
+-include $(OBJECTS_IO_LIB:.o=.d) $(OBJECTS_PRP_LIB:.o=.d) $(OBJECTS_APP_DRIVER:.o=.d) $(OBJECTS_TESTS:.o=.d)
 
 # ============================================================
 # Debugging Help (Uncomment to use)

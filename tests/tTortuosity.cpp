@@ -1,4 +1,4 @@
-#include "../io/TiffReader.H" // Assuming TiffReader is in OpenImpala namespace
+#include "TiffReader.H" // Assuming TiffReader is in OpenImpala namespace
 #include "TortuosityHypre.H"  // Assuming TortuosityHypre is in OpenImpala namespace
 #include "VolumeFraction.H"   // Assuming VolumeFraction is in OpenImpala namespace
 #include "Tortuosity.H"       // Include base class for OpenImpala::Direction enum
