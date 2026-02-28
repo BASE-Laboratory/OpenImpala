@@ -990,8 +990,7 @@ amrex::Real OpenImpala::TortuosityHypre::value(const bool refresh) {
         // Solve converged, now calculate fluxes and check conservation
         global_fluxes(); // Calculates and stores m_flux_in, m_flux_out
 
-        // --- Check Flux Conservation ---
-        // Logic remains the same...
+        // --- Check Flux Conservation (boundary + interior planes) ---
         constexpr amrex::Real flux_tol = 1.0e-6;
         bool flux_conserved = true;
         amrex::Real rel_diff = 0.0;
@@ -1016,9 +1015,29 @@ amrex::Real OpenImpala::TortuosityHypre::value(const bool refresh) {
             amrex::Print() << "    Relative Difference = " << std::scientific << rel_diff
                            << std::defaultfloat << " (Tolerance = " << flux_tol << ")\n";
             if (!flux_conserved) {
-                amrex::Warning("Flux conservation check failed!");
+                amrex::Warning("Boundary flux conservation check failed!");
             } else {
-                amrex::Print() << "    Conservation Check Status: PASS\n";
+                amrex::Print() << "    Boundary Conservation Check Status: PASS\n";
+            }
+        }
+
+        // --- Interior Plane Flux Conservation Check ---
+        // Verify that flux is conserved at every cross-section, not just boundaries.
+        // This catches cases like narrow inlets/outlets where boundary flux is
+        // unreliable but interior planes reveal non-conservation.
+        if (flux_conserved && !m_plane_fluxes.empty()) {
+            if (m_plane_flux_max_dev > flux_tol) {
+                flux_conserved = false;
+                if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
+                    amrex::Warning(
+                        "Interior plane flux conservation check failed! Max deviation = " +
+                        std::to_string(m_plane_flux_max_dev) +
+                        " > tolerance = " + std::to_string(flux_tol));
+                }
+            } else if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << "    Interior Plane Conservation Check Status: PASS"
+                               << " (max_dev=" << std::scientific << m_plane_flux_max_dev
+                               << std::defaultfloat << ")\n";
             }
         }
 
@@ -1054,7 +1073,20 @@ amrex::Real OpenImpala::TortuosityHypre::value(const bool refresh) {
             }
             amrex::Real gradPhi = (m_vhi - m_vlo) / L; // Assumes L > 0
             amrex::Real Deff = 0.0;
-            amrex::Real avg_flux_mag = 0.5 * (std::abs(m_flux_in) + std::abs(m_flux_out));
+
+            // Use mean of interior plane fluxes when available (more robust
+            // than boundary-only average for geometries with narrow inlets).
+            // Falls back to boundary average if plane fluxes are empty.
+            amrex::Real avg_flux_mag;
+            if (!m_plane_fluxes.empty()) {
+                amrex::Real sum_plane = 0.0;
+                for (const auto& pf : m_plane_fluxes) {
+                    sum_plane += std::abs(pf);
+                }
+                avg_flux_mag = sum_plane / static_cast<amrex::Real>(m_plane_fluxes.size());
+            } else {
+                avg_flux_mag = 0.5 * (std::abs(m_flux_in) + std::abs(m_flux_out));
+            }
 
             // Handle edge cases
             if (avg_flux_mag < tiny_flux_threshold) {
@@ -1445,6 +1477,137 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
     }
     m_flux_in = local_fxin * face_area_element;
     m_flux_out = local_fxout * face_area_element;
+
+    // Compute flux through every interior plane for enhanced convergence checking
+    computePlaneFluxes(mf_soln_temp);
 }
+
+
+// --- computePlaneFluxes ---
+// Computes total flux through every inter-cell face perpendicular to the flow
+// direction.  For a domain with N cells in the flow direction there are (N-1)
+// interior faces (between cell i and cell i+1, for i = 0 .. N-2).
+// After computation, m_plane_fluxes[i] holds the total (area-weighted) flux
+// through the face between cell-plane i and i+1.
+// The result allows verification of flux conservation at every cross-section,
+// not just at the inlet and outlet boundaries.
+void OpenImpala::TortuosityHypre::computePlaneFluxes(const amrex::MultiFab& mf_soln) {
+    BL_PROFILE("TortuosityHypre::computePlaneFluxes");
+
+    const amrex::Box& domain = m_geom.Domain();
+    const amrex::Real* dx = m_geom.CellSize();
+    const int idir = static_cast<int>(m_dir);
+    const int n_cells = domain.length(idir); // Number of cells in flow direction
+    const int n_faces = n_cells - 1;         // Interior inter-cell faces
+
+    // Compute face area element (product of dx in the two perpendicular directions)
+    amrex::Real face_area_element = 1.0;
+    if (AMREX_SPACEDIM == 3) {
+        if (idir == 0) {
+            face_area_element = dx[1] * dx[2];
+        } else if (idir == 1) {
+            face_area_element = dx[0] * dx[2];
+        } else {
+            face_area_element = dx[0] * dx[1];
+        }
+    } else if (AMREX_SPACEDIM == 2) {
+        face_area_element = (idir == 0) ? dx[1] : dx[0];
+    }
+
+    const amrex::Real dx_dir = dx[idir];
+    amrex::IntVect shift = amrex::IntVect::TheDimensionVector(idir);
+
+    // Each rank accumulates its local contribution per face.
+    std::vector<amrex::Real> local_plane_flux(n_faces, 0.0);
+
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+    {
+        // Thread-private accumulator to avoid lock contention
+        std::vector<amrex::Real> priv_plane_flux(n_faces, 0.0);
+
+        for (amrex::MFIter mfi(m_mf_active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& tileBox = mfi.tilebox();
+            amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
+            amrex::Array4<const amrex::Real> const soln = mf_soln.const_array(mfi);
+            amrex::Array4<const amrex::Real> const dc = m_mf_diff_coeff.const_array(mfi);
+
+            // For each cell in the tile, compute flux across its "plus" face
+            // in the flow direction (i.e. the face between cell iv and iv+shift).
+            // Only consider faces where both cells are active.
+            // We skip the last cell-plane (domain.bigEnd) because there is no
+            // cell beyond it within the domain.
+            amrex::Box flux_box = tileBox;
+            flux_box.setBig(idir, std::min(tileBox.bigEnd(idir), domain.bigEnd(idir) - 1));
+
+            amrex::LoopOnCpu(flux_box, [&](int i, int j, int k) {
+                amrex::IntVect iv(i, j, k);
+                amrex::IntVect iv_plus = iv + shift;
+                if (mask(iv) == cell_active && mask(iv_plus) == cell_active) {
+                    amrex::Real D_lo = dc(iv);
+                    amrex::Real D_hi = dc(iv_plus);
+                    amrex::Real D_face =
+                        (D_lo + D_hi > 0.0) ? 2.0 * D_lo * D_hi / (D_lo + D_hi) : 0.0;
+                    amrex::Real grad = (soln(iv_plus) - soln(iv)) / dx_dir;
+                    amrex::Real flux = -D_face * grad * face_area_element;
+                    // Face index: the face between cell-plane p and p+1 has index p,
+                    // where p is the cell coordinate in the flow direction minus the
+                    // domain lower bound.
+                    int face_idx = iv[idir] - domain.smallEnd(idir);
+                    priv_plane_flux[face_idx] += flux;
+                }
+            });
+        } // end MFIter
+
+        // Merge thread-private into local
+#ifdef AMREX_USE_OMP
+#pragma omp critical
+#endif
+        {
+            for (int f = 0; f < n_faces; ++f) {
+                local_plane_flux[f] += priv_plane_flux[f];
+            }
+        }
+    } // end parallel region
+
+    // MPI reduction across ranks
+    amrex::ParallelDescriptor::ReduceRealSum(local_plane_flux.data(), n_faces);
+
+    // Store results
+    m_plane_fluxes = std::move(local_plane_flux);
+
+    // Compute statistics: mean flux and max deviation
+    amrex::Real sum_flux = 0.0;
+    for (int f = 0; f < n_faces; ++f) {
+        sum_flux += m_plane_fluxes[f];
+    }
+    amrex::Real mean_flux = sum_flux / n_faces;
+
+    amrex::Real max_abs_dev = 0.0;
+    for (int f = 0; f < n_faces; ++f) {
+        amrex::Real dev = std::abs(m_plane_fluxes[f] - mean_flux);
+        if (dev > max_abs_dev)
+            max_abs_dev = dev;
+    }
+
+    amrex::Real abs_mean = std::abs(mean_flux);
+    m_plane_flux_max_dev = (abs_mean > tiny_flux_threshold) ? max_abs_dev / abs_mean : 0.0;
+
+    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
+        amrex::Print() << "  Interior Plane Flux Check (" << n_faces << " faces):\n";
+        amrex::Print() << "    Mean Plane Flux = " << std::scientific << mean_flux << "\n";
+        amrex::Print() << "    Max |F_i - mean| / |mean| = " << std::scientific
+                       << m_plane_flux_max_dev << std::defaultfloat << "\n";
+    }
+    if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor()) {
+        amrex::Print() << "    Per-plane fluxes:\n";
+        for (int f = 0; f < n_faces; ++f) {
+            amrex::Print() << "      face " << f << ": " << std::scientific << m_plane_fluxes[f]
+                           << std::defaultfloat << "\n";
+        }
+    }
+}
+
 
 } // End namespace OpenImpala
