@@ -1,0 +1,34 @@
+# Input file for synthetic multi-phase transport test
+#
+# Creates a uniform 32^3 domain (all cells = phase 0) with D=1.0.
+# For a uniform material with no obstacles, the expected tortuosity is 1.0.
+#
+# This validates:
+#   - Multi-phase ParmParse parsing (tortuosity.active_phases / phase_diffusivities)
+#   - isMultiPhase() API returns true
+#   - getPhaseCoeffMap() returns correct entries
+#   - Solver converges on synthetic uniform geometry
+#   - Tortuosity matches analytical expectation (tau=1.0)
+
+domain_size = 32
+box_size = 16
+verbose = 2
+num_phases_fill = 1
+direction = X
+solver = FlexGMRES
+
+# Expected result for uniform material
+expected_tau = 1.0
+tau_tolerance = 0.01
+
+resultsdir = ./tMultiPhaseTransport_results
+
+# --- Solver Controls ---
+hypre.maxiter = 500
+hypre.eps = 1e-9
+
+# --- Multi-phase configuration ---
+# Single active phase with D=1.0 (exercises explicit multi-phase code path)
+tortuosity.active_phases = 0
+tortuosity.phase_diffusivities = 1.0
+tortuosity.remspot_passes = 0

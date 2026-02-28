@@ -1,0 +1,33 @@
+# Input file for tEffectiveDiffusivity test with multi-phase transport coefficients
+#
+# Uses the same binary TIFF as the single-phase test, but activates both phases
+# with different diffusion coefficients via the multi-phase code path.
+# Phase 0 -> D = 0.5, Phase 1 -> D = 1.0
+#
+# This exercises:
+#   - Multi-phase coefficient parsing in EffectiveDiffusivityHypre
+#   - Variable-coefficient cell problem: nabla . (D nabla chi_k) = -nabla . (D e_k)
+#   - D(x)-weighted D_eff tensor calculation in the test driver
+
+# Path to the input image file (binary TIFF with phases 0 and 1)
+tifffile = "data/SampleData_2Phase_stack_3d_1bit.tif"
+
+# --- Effective Diffusivity Test Specific Parameters ---
+phase_id = 1
+threshold_val = 0.5
+
+# --- Solver Configuration ---
+solver = "FlexGMRES"
+hypre.maxiter = 500
+hypre.eps = 1.0e-9
+
+# --- General Controls ---
+box_size = 32
+verbose = 2
+write_plotfile = 0
+resultsdir = "./tEffectiveDiffusivity_multiphase_results"
+
+# --- Multi-phase transport coefficients ---
+# Both phases are conducting: phase 0 with D=0.5, phase 1 with D=1.0
+tortuosity.active_phases = 0 1
+tortuosity.phase_diffusivities = 0.5 1.0

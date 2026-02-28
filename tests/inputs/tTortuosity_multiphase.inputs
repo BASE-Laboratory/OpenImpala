@@ -1,0 +1,35 @@
+# Input file for tTortuosity test with multi-phase transport coefficients
+#
+# Uses the same binary TIFF as the single-phase test, but activates both phases
+# with different diffusion coefficients via the multi-phase code path.
+# Phase 0 -> D = 1.0, Phase 1 -> D = 0.5
+#
+# This exercises:
+#   - tortuosity.active_phases / tortuosity.phase_diffusivities parsing
+#   - Coefficient MultiFab construction from phase map
+#   - Binary traversable mask for multi-phase flood fill
+#   - Harmonic mean face coefficients in variable-coefficient solver
+#   - D_face-weighted flux calculation in global_fluxes()
+
+# Path to the input image file (binary TIFF with phases 0 and 1)
+tifffile = data/SampleData_2Phase_stack_3d_1bit.tif
+
+# --- Tortuosity specific parameters ---
+phase_id = 0
+direction = X
+solver = FlexGMRES
+
+# --- Solver Controls ---
+hypre.maxiter = 1000
+hypre.eps = 1e-10
+
+# --- Test Verbosity ---
+verbose = 2
+
+# --- Multi-phase transport coefficients ---
+# Both phases are conducting: phase 0 with D=1.0, phase 1 with D=0.5
+# This makes the entire domain traversable with spatially varying D(x).
+tortuosity.active_phases = 0 1
+tortuosity.phase_diffusivities = 1.0 0.5
+
+tortuosity.remspot_passes = 0
