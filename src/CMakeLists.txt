@@ -38,6 +38,7 @@ target_include_directories(openimpala_io PUBLIC
 add_library(openimpala_props OBJECT
     # C++ sources
     props/EffectiveDiffusivityHypre.cpp
+    props/PercolationCheck.cpp
     props/TortuosityDirect.cpp
     props/TortuosityHypre.cpp
     props/VolumeFraction.cpp

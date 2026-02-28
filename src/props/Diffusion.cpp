@@ -14,6 +14,7 @@
 #include "EffectiveDiffusivityHypre.H"
 #include "TortuosityHypre.H"
 #include "VolumeFraction.H"
+#include "PercolationCheck.H"
 #include "Tortuosity.H" // For OpenImpala::Direction enum
 
 #include <AMReX.H>
@@ -202,7 +203,7 @@ int main(int argc, char* argv[]) {
         int main_write_plotfile_full = 0;
         std::string main_calculation_method = "homogenization";
         std::string output_filename = "results.txt"; // Added this line
-
+        bool dry_run = false;
 
         bool rev_do_study = false;
         int rev_num_samples = 3;
@@ -226,6 +227,7 @@ int main(int argc, char* argv[]) {
             pp.query("write_plotfile", main_write_plotfile_full);
             pp.query("calculation_method", main_calculation_method);
             pp.query("output_filename", output_filename); // Added this line
+            pp.query("dry_run", dry_run);
 
             amrex::ParmParse ppr("rev");
             ppr.query("do_study", rev_do_study);
@@ -354,7 +356,113 @@ int main(int argc, char* argv[]) {
         }
 
 
-        if (rev_do_study) {
+        // =====================================================================
+        // Dry Run Mode: sanity checks and early exit
+        // =====================================================================
+        if (dry_run) {
+            if (amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << "\n"
+                               << "============================================================\n"
+                               << "                    DRY RUN REPORT\n"
+                               << "============================================================\n";
+            }
+
+            // --- Domain summary ---
+            if (amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << "\n--- Domain Summary ---\n";
+                amrex::Print() << "  Input file:    " << main_filename << "\n";
+                amrex::Print() << "  Dimensions:    " << domain_box_full.length(0) << " x "
+                               << domain_box_full.length(1) << " x " << domain_box_full.length(2)
+                               << "\n";
+                amrex::Print() << "  Total voxels:  " << domain_box_full.numPts() << "\n";
+                amrex::Print() << "  Box size:      " << main_box_size << "\n";
+                amrex::Print() << "  Num boxes:     " << ba_full.size() << "\n";
+                amrex::Print() << "  MPI ranks:     " << amrex::ParallelDescriptor::NProcs() << "\n";
+                amrex::Print() << "  Threshold:     " << main_threshold_val << "\n";
+                amrex::Print() << "  Analysis phase:" << main_phase_id_analysis << "\n";
+                amrex::Print() << "  Calc method:   " << main_calculation_method << "\n";
+            }
+
+            // --- Volume fractions for all phases ---
+            if (amrex::ParallelDescriptor::IOProcessor())
+                amrex::Print() << "\n--- Volume Fractions ---\n";
+
+            // Phase 0 and phase 1 (binary image after threshold)
+            for (int pid = 0; pid <= 1; ++pid) {
+                OpenImpala::VolumeFraction vf_calc(mf_phase_full, pid);
+                long long phase_count = 0, total_count = 0;
+                vf_calc.value(phase_count, total_count, false);
+                amrex::Real vf = (total_count > 0)
+                                     ? static_cast<amrex::Real>(phase_count) /
+                                           static_cast<amrex::Real>(total_count)
+                                     : 0.0;
+                if (amrex::ParallelDescriptor::IOProcessor()) {
+                    std::string marker = (pid == main_phase_id_analysis) ? " <-- analysis phase" : "";
+                    amrex::Print() << "  Phase " << pid << ": " << std::fixed << std::setprecision(6)
+                                   << vf << " (" << phase_count << " / " << total_count
+                                   << " voxels)" << marker << "\n";
+                }
+            }
+
+            // --- Percolation checks ---
+            if (amrex::ParallelDescriptor::IOProcessor())
+                amrex::Print() << "\n--- Percolation Check (Phase " << main_phase_id_analysis
+                               << ") ---\n";
+
+            // Build non-periodic geometry for percolation checking
+            amrex::Geometry geom_nonperiodic;
+            {
+                amrex::RealBox rb_np = geom_full.ProbDomain();
+                amrex::Array<int, AMREX_SPACEDIM> is_periodic_np = {AMREX_D_DECL(0, 0, 0)};
+                geom_nonperiodic.define(domain_box_full, &rb_np, 0, is_periodic_np.data());
+            }
+
+            bool any_failure = false;
+            std::vector<OpenImpala::Direction> check_dirs = {
+                OpenImpala::Direction::X, OpenImpala::Direction::Y, OpenImpala::Direction::Z};
+
+            for (const auto& dir : check_dirs) {
+                OpenImpala::PercolationCheck pc(geom_nonperiodic, ba_full, dm_full, mf_phase_full,
+                                               main_phase_id_analysis, dir, main_verbose);
+                std::string dir_str = OpenImpala::PercolationCheck::directionString(dir);
+                if (amrex::ParallelDescriptor::IOProcessor()) {
+                    if (pc.percolates()) {
+                        amrex::Print() << "  " << dir_str
+                                       << "-direction: SUCCESS (percolates, active VF = "
+                                       << std::fixed << std::setprecision(6)
+                                       << pc.activeVolumeFraction() << ")\n";
+                    } else {
+                        amrex::Print() << "  " << dir_str
+                                       << "-direction: FAILURE (does not percolate)\n";
+                        any_failure = true;
+                    }
+                }
+            }
+
+            // --- Summary ---
+            if (amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << "\n--- Recommendation ---\n";
+                if (any_failure && main_calculation_method == "flow_through") {
+                    amrex::Print()
+                        << "  WARNING: One or more directions do not percolate.\n"
+                        << "  A flow-through tortuosity calculation in a non-percolating\n"
+                        << "  direction will produce meaningless results (infinite tortuosity).\n";
+                } else {
+                    amrex::Print() << "  All checks passed. The dataset looks suitable for a "
+                                   << main_calculation_method << " calculation.\n";
+                }
+                amrex::Print() << "\n"
+                               << "============================================================\n"
+                               << "  Dry run complete. No solver was executed.\n"
+                               << "============================================================\n\n";
+            }
+
+        }
+
+
+        if (dry_run) {
+            // Skip all computation in dry run mode
+        } else if (rev_do_study) {
             if (main_verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << "\n--- Starting REV Study (Homogenization Method) for Phase ID "
                                << main_phase_id_analysis << " ---\n";
@@ -605,7 +713,7 @@ int main(int argc, char* argv[]) {
         }
 
 
-        if (!rev_do_study || main_calculation_method != "skip_if_rev") {
+        if (!dry_run && (!rev_do_study || main_calculation_method != "skip_if_rev")) {
             if (main_verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << "\n--- Full Domain Calculation (" << main_calculation_method
                                << ") using phase " << main_phase_id_analysis << " ---\n";
