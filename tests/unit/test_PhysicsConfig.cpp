@@ -292,3 +292,248 @@ TEST_CASE("All physics types produce finite results for valid inputs",
         }
     }
 }
+
+// ============================================================================
+// Edge cases: extreme and degenerate inputs
+// ============================================================================
+TEST_CASE("effectiveProperty handles extreme values", "[PhysicsConfig][edge]") {
+    auto cfg = makeConfig("diffusion", 1.0);
+
+    SECTION("very small D_eff_ratio") {
+        CHECK(cfg.effectiveProperty(1e-15) == Approx(1e-15));
+    }
+
+    SECTION("very large D_eff_ratio") {
+        CHECK(cfg.effectiveProperty(1e15) == Approx(1e15));
+    }
+
+    SECTION("very large bulk property with small ratio") {
+        cfg.bulk_property = 1e30;
+        CHECK(std::isfinite(cfg.effectiveProperty(1e-15)));
+        CHECK(cfg.effectiveProperty(1e-15) == Approx(1e15));
+    }
+}
+
+TEST_CASE("tortuosityFactor edge cases", "[PhysicsConfig][edge]") {
+    auto cfg = makeConfig("diffusion");
+
+    SECTION("zero volume fraction returns zero") {
+        CHECK(cfg.tortuosityFactor(0.5, 0.0) == Approx(0.0));
+    }
+
+    SECTION("very small D_eff_ratio gives very large tortuosity") {
+        double result = cfg.tortuosityFactor(1e-10, 0.5);
+        CHECK(std::isfinite(result));
+        CHECK(result == Approx(5e9));
+    }
+
+    SECTION("D_eff_ratio equals vf gives tortuosity of 1") {
+        CHECK(cfg.tortuosityFactor(0.35, 0.35) == Approx(1.0));
+    }
+
+    SECTION("D_eff_ratio greater than vf gives tortuosity less than 1") {
+        double result = cfg.tortuosityFactor(0.8, 0.4);
+        CHECK(result == Approx(0.5));
+        CHECK(result < 1.0);
+    }
+}
+
+TEST_CASE("formationFactor edge cases", "[PhysicsConfig][edge]") {
+    auto cfg = makeConfig("electrical_conductivity");
+
+    SECTION("D_eff_ratio of 1 gives formation factor of 1") {
+        CHECK(cfg.formationFactor(1.0) == Approx(1.0));
+    }
+
+    SECTION("negative D_eff_ratio returns infinity") {
+        CHECK(std::isinf(cfg.formationFactor(-0.5)));
+    }
+
+    SECTION("very small positive D_eff_ratio") {
+        CHECK(cfg.formationFactor(1e-12) == Approx(1e12));
+    }
+}
+
+// ============================================================================
+// Physical bounds relationships
+// ============================================================================
+TEST_CASE("Physical consistency: tau >= 1 when D_eff_ratio <= vf", "[PhysicsConfig][physics]") {
+    auto cfg = makeConfig("diffusion");
+
+    // For physical porous media, D_eff/D_bulk <= porosity,
+    // which means tortuosity >= 1.0
+    SECTION("typical porous medium") {
+        double vf = 0.35;
+        double D_eff_ratio = 0.12; // Less than vf, as expected
+        double tau = cfg.tortuosityFactor(D_eff_ratio, vf);
+        CHECK(tau >= 1.0);
+    }
+
+    SECTION("Bruggeman relation: tau = vf^(-0.5)") {
+        // Common approximation: D_eff = D_bulk * vf^1.5
+        // So D_eff_ratio = vf^1.5, and tau = vf / vf^1.5 = vf^(-0.5)
+        double vf = 0.4;
+        double D_eff_ratio = std::pow(vf, 1.5);
+        double tau = cfg.tortuosityFactor(D_eff_ratio, vf);
+        double expected_tau = 1.0 / std::sqrt(vf);
+        CHECK(tau == Approx(expected_tau));
+    }
+
+    SECTION("formation factor F = tau / vf = 1 / D_eff_ratio") {
+        // Archie's law relationship: F = tau / epsilon = 1 / D_eff_ratio
+        auto cfg_ec = makeConfig("electrical_conductivity");
+        double D_eff_ratio = 0.2;
+        double vf = 0.35;
+        double tau = cfg_ec.tortuosityFactor(D_eff_ratio, vf);
+        double F = cfg_ec.formationFactor(D_eff_ratio);
+        CHECK(F == Approx(tau / vf));
+    }
+}
+
+// ============================================================================
+// writeDirectionResults — all physics types and edge cases
+// ============================================================================
+TEST_CASE("writeDirectionResults for all physics types", "[PhysicsConfig][output]") {
+    const std::vector<std::string> types = {"diffusion", "electrical_conductivity",
+                                            "thermal_conductivity", "dielectric_permittivity",
+                                            "magnetic_permeability"};
+
+    for (const auto& type_str : types) {
+        DYNAMIC_SECTION("type=" << type_str) {
+            auto cfg = makeConfig(type_str, 2.5);
+            std::ostringstream oss;
+            cfg.writeDirectionResults(oss, "X", 0.4, 0.35);
+            std::string output = oss.str();
+
+            // All types should have ratio and tortuosity lines
+            CHECK(output.find("_X:") != std::string::npos);
+            CHECK(output.find("Tortuosity_X:") != std::string::npos);
+
+            // Only electrical_conductivity should have FormationFactor
+            if (type_str == "electrical_conductivity") {
+                CHECK(output.find("FormationFactor_X:") != std::string::npos);
+            } else {
+                CHECK(output.find("FormationFactor_X:") == std::string::npos);
+            }
+        }
+    }
+}
+
+TEST_CASE("writeDirectionResults with zero D_eff_ratio", "[PhysicsConfig][output][edge]") {
+    auto cfg = makeConfig("electrical_conductivity", 5.96e7);
+    std::ostringstream oss;
+    cfg.writeDirectionResults(oss, "X", 0.0, 0.5);
+    std::string output = oss.str();
+
+    // Should still produce output (with infinity for tortuosity/formation factor)
+    CHECK(output.find("sigma_eff_ratio_X:") != std::string::npos);
+    CHECK(output.find("Tortuosity_X:") != std::string::npos);
+    CHECK(output.find("FormationFactor_X:") != std::string::npos);
+    CHECK(output.find("EffectiveConductivity_X:") != std::string::npos);
+}
+
+TEST_CASE("writeDirectionResults uses correct direction labels", "[PhysicsConfig][output]") {
+    auto cfg = makeConfig("diffusion", 1.0);
+
+    for (const auto& dir : {"X", "Y", "Z"}) {
+        DYNAMIC_SECTION("direction=" << dir) {
+            std::ostringstream oss;
+            cfg.writeDirectionResults(oss, dir, 0.5, 0.4);
+            std::string output = oss.str();
+            std::string expected_key = std::string("Deff_ratio_") + dir + ":";
+            CHECK(output.find(expected_key) != std::string::npos);
+        }
+    }
+}
+
+// ============================================================================
+// writeHeader — all physics types
+// ============================================================================
+TEST_CASE("writeHeader for all physics types", "[PhysicsConfig][output]") {
+    const std::vector<std::pair<std::string, std::string>> type_and_label = {
+        {"diffusion", "Diffusion"},
+        {"electrical_conductivity", "Electrical Conductivity"},
+        {"thermal_conductivity", "Thermal Conductivity"},
+        {"dielectric_permittivity", "Dielectric Permittivity"},
+        {"magnetic_permeability", "Magnetic Permeability"}};
+
+    for (const auto& [type_str, expected_name] : type_and_label) {
+        DYNAMIC_SECTION("type=" << type_str) {
+            auto cfg = makeConfig(type_str, 3.14);
+            std::ostringstream oss;
+            cfg.writeHeader(oss, "my_image.tif", 2);
+            std::string output = oss.str();
+
+            CHECK(output.find("# Physics Type: " + expected_name) != std::string::npos);
+            CHECK(output.find("# Input File: my_image.tif") != std::string::npos);
+            CHECK(output.find("# Analysis Phase ID: 2") != std::string::npos);
+            CHECK(output.find("# Bulk Property") != std::string::npos);
+            CHECK(output.find("# ---") != std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("writeHeader with different phase IDs", "[PhysicsConfig][output]") {
+    auto cfg = makeConfig("diffusion", 1.0);
+
+    for (int phase : {0, 1, 5, 255}) {
+        DYNAMIC_SECTION("phase_id=" << phase) {
+            std::ostringstream oss;
+            cfg.writeHeader(oss, "test.tif", phase);
+            std::string expected = "# Analysis Phase ID: " + std::to_string(phase);
+            CHECK(oss.str().find(expected) != std::string::npos);
+        }
+    }
+}
+
+// ============================================================================
+// fromTypeString does not modify cfg on failure
+// ============================================================================
+TEST_CASE("fromTypeString does not modify cfg on failure", "[PhysicsConfig][parsing]") {
+    PhysicsConfig cfg;
+    cfg.type = PhysicsType::ThermalConductivity;
+    cfg.name = "Original";
+    cfg.bulk_property = 99.0;
+
+    bool result = PhysicsConfig::fromTypeString("not_a_real_type", cfg);
+
+    CHECK_FALSE(result);
+    CHECK(cfg.type == PhysicsType::ThermalConductivity);
+    CHECK(cfg.name == "Original");
+    CHECK(cfg.bulk_property == 99.0);
+}
+
+// ============================================================================
+// fromTypeString with near-miss strings
+// ============================================================================
+TEST_CASE("fromTypeString rejects partial and near-miss strings", "[PhysicsConfig][parsing]") {
+    PhysicsConfig cfg;
+    CHECK_FALSE(PhysicsConfig::fromTypeString("diffusio", cfg));
+    CHECK_FALSE(PhysicsConfig::fromTypeString("electrical", cfg));
+    CHECK_FALSE(PhysicsConfig::fromTypeString("thermal", cfg));
+    CHECK_FALSE(PhysicsConfig::fromTypeString("dielectric", cfg));
+    CHECK_FALSE(PhysicsConfig::fromTypeString("magnetic", cfg));
+    CHECK_FALSE(PhysicsConfig::fromTypeString("permittivity", cfg));
+    CHECK_FALSE(PhysicsConfig::fromTypeString("permeability", cfg));
+    CHECK_FALSE(PhysicsConfig::fromTypeString("conductivity", cfg));
+    CHECK_FALSE(PhysicsConfig::fromTypeString("diffusion ", cfg)); // trailing space
+    CHECK_FALSE(PhysicsConfig::fromTypeString(" diffusion", cfg)); // leading space
+}
+
+// ============================================================================
+// Bulk property interactions across physics types
+// ============================================================================
+TEST_CASE("effectiveProperty is independent of physics type", "[PhysicsConfig][computation]") {
+    const std::vector<std::string> types = {"diffusion", "electrical_conductivity",
+                                            "thermal_conductivity", "dielectric_permittivity",
+                                            "magnetic_permeability"};
+    double bulk = 42.0;
+    double ratio = 0.3;
+
+    for (const auto& type_str : types) {
+        DYNAMIC_SECTION("type=" << type_str) {
+            auto cfg = makeConfig(type_str, bulk);
+            CHECK(cfg.effectiveProperty(ratio) == Approx(ratio * bulk));
+        }
+    }
+}
