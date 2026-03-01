@@ -45,6 +45,15 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 # Dependencies
 # ==============================================================================
 
+# --- nlohmann/json (header-only, for structured JSON output) ---
+include(FetchContent)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # --- MPI ---
 find_package(MPI REQUIRED COMPONENTS CXX Fortran)
 

@@ -89,6 +89,7 @@ target_link_libraries(Diffusion PRIVATE
     TIFF::TIFF
     MPI::MPI_CXX
     OpenMP::OpenMP_CXX
+    nlohmann_json::nlohmann_json
 )
 
 target_include_directories(Diffusion PRIVATE
