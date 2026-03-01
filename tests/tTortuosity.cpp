@@ -2,6 +2,7 @@
 #include "TortuosityHypre.H" // Assuming TortuosityHypre is in OpenImpala namespace
 #include "VolumeFraction.H"  // Assuming VolumeFraction is in OpenImpala namespace
 #include "Tortuosity.H"      // Include base class for OpenImpala::Direction enum
+#include "PhysicsConfig.H"   // Physics-type-aware output
 
 #include <AMReX.H>
 #include <AMReX_ParmParse.H>
@@ -223,6 +224,12 @@ int main(int argc, char* argv[]) {
             amrex::Print() << "------------------------------------\n\n";
         }
 
+        // --- Parse physics configuration ---
+        auto physics_config = OpenImpala::PhysicsConfig::fromParmParse();
+        if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            physics_config.print(verbose);
+        }
+
         // --- AMReX Grid and Data Setup ---
         // (Keep setup block as before)
         amrex::Geometry geom;
@@ -394,6 +401,20 @@ int main(int argc, char* argv[]) {
                 if (amrex::ParallelDescriptor::IOProcessor()) {
                     amrex::Print() << " Final Calculated Tortuosity: " << std::fixed
                                    << std::setprecision(8) << actual_tau << "\n";
+                    // Physics-aware derived quantities
+                    amrex::Real D_eff_ratio = (actual_tau > 0.0) ? actual_vf / actual_tau : 0.0;
+                    amrex::Print() << " " << physics_config.ratio_label << ": " << std::scientific
+                                   << D_eff_ratio << std::defaultfloat << "\n";
+                    if (physics_config.bulk_property != 1.0) {
+                        amrex::Print()
+                            << " " << physics_config.eff_property_label << ": " << std::scientific
+                            << physics_config.effectiveProperty(D_eff_ratio) << std::defaultfloat
+                            << "\n";
+                    }
+                    if (physics_config.type == OpenImpala::PhysicsType::ElectricalConductivity) {
+                        amrex::Print() << " FormationFactor: " << std::fixed << std::setprecision(8)
+                                       << physics_config.formationFactor(D_eff_ratio) << "\n";
+                    }
                 }
                 if (expected_tau >= 0.0) {
                     if (amrex::ParallelDescriptor::IOProcessor()) {

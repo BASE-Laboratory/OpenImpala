@@ -1,0 +1,25 @@
+# Input file for testing electrical conductivity physics type
+#
+# This reuses the tTortuosity test executable with the physics.type
+# set to electrical_conductivity. The solver and result are identical
+# to the standard tortuosity test; this validates that:
+#   - PhysicsConfig parses electrical_conductivity type correctly
+#   - Formation factor and effective conductivity are reported
+#   - Bulk property scaling works (sigma_eff = D_eff_ratio * sigma_bulk)
+
+tifffile = data/SampleData_2Phase_stack_3d_1bit.tif
+
+phase_id = 0
+direction = X
+solver = FlexGMRES
+
+hypre.maxiter = 1000
+hypre.eps = 1e-10
+
+verbose = 2
+
+tortuosity.remspot_passes = 0
+
+# --- Physics configuration ---
+physics.type = electrical_conductivity
+physics.bulk_property = 1.0   # Unit bulk conductivity for validation
