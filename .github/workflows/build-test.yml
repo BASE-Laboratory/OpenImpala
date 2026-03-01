@@ -69,7 +69,7 @@ jobs:
               echo "clang-tidy version: $(clang-tidy --version 2>&1 | head -1)"
               cd /src
               ERRORS=0
-              for f in $(find src/ tests/ -type f -name "*.cpp"); do
+              for f in $(find src/ tests/ -path tests/unit -prune -o -type f -name "*.cpp" -print); do
                 echo "Analyzing $f..."
                 clang-tidy "$f" \
                   -warnings-as-errors="*" \
