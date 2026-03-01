@@ -13,6 +13,7 @@
 
 #include "TortuosityHypre.H"
 #include "Tortuosity.H"
+#include "PhysicsConfig.H"
 
 #include <AMReX.H>
 #include <AMReX_ParmParse.H>
@@ -346,6 +347,46 @@ int main(int argc, char* argv[]) {
                                    << " faces, max_dev=" << std::scientific << max_dev
                                    << std::defaultfloat << ")\n";
                 }
+            }
+        }
+
+        // --- Validate PhysicsConfig interpretation layer ---
+        if (test_passed && !std::isnan(actual_tau) && !std::isinf(actual_tau) && actual_tau > 0.0) {
+            auto physics = OpenImpala::PhysicsConfig::fromParmParse();
+
+            // For unit bulk property, effective property should equal D_eff_ratio
+            amrex::Real D_eff_ratio = vf / actual_tau;
+            amrex::Real eff_prop = physics.effectiveProperty(D_eff_ratio);
+            amrex::Real expected_eff = D_eff_ratio * physics.bulk_property;
+            if (std::abs(eff_prop - expected_eff) > 1e-12) {
+                test_passed = false;
+                fail_reason = "PhysicsConfig::effectiveProperty() mismatch: got " +
+                              std::to_string(eff_prop) + ", expected " +
+                              std::to_string(expected_eff);
+            }
+
+            // tortuosityFactor should recover the original tau
+            amrex::Real recovered_tau = physics.tortuosityFactor(D_eff_ratio, vf);
+            if (std::abs(recovered_tau - actual_tau) > 1e-10) {
+                test_passed = false;
+                fail_reason = "PhysicsConfig::tortuosityFactor() mismatch: got " +
+                              std::to_string(recovered_tau) + ", expected " +
+                              std::to_string(actual_tau);
+            }
+
+            // formationFactor should be 1 / D_eff_ratio
+            amrex::Real ff = physics.formationFactor(D_eff_ratio);
+            amrex::Real expected_ff = 1.0 / D_eff_ratio;
+            if (std::abs(ff - expected_ff) > 1e-10) {
+                test_passed = false;
+                fail_reason = "PhysicsConfig::formationFactor() mismatch: got " +
+                              std::to_string(ff) + ", expected " + std::to_string(expected_ff);
+            }
+
+            if (test_passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << " PhysicsConfig checks:     PASS (type=" << physics.name
+                               << ", Deff_ratio=" << std::scientific << D_eff_ratio
+                               << std::defaultfloat << ")\n";
             }
         }
 

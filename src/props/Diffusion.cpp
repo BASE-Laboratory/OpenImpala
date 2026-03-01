@@ -15,7 +15,8 @@
 #include "TortuosityHypre.H"
 #include "VolumeFraction.H"
 #include "PercolationCheck.H"
-#include "Tortuosity.H" // For OpenImpala::Direction enum
+#include "Tortuosity.H"    // For OpenImpala::Direction enum
+#include "PhysicsConfig.H" // For physics-type-aware output
 
 #include <AMReX.H>
 #include <AMReX_Array.H>
@@ -237,6 +238,14 @@ int main(int argc, char* argv[]) {
             ppr.query("results_file", rev_results_filename);
             ppr.query("write_plotfiles", rev_write_plotfiles);
             ppr.query("verbose", rev_verbose_level);
+        }
+
+        // --- Parse physics configuration ---
+        auto physics_config = OpenImpala::PhysicsConfig::fromParmParse();
+        if (main_verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "\n--- Physics Configuration ---\n";
+            physics_config.print(main_verbose);
+            amrex::Print() << "-----------------------------\n\n";
         }
 
         // --- Validate parsed parameters ---
@@ -800,8 +809,8 @@ int main(int argc, char* argv[]) {
                                                          active_mask_full, geom_full, main_verbose);
 
                     if (amrex::ParallelDescriptor::IOProcessor()) {
-                        amrex::Print()
-                            << "Full Domain Effective Diffusivity Tensor D_eff / D_material:\n";
+                        amrex::Print() << "Full Domain Effective " << physics_config.name
+                                       << " Tensor (" << physics_config.ratio_label << "):\n";
                         for (int r_print = 0; r_print < AMREX_SPACEDIM; ++r_print) {
                             amrex::Print() << "  [";
                             for (int c_print = 0; c_print < AMREX_SPACEDIM; ++c_print) {
@@ -810,6 +819,23 @@ int main(int argc, char* argv[]) {
                                                << (c_print == AMREX_SPACEDIM - 1 ? "" : ", ");
                             }
                             amrex::Print() << "]\n";
+                        }
+                        if (physics_config.bulk_property != 1.0) {
+                            amrex::Print()
+                                << "Full Domain Absolute " << physics_config.eff_property_label
+                                << " Tensor (scaled by " << physics_config.coeff_label
+                                << "_bulk=" << std::scientific << physics_config.bulk_property
+                                << "):\n";
+                            for (int r_print = 0; r_print < AMREX_SPACEDIM; ++r_print) {
+                                amrex::Print() << "  [";
+                                for (int c_print = 0; c_print < AMREX_SPACEDIM; ++c_print) {
+                                    amrex::Print() << std::scientific << std::setprecision(8)
+                                                   << physics_config.effectiveProperty(
+                                                          Deff_tensor_full[r_print][c_print])
+                                                   << (c_print == AMREX_SPACEDIM - 1 ? "" : ", ");
+                                }
+                                amrex::Print() << "]\n";
+                            }
                         }
                     }
                 } else {
@@ -868,6 +894,7 @@ int main(int argc, char* argv[]) {
 
                 // --- Parse Directions to Run ---
                 std::map<std::string, amrex::Real> tortuosity_results;
+                std::map<std::string, amrex::Real> deff_ratio_results;
                 std::string direction_str;
                 amrex::ParmParse pp; // Top-level ParmParse to get "direction"
                 pp.get("direction", direction_str);
@@ -940,13 +967,23 @@ int main(int argc, char* argv[]) {
                         (main_write_plotfile_full != 0));
 
                     amrex::Real tau = tort_solver.value();
+                    amrex::Real D_eff_ratio = (tau > 0.0 && !std::isnan(tau) && !std::isinf(tau))
+                                                  ? volume_fraction / tau
+                                                  : 0.0;
 
                     tortuosity_results["Tortuosity_" + dir_char] = tau;
+                    deff_ratio_results[dir_char] = D_eff_ratio;
 
                     if (amrex::ParallelDescriptor::IOProcessor()) {
                         amrex::Print()
                             << "  >>> Calculated Tortuosity (" << dir_char << "): " << std::fixed
                             << std::setprecision(8) << tau << " <<<\n";
+                        if (physics_config.type != OpenImpala::PhysicsType::Diffusion) {
+                            amrex::Print() << "  >>> " << physics_config.eff_property_label << " ("
+                                           << dir_char << "): " << std::scientific
+                                           << physics_config.effectiveProperty(D_eff_ratio)
+                                           << std::defaultfloat << " <<<\n";
+                        }
                     }
                 }
 
@@ -963,15 +1000,12 @@ int main(int argc, char* argv[]) {
 
                     std::ofstream outfile(output_filepath);
                     if (outfile.is_open()) {
-                        outfile << "# Tortuosity Calculation Results (Flow-Through Method)\n";
-                        outfile << "# Input File: " << main_filename << "\n";
-                        outfile << "# Analysis Phase ID: " << main_phase_id_analysis << "\n";
-                        outfile << "# -----------------------------\n";
+                        physics_config.writeHeader(outfile, main_filename, main_phase_id_analysis);
                         outfile << "VolumeFraction: " << std::fixed << std::setprecision(9)
                                 << volume_fraction << "\n";
-                        for (const auto& pair : tortuosity_results) {
-                            outfile << pair.first << ": " << std::fixed << std::setprecision(9)
-                                    << pair.second << "\n";
+                        for (const auto& pair : deff_ratio_results) {
+                            physics_config.writeDirectionResults(outfile, pair.first, pair.second,
+                                                                 volume_fraction);
                         }
                         outfile.close();
                     } else {
