@@ -1,0 +1,33 @@
+# Synthetic multi-phase transport test — thermal conductivity
+#
+# Uses thermal_conductivity physics type with a non-unit bulk property
+# (copper thermal conductivity ~401 W/(m·K)).
+#
+# The solver result is identical to the diffusion case; this test
+# validates that the thermal conductivity physics type is correctly
+# parsed and that PhysicsConfig interpretation methods work.
+#
+# Expected: tau = (N-1)/N = 31/32 = 0.96875 for N=32 grid
+
+domain_size = 32
+box_size = 16
+verbose = 2
+num_phases_fill = 1
+direction = X
+solver = FlexGMRES
+
+expected_tau = 0.96875
+tau_tolerance = 0.001
+
+resultsdir = ./tMultiPhaseTransport_thermal_results
+
+hypre.maxiter = 500
+hypre.eps = 1e-9
+
+tortuosity.active_phases = 0
+tortuosity.phase_diffusivities = 1.0
+tortuosity.remspot_passes = 0
+
+# --- Physics configuration ---
+physics.type = thermal_conductivity
+physics.bulk_property = 401.0

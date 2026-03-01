@@ -131,6 +131,40 @@ set_tests_properties(tEffectiveDiffusivity_multiphase PROPERTIES
 )
 
 # ==============================================================================
+# Directional Symmetry Tests (Y and Z directions)
+# ==============================================================================
+
+# Y direction — uniform domain should give same tau as X
+add_test(
+    NAME tMultiPhaseTransport_dirY
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_dirY.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tMultiPhaseTransport_dirY PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# Z direction — uniform domain should give same tau as X
+add_test(
+    NAME tMultiPhaseTransport_dirZ
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_dirZ.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tMultiPhaseTransport_dirZ PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# ==============================================================================
 # Physics Type Tests (Electrical Conductivity)
 # ==============================================================================
 
@@ -163,3 +197,27 @@ set_tests_properties(tMultiPhaseTransport_conductivity PROPERTIES
     ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
     TIMEOUT 300
 )
+
+# ==============================================================================
+# Physics Type Tests (Thermal Conductivity)
+# ==============================================================================
+
+# Thermal conductivity variant with bulk_property = 401 W/(m·K) (copper)
+add_test(
+    NAME tMultiPhaseTransport_thermal
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_thermal.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tMultiPhaseTransport_thermal PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# ==============================================================================
+# Unit Tests (Catch2 — fast, no MPI/AMReX required)
+# ==============================================================================
+add_subdirectory(unit)
