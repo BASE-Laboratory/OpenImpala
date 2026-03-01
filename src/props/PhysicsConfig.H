@@ -14,21 +14,37 @@
 // Input file (all optional — defaults to Diffusion with unit bulk property):
 //   physics.type = electrical_conductivity
 //   physics.bulk_property = 1.5e7
+//
+// Unit testing:
+//   Define OPENIMPALA_UNIT_TEST before including this header to compile
+//   without AMReX dependencies.  In that mode, fromParmParse() and print()
+//   are unavailable; use fromTypeString() and direct construction instead.
 
 #ifndef PHYSICSCONFIG_H
 #define PHYSICSCONFIG_H
 
+#ifndef OPENIMPALA_UNIT_TEST
 #include <AMReX_REAL.H>
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
 #include <AMReX_ParallelDescriptor.H>
+#endif
 
 #include <string>
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <limits>
+#include <ostream>
 
 namespace OpenImpala {
+
+// When compiling for unit tests without AMReX, use double directly
+#ifdef OPENIMPALA_UNIT_TEST
+using Real = double;
+#else
+using Real = amrex::Real;
+#endif
 
 enum class PhysicsType {
     Diffusion,
@@ -49,36 +65,30 @@ struct PhysicsConfig {
     std::string ratio_label;
 
     // User-supplied bulk/reference property value (e.g. sigma_bulk)
-    amrex::Real bulk_property = 1.0;
+    Real bulk_property = 1.0;
 
     // --- Interpret raw solver output ---
 
-    amrex::Real effectiveProperty(amrex::Real D_eff_ratio) const {
+    Real effectiveProperty(Real D_eff_ratio) const {
         return D_eff_ratio * bulk_property;
     }
 
-    amrex::Real tortuosityFactor(amrex::Real D_eff_ratio, amrex::Real vf) const {
+    Real tortuosityFactor(Real D_eff_ratio, Real vf) const {
         if (D_eff_ratio > 0.0)
             return vf / D_eff_ratio;
-        return std::numeric_limits<amrex::Real>::infinity();
+        return std::numeric_limits<Real>::infinity();
     }
 
-    amrex::Real formationFactor(amrex::Real D_eff_ratio) const {
+    Real formationFactor(Real D_eff_ratio) const {
         if (D_eff_ratio > 0.0)
             return 1.0 / D_eff_ratio;
-        return std::numeric_limits<amrex::Real>::infinity();
+        return std::numeric_limits<Real>::infinity();
     }
 
-    // --- Factory: build from input file parameters ---
-    static PhysicsConfig fromParmParse() {
-        PhysicsConfig cfg;
-
-        amrex::ParmParse pp("physics");
-        std::string type_str = "diffusion";
-        pp.query("type", type_str);
-        pp.query("bulk_property", cfg.bulk_property);
-
-        // Normalise to lowercase
+    // --- Factory: build from a type string (no AMReX dependency) ---
+    // Returns true on success, false if type_str is unrecognised.
+    static bool fromTypeString(const std::string& type_str_in, PhysicsConfig& cfg) {
+        std::string type_str = type_str_in;
         std::transform(type_str.begin(), type_str.end(), type_str.begin(),
                        [](unsigned char c) { return std::tolower(c); });
 
@@ -118,6 +128,22 @@ struct PhysicsConfig {
             cfg.eff_property_label = "EffectivePermeability";
             cfg.ratio_label = "mu_eff_ratio";
         } else {
+            return false;
+        }
+        return true;
+    }
+
+#ifndef OPENIMPALA_UNIT_TEST
+    // --- Factory: build from input file parameters ---
+    static PhysicsConfig fromParmParse() {
+        PhysicsConfig cfg;
+
+        amrex::ParmParse pp("physics");
+        std::string type_str = "diffusion";
+        pp.query("type", type_str);
+        pp.query("bulk_property", cfg.bulk_property);
+
+        if (!fromTypeString(type_str, cfg)) {
             amrex::Abort("Unknown physics.type: '" + type_str +
                          "'. Valid options: diffusion, electrical_conductivity, "
                          "thermal_conductivity, dielectric_permittivity, magnetic_permeability");
@@ -135,10 +161,11 @@ struct PhysicsConfig {
             amrex::Print() << "  Bulk Property:     " << bulk_property << "\n";
         }
     }
+#endif
 
     // --- Write results for a single direction ---
-    void writeDirectionResults(std::ostream& os, const std::string& dir_label,
-                               amrex::Real D_eff_ratio, amrex::Real vf) const {
+    void writeDirectionResults(std::ostream& os, const std::string& dir_label, Real D_eff_ratio,
+                               Real vf) const {
         os << ratio_label << "_" << dir_label << ": " << std::scientific << D_eff_ratio << "\n";
         os << "Tortuosity_" << dir_label << ": " << std::fixed << std::setprecision(9)
            << tortuosityFactor(D_eff_ratio, vf) << "\n";

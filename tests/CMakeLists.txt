@@ -163,3 +163,8 @@ set_tests_properties(tMultiPhaseTransport_conductivity PROPERTIES
     ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
     TIMEOUT 300
 )
+
+# ==============================================================================
+# Unit Tests (Catch2 — fast, no MPI/AMReX required)
+# ==============================================================================
+add_subdirectory(unit)
