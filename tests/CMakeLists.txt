@@ -129,3 +129,37 @@ set_tests_properties(tEffectiveDiffusivity_multiphase PROPERTIES
     ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
     TIMEOUT 300
 )
+
+# ==============================================================================
+# Physics Type Tests (Electrical Conductivity)
+# ==============================================================================
+
+# Electrical conductivity variant of tortuosity test (reuses tTortuosity executable)
+add_test(
+    NAME tTortuosity_conductivity
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tTortuosity>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tTortuosity_conductivity.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tTortuosity_conductivity PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# Electrical conductivity variant of synthetic multi-phase test
+add_test(
+    NAME tMultiPhaseTransport_conductivity
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_conductivity.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tMultiPhaseTransport_conductivity PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
