@@ -168,17 +168,17 @@ set_tests_properties(tMultiPhaseTransport_dirZ PROPERTIES
 # Solver Variant Tests
 # ==============================================================================
 
-# PCG solver — should converge to same result as FlexGMRES
+# BiCGSTAB solver — should converge to same result as FlexGMRES
 add_test(
-    NAME tMultiPhaseTransport_pcg
+    NAME tMultiPhaseTransport_bicgstab
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
             ${MPIEXEC_PREFLAGS}
             $<TARGET_FILE:tMultiPhaseTransport>
-            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_pcg.inputs
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_bicgstab.inputs
             amrex.verbose=0
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
-set_tests_properties(tMultiPhaseTransport_pcg PROPERTIES
+set_tests_properties(tMultiPhaseTransport_bicgstab PROPERTIES
     ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
     TIMEOUT 300
 )
