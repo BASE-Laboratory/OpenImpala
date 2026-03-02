@@ -17,7 +17,7 @@
 #include "PercolationCheck.H"
 #include "Tortuosity.H"    // For OpenImpala::Direction enum
 #include "PhysicsConfig.H" // For physics-type-aware output
-#include "ResultsJSON.H"  // For structured JSON output
+#include "ResultsJSON.H"   // For structured JSON output
 
 #include <AMReX.H>
 #include <AMReX_Array.H>

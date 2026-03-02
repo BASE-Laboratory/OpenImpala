@@ -42,11 +42,17 @@ class ResultsJSON {
 public:
     // --- Setters for each data category ---
 
-    void setPhysicsConfig(const PhysicsConfig& cfg) { m_physics = cfg; }
+    void setPhysicsConfig(const PhysicsConfig& cfg) {
+        m_physics = cfg;
+    }
 
-    void setInputFile(const std::string& filename) { m_input_file = filename; }
+    void setInputFile(const std::string& filename) {
+        m_input_file = filename;
+    }
 
-    void setPhaseId(int phase_id) { m_phase_id = phase_id; }
+    void setPhaseId(int phase_id) {
+        m_phase_id = phase_id;
+    }
 
     void setGridInfo(int nx, int ny, int nz, int box_size) {
         m_nx = nx;
@@ -65,7 +71,9 @@ public:
         m_provenance_uri = provenance_uri;
     }
 
-    void setVolumeFraction(Real vf) { m_volume_fraction = vf; }
+    void setVolumeFraction(Real vf) {
+        m_volume_fraction = vf;
+    }
 
     void addDirectionResult(const std::string& dir, Real D_eff_ratio) {
         m_deff_ratios[dir] = D_eff_ratio;
@@ -73,7 +81,9 @@ public:
 
     /// Set BPX electrode type to enable BPX-compatible output fragment.
     /// Valid values: "negative", "positive", "separator".
-    void setBPXElectrode(const std::string& electrode) { m_bpx_electrode = electrode; }
+    void setBPXElectrode(const std::string& electrode) {
+        m_bpx_electrode = electrode;
+    }
 
     // --- Build the JSON object ---
     nlohmann::ordered_json buildJSON() const {
@@ -213,10 +223,11 @@ private:
 
     /// Compute mean D_eff_ratio across all computed directions.
     Real meanDeffRatio() const {
-        if (m_deff_ratios.empty()) return 0.0;
+        if (m_deff_ratios.empty())
+            return 0.0;
         Real sum = 0.0;
-        for (const auto& [dir, ratio] : m_deff_ratios) {
-            sum += ratio;
+        for (const auto& entry : m_deff_ratios) {
+            sum += entry.second;
         }
         return sum / static_cast<Real>(m_deff_ratios.size());
     }
@@ -233,7 +244,8 @@ private:
 
     /// Capitalise first letter: "negative" -> "Negative"
     static std::string capitalise(const std::string& s) {
-        if (s.empty()) return s;
+        if (s.empty())
+            return s;
         std::string out = s;
         out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(out[0])));
         return out;
@@ -260,8 +272,7 @@ private:
         Real b = bruggeman(mean_te, m_volume_fraction);
 
         auto& bpx = j["bpx"];
-        bpx["_comment"] =
-            "BPX-compatible fragment. Merge into a full BPX file for PyBaMM import.";
+        bpx["_comment"] = "BPX-compatible fragment. Merge into a full BPX file for PyBaMM import.";
         bpx["electrode"] = m_bpx_electrode;
 
         auto& params = bpx["Parameterisation"][prefix];
