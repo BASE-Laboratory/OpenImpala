@@ -11,8 +11,8 @@ on:
       - build
       - 'makefile' # Include makefile branch trigger
   pull_request:
-    # Trigger on Pull Requests targeting main branch
-    branches: [ main ]
+    # Trigger on Pull Requests targeting these branches
+    branches: [ master, working ]
   workflow_dispatch: # Allows manual triggering
 
 jobs:
