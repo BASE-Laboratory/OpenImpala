@@ -68,6 +68,12 @@ jobs:
               dnf install -y clang-tools-extra 2>&1 | tail -3
               echo "clang-tidy version: $(clang-tidy --version 2>&1 | head -1)"
               cd /src
+              # Fetch nlohmann/json header (used by ResultsJSON.H, normally via CMake FetchContent)
+              NLOHMANN_VERSION="v3.11.3"
+              mkdir -p /tmp/nlohmann_include/nlohmann
+              curl -sL "https://github.com/nlohmann/json/releases/download/${NLOHMANN_VERSION}/json.hpp" \
+                -o /tmp/nlohmann_include/nlohmann/json.hpp
+              echo "nlohmann/json ${NLOHMANN_VERSION} downloaded for clang-tidy"
               ERRORS=0
               for f in $(find src/ tests/ -path tests/unit -prune -o -type f -name "*.cpp" -print); do
                 echo "Analyzing $f..."
@@ -79,7 +85,8 @@ jobs:
                   -I/opt/amrex/25.03/include \
                   -I/opt/hypre/v2.32.0/include \
                   -I/opt/hdf5/1.12.3/include \
-                  -I/opt/libtiff/4.6.0/include || ERRORS=$((ERRORS+1))
+                  -I/opt/libtiff/4.6.0/include \
+                  -I/tmp/nlohmann_include || ERRORS=$((ERRORS+1))
               done
               if [ $ERRORS -ne 0 ]; then
                 echo "::error::clang-tidy found issues in $ERRORS file(s)."

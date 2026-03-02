@@ -17,6 +17,7 @@
 #include "PercolationCheck.H"
 #include "Tortuosity.H"    // For OpenImpala::Direction enum
 #include "PhysicsConfig.H" // For physics-type-aware output
+#include "ResultsJSON.H"   // For structured JSON output
 
 #include <AMReX.H>
 #include <AMReX_Array.H>
@@ -246,6 +247,22 @@ int main(int argc, char* argv[]) {
             amrex::Print() << "\n--- Physics Configuration ---\n";
             physics_config.print(main_verbose);
             amrex::Print() << "-----------------------------\n\n";
+        }
+
+        // --- Parse optional provenance metadata (BDF/Faraday Engine passthrough) ---
+        std::string provenance_sample_id;
+        std::string provenance_uri;
+        {
+            amrex::ParmParse pp_prov("provenance");
+            pp_prov.query("sample_id", provenance_sample_id);
+            pp_prov.query("uri", provenance_uri);
+        }
+
+        // --- Parse optional BPX electrode type for BPX-compatible output ---
+        std::string bpx_electrode;
+        {
+            amrex::ParmParse pp_bpx("bpx");
+            pp_bpx.query("electrode", bpx_electrode);
         }
 
         // --- Validate parsed parameters ---
@@ -1011,6 +1028,32 @@ int main(int argc, char* argv[]) {
                     } else {
                         amrex::Warning("Could not open output file for writing: " +
                                        output_filepath.string());
+                    }
+
+                    // --- Write structured JSON results alongside results.txt ---
+                    OpenImpala::ResultsJSON json_writer;
+                    json_writer.setPhysicsConfig(physics_config);
+                    json_writer.setInputFile(main_filename);
+                    json_writer.setPhaseId(main_phase_id_analysis);
+                    json_writer.setGridInfo(domain_box_full.length(0), domain_box_full.length(1),
+                                            domain_box_full.length(2), main_box_size);
+                    json_writer.setSolverInfo(main_solver_str, true);
+                    json_writer.setProvenance(provenance_sample_id, provenance_uri);
+                    json_writer.setVolumeFraction(volume_fraction);
+                    for (const auto& pair : deff_ratio_results) {
+                        json_writer.addDirectionResult(pair.first, pair.second);
+                    }
+                    if (!bpx_electrode.empty()) {
+                        json_writer.setBPXElectrode(bpx_electrode);
+                    }
+
+                    std::filesystem::path json_filepath =
+                        std::filesystem::path(main_results_path_str) / "results.json";
+                    if (json_writer.write(json_filepath.string())) {
+                        amrex::Print() << "Writing JSON results to:  " << json_filepath << "\n";
+                    } else {
+                        amrex::Warning("Could not write JSON results to: " +
+                                       json_filepath.string());
                     }
                 }
             }
