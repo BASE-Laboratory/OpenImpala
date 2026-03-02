@@ -279,3 +279,216 @@ TEST_CASE("ResultsJSON preserves numerical precision", "[ResultsJSON][precision]
     CHECK(vf == Approx(0.352481697).epsilon(1e-9));
     CHECK(ratio == Approx(4.12345678901e-01).epsilon(1e-9));
 }
+
+// ============================================================================
+// SI unit annotations (BattINFO-aligned)
+// ============================================================================
+TEST_CASE("ResultsJSON always includes units block", "[ResultsJSON][units]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVolumeFraction(0.35);
+    writer.addDirectionResult("X", 0.12);
+
+    auto j = writer.buildJSON();
+    REQUIRE(j.contains("units"));
+    auto& u = j["units"];
+
+    CHECK(u["volume_fraction"].get<std::string>() == "1");
+    CHECK(u["tortuosity"].get<std::string>() == "1");
+    CHECK(u["Deff_ratio"].get<std::string>() == "1");
+}
+
+TEST_CASE("ResultsJSON units block includes SI units for conductivity", "[ResultsJSON][units]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("electrical_conductivity", 5.96e7));
+    writer.setVolumeFraction(0.35);
+    writer.addDirectionResult("X", 0.12);
+
+    auto j = writer.buildJSON();
+    auto& u = j["units"];
+
+    CHECK(u["sigma_eff_ratio"].get<std::string>() == "1");
+    CHECK(u["formation_factor"].get<std::string>() == "1");
+    CHECK(u["EffectiveConductivity"].get<std::string>() == "S.m-1");
+}
+
+TEST_CASE("ResultsJSON units block includes SI units for thermal", "[ResultsJSON][units]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("thermal_conductivity", 2.0));
+
+    auto j = writer.buildJSON();
+    CHECK(j["units"]["EffectiveThermalConductivity"].get<std::string>() == "W.m-1.K-1");
+}
+
+TEST_CASE("ResultsJSON units omits effective property unit when bulk == 1", "[ResultsJSON][units]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("thermal_conductivity", 1.0));
+
+    auto j = writer.buildJSON();
+    CHECK_FALSE(j["units"].contains("EffectiveThermalConductivity"));
+}
+
+// ============================================================================
+// BPX electrode fragment
+// ============================================================================
+TEST_CASE("ResultsJSON omits bpx block when no electrode set", "[ResultsJSON][bpx]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVolumeFraction(0.35);
+    writer.addDirectionResult("X", 0.12);
+
+    auto j = writer.buildJSON();
+    CHECK_FALSE(j.contains("bpx"));
+}
+
+TEST_CASE("ResultsJSON emits BPX fragment for negative electrode", "[ResultsJSON][bpx]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVolumeFraction(0.254);
+    writer.addDirectionResult("X", 0.128);
+    writer.addDirectionResult("Y", 0.130);
+    writer.addDirectionResult("Z", 0.126);
+    writer.setBPXElectrode("negative");
+
+    auto j = writer.buildJSON();
+
+    REQUIRE(j.contains("bpx"));
+    auto& bpx = j["bpx"];
+    CHECK(bpx["electrode"].get<std::string>() == "negative");
+
+    // Check BPX Parameterisation structure
+    REQUIRE(bpx.contains("Parameterisation"));
+    REQUIRE(bpx["Parameterisation"].contains("Negative electrode"));
+    auto& params = bpx["Parameterisation"]["Negative electrode"];
+
+    // Porosity = volume_fraction
+    CHECK(params["Porosity"].get<double>() == Approx(0.254));
+
+    // Transport efficiency = mean D_eff_ratio
+    double mean_te = (0.128 + 0.130 + 0.126) / 3.0;
+    CHECK(params["Transport efficiency"].get<double>() == Approx(mean_te));
+
+    // Bruggeman coefficient = log(mean_te) / log(porosity)
+    double expected_b = std::log(mean_te) / std::log(0.254);
+    CHECK(params["Bruggeman coefficient (electrolyte)"].get<double>() == Approx(expected_b));
+}
+
+TEST_CASE("ResultsJSON BPX works for positive electrode", "[ResultsJSON][bpx]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVolumeFraction(0.35);
+    writer.addDirectionResult("X", 0.15);
+    writer.setBPXElectrode("positive");
+
+    auto j = writer.buildJSON();
+    REQUIRE(j["bpx"]["Parameterisation"].contains("Positive electrode"));
+
+    auto& params = j["bpx"]["Parameterisation"]["Positive electrode"];
+    CHECK(params["Porosity"].get<double>() == Approx(0.35));
+    CHECK(params["Transport efficiency"].get<double>() == Approx(0.15));
+}
+
+TEST_CASE("ResultsJSON BPX includes anisotropic data for multi-direction", "[ResultsJSON][bpx]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVolumeFraction(0.30);
+    writer.addDirectionResult("X", 0.10);
+    writer.addDirectionResult("Y", 0.08);
+    writer.addDirectionResult("Z", 0.12);
+    writer.setBPXElectrode("negative");
+
+    auto j = writer.buildJSON();
+
+    REQUIRE(j["bpx"].contains("anisotropic"));
+    auto& aniso = j["bpx"]["anisotropic"];
+    CHECK(aniso["transport_efficiency"]["X"].get<double>() == Approx(0.10));
+    CHECK(aniso["transport_efficiency"]["Y"].get<double>() == Approx(0.08));
+    CHECK(aniso["transport_efficiency"]["Z"].get<double>() == Approx(0.12));
+
+    // Tortuosity per direction = vf / D_eff_ratio
+    CHECK(aniso["tortuosity"]["X"].get<double>() == Approx(0.30 / 0.10));
+    CHECK(aniso["tortuosity"]["Y"].get<double>() == Approx(0.30 / 0.08));
+    CHECK(aniso["tortuosity"]["Z"].get<double>() == Approx(0.30 / 0.12));
+
+    // Mean tortuosity
+    double mean_te = (0.10 + 0.08 + 0.12) / 3.0;
+    CHECK(aniso["mean_tortuosity"].get<double>() == Approx(0.30 / mean_te));
+}
+
+TEST_CASE("ResultsJSON BPX omits anisotropic for single direction", "[ResultsJSON][bpx]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVolumeFraction(0.30);
+    writer.addDirectionResult("X", 0.10);
+    writer.setBPXElectrode("negative");
+
+    auto j = writer.buildJSON();
+    CHECK_FALSE(j["bpx"].contains("anisotropic"));
+}
+
+TEST_CASE("ResultsJSON BPX Bruggeman handles edge cases", "[ResultsJSON][bpx]") {
+    SECTION("zero volume fraction yields Bruggeman = 0") {
+        ResultsJSON writer;
+        writer.setPhysicsConfig(makeConfig("diffusion"));
+        writer.setVolumeFraction(0.0);
+        writer.addDirectionResult("X", 0.12);
+        writer.setBPXElectrode("negative");
+
+        auto j = writer.buildJSON();
+        CHECK(j["bpx"]["Parameterisation"]["Negative electrode"]
+                  ["Bruggeman coefficient (electrolyte)"]
+                      .get<double>() == Approx(0.0));
+    }
+
+    SECTION("volume fraction = 1 yields Bruggeman = 0") {
+        ResultsJSON writer;
+        writer.setPhysicsConfig(makeConfig("diffusion"));
+        writer.setVolumeFraction(1.0);
+        writer.addDirectionResult("X", 0.12);
+        writer.setBPXElectrode("negative");
+
+        auto j = writer.buildJSON();
+        CHECK(j["bpx"]["Parameterisation"]["Negative electrode"]
+                  ["Bruggeman coefficient (electrolyte)"]
+                      .get<double>() == Approx(0.0));
+    }
+}
+
+// ============================================================================
+// Full round-trip with all features
+// ============================================================================
+TEST_CASE("ResultsJSON full round-trip with BPX and provenance", "[ResultsJSON][integration]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("electrical_conductivity", 5.96e7));
+    writer.setInputFile("electrode_scan.h5");
+    writer.setPhaseId(1);
+    writer.setGridInfo(256, 256, 256, 64);
+    writer.setSolverInfo("FlexGMRES", true);
+    writer.setVolumeFraction(0.254);
+    writer.addDirectionResult("X", 0.128);
+    writer.addDirectionResult("Y", 0.130);
+    writer.addDirectionResult("Z", 0.126);
+    writer.setProvenance("CT-2024-0042", "https://faraday.ac.uk/samples/CT-2024-0042");
+    writer.setBPXElectrode("negative");
+
+    std::string test_path = "/tmp/openimpala_test_full.json";
+    REQUIRE(writer.write(test_path));
+
+    // Parse it back
+    std::ifstream ifs(test_path);
+    auto j = nlohmann::json::parse(ifs);
+
+    // All top-level blocks present
+    CHECK(j.contains("openimpala"));
+    CHECK(j.contains("units"));
+    CHECK(j.contains("bpx"));
+    CHECK(j.contains("provenance"));
+
+    // Spot-check values
+    CHECK(j["openimpala"]["physics_type"] == "Electrical Conductivity");
+    CHECK(j["units"]["EffectiveConductivity"] == "S.m-1");
+    CHECK(j["bpx"]["electrode"] == "negative");
+    CHECK(j["provenance"]["sample_id"] == "CT-2024-0042");
+
+    std::filesystem::remove(test_path);
+}

@@ -258,6 +258,13 @@ int main(int argc, char* argv[]) {
             pp_prov.query("uri", provenance_uri);
         }
 
+        // --- Parse optional BPX electrode type for BPX-compatible output ---
+        std::string bpx_electrode;
+        {
+            amrex::ParmParse pp_bpx("bpx");
+            pp_bpx.query("electrode", bpx_electrode);
+        }
+
         // --- Validate parsed parameters ---
         if (main_box_size <= 0) {
             amrex::Abort("Error: 'box_size' must be positive (got " +
@@ -1035,6 +1042,9 @@ int main(int argc, char* argv[]) {
                     json_writer.setVolumeFraction(volume_fraction);
                     for (const auto& pair : deff_ratio_results) {
                         json_writer.addDirectionResult(pair.first, pair.second);
+                    }
+                    if (!bpx_electrode.empty()) {
+                        json_writer.setBPXElectrode(bpx_electrode);
                     }
 
                     std::filesystem::path json_filepath =

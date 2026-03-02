@@ -6,11 +6,12 @@
 // with battery modelling standards (BPX, BattINFO, BDF):
 //
 //   - "openimpala" block: native results with full solver provenance
+//   - "units" block: SI unit annotations (BattINFO-aligned)
+//   - "bpx" block: BPX-compatible electrode fragment for PyBaMM import
 //   - "provenance" block: passthrough metadata (sample_id, provenance_uri)
 //     for linking to external digital-twin databases (Faraday Engine, BDF)
 //
 // The JSON output is written alongside the existing results.txt file.
-// Variable naming follows BattINFO conventions where applicable.
 //
 // Usage:
 //   OpenImpala::ResultsJSON json;
@@ -20,6 +21,7 @@
 //   json.setProvenance(sample_id, provenance_uri);
 //   json.setVolumeFraction(vf);
 //   json.addDirectionResult("X", D_eff_ratio);
+//   json.setBPXElectrode("negative");            // optional: enable BPX fragment
 //   json.write("/path/to/results.json");
 
 #ifndef RESULTSJSON_H
@@ -29,6 +31,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <fstream>
 #include <map>
 #include <string>
@@ -39,17 +42,11 @@ class ResultsJSON {
 public:
     // --- Setters for each data category ---
 
-    void setPhysicsConfig(const PhysicsConfig& cfg) {
-        m_physics = cfg;
-    }
+    void setPhysicsConfig(const PhysicsConfig& cfg) { m_physics = cfg; }
 
-    void setInputFile(const std::string& filename) {
-        m_input_file = filename;
-    }
+    void setInputFile(const std::string& filename) { m_input_file = filename; }
 
-    void setPhaseId(int phase_id) {
-        m_phase_id = phase_id;
-    }
+    void setPhaseId(int phase_id) { m_phase_id = phase_id; }
 
     void setGridInfo(int nx, int ny, int nz, int box_size) {
         m_nx = nx;
@@ -68,13 +65,15 @@ public:
         m_provenance_uri = provenance_uri;
     }
 
-    void setVolumeFraction(Real vf) {
-        m_volume_fraction = vf;
-    }
+    void setVolumeFraction(Real vf) { m_volume_fraction = vf; }
 
     void addDirectionResult(const std::string& dir, Real D_eff_ratio) {
         m_deff_ratios[dir] = D_eff_ratio;
     }
+
+    /// Set BPX electrode type to enable BPX-compatible output fragment.
+    /// Valid values: "negative", "positive", "separator".
+    void setBPXElectrode(const std::string& electrode) { m_bpx_electrode = electrode; }
 
     // --- Build the JSON object ---
     nlohmann::ordered_json buildJSON() const {
@@ -116,6 +115,14 @@ public:
             if (m_physics.type == PhysicsType::ElectricalConductivity) {
                 dir_obj["formation_factor"] = m_physics.formationFactor(ratio);
             }
+        }
+
+        // --- units block: SI unit annotations (BattINFO-aligned) ---
+        buildUnitsBlock(j);
+
+        // --- bpx block: BPX-compatible electrode fragment ---
+        if (!m_bpx_electrode.empty()) {
+            buildBPXBlock(j);
         }
 
         // --- provenance block: metadata passthrough for BDF/Faraday Engine ---
@@ -168,6 +175,111 @@ private:
     // Results
     Real m_volume_fraction = 0.0;
     std::map<std::string, Real> m_deff_ratios;
+
+    // BPX electrode type (empty = no BPX fragment)
+    std::string m_bpx_electrode;
+
+    // --- Build BattINFO-aligned SI unit annotations ---
+    void buildUnitsBlock(nlohmann::ordered_json& j) const {
+        auto& u = j["units"];
+        u["volume_fraction"] = "1";
+        u["tortuosity"] = "1";
+
+        if (m_physics.type == PhysicsType::Diffusion) {
+            u[m_physics.ratio_label] = "1";
+        } else if (m_physics.type == PhysicsType::ElectricalConductivity) {
+            u[m_physics.ratio_label] = "1";
+            u["formation_factor"] = "1";
+            if (m_physics.bulk_property != 1.0) {
+                u[m_physics.eff_property_label] = "S.m-1";
+            }
+        } else if (m_physics.type == PhysicsType::ThermalConductivity) {
+            u[m_physics.ratio_label] = "1";
+            if (m_physics.bulk_property != 1.0) {
+                u[m_physics.eff_property_label] = "W.m-1.K-1";
+            }
+        } else if (m_physics.type == PhysicsType::DielectricPermittivity) {
+            u[m_physics.ratio_label] = "1";
+            if (m_physics.bulk_property != 1.0) {
+                u[m_physics.eff_property_label] = "F.m-1";
+            }
+        } else if (m_physics.type == PhysicsType::MagneticPermeability) {
+            u[m_physics.ratio_label] = "1";
+            if (m_physics.bulk_property != 1.0) {
+                u[m_physics.eff_property_label] = "H.m-1";
+            }
+        }
+    }
+
+    /// Compute mean D_eff_ratio across all computed directions.
+    Real meanDeffRatio() const {
+        if (m_deff_ratios.empty()) return 0.0;
+        Real sum = 0.0;
+        for (const auto& [dir, ratio] : m_deff_ratios) {
+            sum += ratio;
+        }
+        return sum / static_cast<Real>(m_deff_ratios.size());
+    }
+
+    /// Compute Bruggeman exponent from transport efficiency and porosity:
+    ///   transport_efficiency = porosity^b  =>  b = log(TE) / log(porosity)
+    /// Returns 0.0 if porosity or transport efficiency is non-positive (undefined).
+    static Real bruggeman(Real transport_efficiency, Real porosity) {
+        if (porosity <= 0.0 || porosity >= 1.0 || transport_efficiency <= 0.0) {
+            return 0.0;
+        }
+        return std::log(transport_efficiency) / std::log(porosity);
+    }
+
+    /// Capitalise first letter: "negative" -> "Negative"
+    static std::string capitalise(const std::string& s) {
+        if (s.empty()) return s;
+        std::string out = s;
+        out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(out[0])));
+        return out;
+    }
+
+    // --- Build BPX-compatible electrode fragment ---
+    //
+    // BPX key names follow the Faraday Institution BPX standard:
+    //   https://github.com/FaradayInstitution/BPX
+    //
+    // Key relationships:
+    //   transport_efficiency = D_eff / D_bulk = D_eff_ratio  (OpenImpala output)
+    //   Bruggeman exponent b: transport_efficiency = porosity^b
+    //   porosity = volume_fraction (of the conducting/electrolyte phase)
+    //
+    // The fragment uses the *mean* transport efficiency across computed
+    // directions, since BPX is inherently isotropic. Per-direction values
+    // are available in the openimpala block for anisotropic workflows.
+    void buildBPXBlock(nlohmann::ordered_json& j) const {
+        std::string prefix = capitalise(m_bpx_electrode) + " electrode";
+
+        Real mean_te = meanDeffRatio();
+        Real mean_tau = m_physics.tortuosityFactor(mean_te, m_volume_fraction);
+        Real b = bruggeman(mean_te, m_volume_fraction);
+
+        auto& bpx = j["bpx"];
+        bpx["_comment"] =
+            "BPX-compatible fragment. Merge into a full BPX file for PyBaMM import.";
+        bpx["electrode"] = m_bpx_electrode;
+
+        auto& params = bpx["Parameterisation"][prefix];
+        params["Porosity"] = m_volume_fraction;
+        params["Transport efficiency"] = mean_te;
+        params["Bruggeman coefficient (electrolyte)"] = b;
+
+        // Per-direction transport efficiencies (BPX extension — not in base spec)
+        if (m_deff_ratios.size() > 1) {
+            auto& aniso = bpx["anisotropic"];
+            aniso["_comment"] = "Per-direction values (extension, not in base BPX spec)";
+            for (const auto& [dir, ratio] : m_deff_ratios) {
+                aniso["transport_efficiency"][dir] = ratio;
+                aniso["tortuosity"][dir] = m_physics.tortuosityFactor(ratio, m_volume_fraction);
+            }
+            aniso["mean_tortuosity"] = mean_tau;
+        }
+    }
 };
 
 } // namespace OpenImpala
