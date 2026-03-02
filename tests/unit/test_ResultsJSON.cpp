@@ -320,7 +320,8 @@ TEST_CASE("ResultsJSON units block includes SI units for thermal", "[ResultsJSON
     CHECK(j["units"]["EffectiveThermalConductivity"].get<std::string>() == "W.m-1.K-1");
 }
 
-TEST_CASE("ResultsJSON units omits effective property unit when bulk == 1", "[ResultsJSON][units]") {
+TEST_CASE("ResultsJSON units omits effective property unit when bulk == 1",
+          "[ResultsJSON][units]") {
     ResultsJSON writer;
     writer.setPhysicsConfig(makeConfig("thermal_conductivity", 1.0));
 
@@ -436,8 +437,8 @@ TEST_CASE("ResultsJSON BPX Bruggeman handles edge cases", "[ResultsJSON][bpx]") 
 
         auto j = writer.buildJSON();
         CHECK(j["bpx"]["Parameterisation"]["Negative electrode"]
-                  ["Bruggeman coefficient (electrolyte)"]
-                      .get<double>() == Approx(0.0));
+               ["Bruggeman coefficient (electrolyte)"]
+                   .get<double>() == Approx(0.0));
     }
 
     SECTION("volume fraction = 1 yields Bruggeman = 0") {
@@ -449,8 +450,8 @@ TEST_CASE("ResultsJSON BPX Bruggeman handles edge cases", "[ResultsJSON][bpx]") 
 
         auto j = writer.buildJSON();
         CHECK(j["bpx"]["Parameterisation"]["Negative electrode"]
-                  ["Bruggeman coefficient (electrolyte)"]
-                      .get<double>() == Approx(0.0));
+               ["Bruggeman coefficient (electrolyte)"]
+                   .get<double>() == Approx(0.0));
     }
 }
 
