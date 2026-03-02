@@ -7,7 +7,7 @@
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/kramergroup/openImpala)](https://github.com/kramergroup/openImpala/releases/latest)
 [![GitHub contributors](https://img.shields.io/github/contributors/kramergroup/openImpala)](https://github.com/kramergroup/openImpala/graphs/contributors)
 [![Build and Test Status](https://github.com/kramergroup/openImpala/actions/workflows/build-test.yml/badge.svg?branch=main)](https://github.com/kramergroup/openImpala/actions/workflows/build-test.yml)
-[![codecov](https://codecov.io/gh/BASE-Laboratory/OpenImpala/branch/main/graph/badge.svg)](https://codecov.io/gh/BASE-Laboratory/OpenImpala)
+[![codecov](https://codecov.io/gh/BASE-Laboratory/OpenImpala/branch/master/graph/badge.svg)](https://codecov.io/gh/BASE-Laboratory/OpenImpala)
 
 > ⚠️ **Active Development Notice:** > This repository is the active development fork maintained by the [BASE Laboratory](https://github.com/BASE-Laboratory). 
 > For the original archive, please visit [kramergroup/openImpala](https://github.com/kramergroup/openImpala).
