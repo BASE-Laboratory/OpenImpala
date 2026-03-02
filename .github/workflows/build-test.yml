@@ -443,6 +443,15 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+      - name: Upload to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
       - name: Post coverage summary to PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
