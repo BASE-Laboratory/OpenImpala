@@ -84,6 +84,16 @@ find_package(TIFF REQUIRED)
 add_compile_definitions(OMPI_SKIP_MPICXX)
 
 # ==============================================================================
+# Code Coverage
+# ==============================================================================
+option(ENABLE_COVERAGE "Enable code coverage instrumentation (GCC/Clang --coverage)" OFF)
+if(ENABLE_COVERAGE)
+    message(STATUS "Code coverage enabled — appending --coverage to compile and link flags")
+    add_compile_options(--coverage)
+    add_link_options(--coverage)
+endif()
+
+# ==============================================================================
 # Library targets
 # ==============================================================================
 add_subdirectory(src)
