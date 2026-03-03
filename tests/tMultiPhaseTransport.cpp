@@ -95,6 +95,7 @@ int main(int argc, char* argv[]) {
         int num_phases_fill = 1;
         std::string solver_str = "FlexGMRES";
         std::string direction_str = "X";
+        std::string layer_axis_str;  // axis along which layers alternate (default: same as direction)
         amrex::Real expected_tau = 1.0;
         amrex::Real tau_tolerance = 1e-3;
         std::string resultsdir = "./tMultiPhaseTransport_results";
@@ -107,12 +108,19 @@ int main(int argc, char* argv[]) {
             pp.query("num_phases_fill", num_phases_fill);
             pp.query("solver", solver_str);
             pp.query("direction", direction_str);
+            pp.query("layer_axis", layer_axis_str);
             pp.query("expected_tau", expected_tau);
             pp.query("tau_tolerance", tau_tolerance);
             pp.query("resultsdir", resultsdir);
         }
 
+        // Default layer_axis to flow direction (backward compatible)
+        if (layer_axis_str.empty()) {
+            layer_axis_str = direction_str;
+        }
+
         OpenImpala::Direction direction = stringToDirection(direction_str);
+        int layer_dir_idx = static_cast<int>(stringToDirection(layer_axis_str));
         OpenImpala::TortuosityHypre::SolverType solver_type = stringToSolverType(solver_str);
 
         if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
@@ -121,6 +129,9 @@ int main(int argc, char* argv[]) {
             amrex::Print() << "  Box Size:          " << box_size << "\n";
             amrex::Print() << "  Num Phases Fill:   " << num_phases_fill << "\n";
             amrex::Print() << "  Direction:         " << direction_str << "\n";
+            if (num_phases_fill > 1) {
+                amrex::Print() << "  Layer Axis:        " << layer_axis_str << "\n";
+            }
             amrex::Print() << "  Solver:            " << solver_str << "\n";
             amrex::Print() << "  Expected Tau:      " << expected_tau << "\n";
             amrex::Print() << "  Tau Tolerance:     " << tau_tolerance << "\n";
@@ -162,8 +173,9 @@ int main(int argc, char* argv[]) {
                 amrex::Print() << " Phase field: uniform (all cells = phase 0)\n";
             }
         } else {
-            // Alternating layers along the solve direction
-            int dir_idx = static_cast<int>(direction);
+            // Alternating layers along the specified layer axis.
+            // When layer_axis == flow direction: series resistance (layers perpendicular to flow)
+            // When layer_axis != flow direction: parallel resistance (layers parallel to flow)
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
@@ -171,12 +183,12 @@ int main(int argc, char* argv[]) {
                 const amrex::Box& bx = mfi.growntilebox();
                 amrex::Array4<int> const phase_arr = mf_phase.array(mfi);
                 amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
-                    int coord = (dir_idx == 0) ? i : (dir_idx == 1) ? j : k;
+                    int coord = (layer_dir_idx == 0) ? i : (layer_dir_idx == 1) ? j : k;
                     phase_arr(i, j, k, 0) = (coord % 2 == 0) ? 0 : 1;
                 });
             }
             if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
-                amrex::Print() << " Phase field: alternating layers along " << direction_str
+                amrex::Print() << " Phase field: alternating layers along " << layer_axis_str
                                << " (phases 0 and 1)\n";
             }
         }
