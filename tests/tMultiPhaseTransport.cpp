@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
         int num_phases_fill = 1;
         std::string solver_str = "FlexGMRES";
         std::string direction_str = "X";
-        std::string layer_axis_str;  // axis along which layers alternate (default: same as direction)
+        std::string layer_axis_str; // default: same as flow direction
         amrex::Real expected_tau = 1.0;
         amrex::Real tau_tolerance = 1e-3;
         std::string resultsdir = "./tMultiPhaseTransport_results";
