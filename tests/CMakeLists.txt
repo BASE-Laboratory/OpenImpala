@@ -218,6 +218,63 @@ set_tests_properties(tMultiPhaseTransport_thermal PROPERTIES
 )
 
 # ==============================================================================
+# Regression Benchmarks (Issue #80)
+#
+# Lightweight synthetic geometries with known analytical solutions.
+# These guard against solver regressions: if any of these fail, the code
+# is producing incorrect physics.
+#
+#   uniform  — homogeneous block, tau = (N-1)/N
+#   series   — layers perpendicular to flow (Reuss/harmonic bound)
+#   parallel — layers parallel to flow (Voigt/arithmetic bound)
+# ==============================================================================
+
+# Uniform dense block: single-phase, tau = 0.96875
+add_test(
+    NAME tRegressionBenchmark_uniform
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tRegressionBenchmark_uniform.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tRegressionBenchmark_uniform PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# Series resistance: D_eff = harmonic mean, tau = 1.453125
+add_test(
+    NAME tRegressionBenchmark_series
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tRegressionBenchmark_series.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tRegressionBenchmark_series PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# Parallel resistance: D_eff = arithmetic mean, tau = 1.291667
+add_test(
+    NAME tRegressionBenchmark_parallel
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tRegressionBenchmark_parallel.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tRegressionBenchmark_parallel PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# ==============================================================================
 # Unit Tests (Catch2 — fast, no MPI/AMReX required)
 # ==============================================================================
 add_subdirectory(unit)

@@ -1,0 +1,42 @@
+# Regression Benchmark: Series Resistance (Reuss / Harmonic Mean Bound)
+#
+# Geometry:  32^3 domain, alternating single-cell layers of phase 0 (D=1.0)
+#            and phase 1 (D=0.5) along the flow direction (X).
+#            Layers are PERPENDICULAR to flow → series resistance.
+#
+# Analytical: Every inter-cell face crosses a phase boundary, so all face
+#             coefficients equal the harmonic mean:
+#               D_h = 2*D0*D1/(D0+D1) = 2*1.0*0.5/1.5 = 2/3
+#             The effective medium is uniform with D_face = D_h, giving:
+#               D_eff = D_h * N/(N-1)    (discrete boundary correction)
+#               tau   = active_VF / D_eff = (N-1) / (N * D_h)
+#                     = (N-1)(D0+D1) / (2*N*D0*D1)
+#                     = 31*1.5 / (2*32*0.5) = 46.5/32 = 1.453125
+#
+# Reference:  Reuss bound (harmonic mean), standard series-resistance model.
+#             This is the lower bound on effective diffusivity for a two-phase
+#             composite (Torquato, "Random Heterogeneous Materials", Ch. 21).
+
+domain_size = 32
+box_size = 16
+verbose = 2
+num_phases_fill = 2
+direction = X
+layer_axis = X
+
+solver = FlexGMRES
+
+# Expected: tau = (N-1)(D0+D1) / (2*N*D0*D1) = 31*1.5/(32*1.0) = 1.453125
+expected_tau = 1.453125
+tau_tolerance = 0.001
+
+resultsdir = ./tRegressionBenchmark_series_results
+
+# --- Solver Controls ---
+hypre.maxiter = 500
+hypre.eps = 1e-9
+
+# --- Multi-phase configuration ---
+tortuosity.active_phases = 0 1
+tortuosity.phase_diffusivities = 1.0 0.5
+tortuosity.remspot_passes = 0
