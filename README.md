@@ -1,6 +1,7 @@
 # OpenImpala
-
-<img src="https://user-images.githubusercontent.com/37665786/93309082-002ca800-f7fb-11ea-9ce7-d57b3e80c6ec.jpg" width="800" />
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/7a1902a0-a000-4111-b76b-226147ec6e30" alt="Logo" width="300">
+</p>
 
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![DOI](https://img.shields.io/badge/DOI-10.1016/j.softx.2021.100729-blue)](https://doi.org/10.1016/j.softx.2021.100729)
