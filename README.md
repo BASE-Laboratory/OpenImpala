@@ -424,9 +424,9 @@ The software is licensed under the **BSD 3-Clause "New" or "Revised" License**. 
 
 ## Acknowledgements
 
-This work was financially supported by the EPSRC Centre for Doctoral Training (CDT) in Energy Storage and its Applications [grant ref: EP/R021295/1], the Ada Lovelace Centre (ALC) STFC project, CANVAS-NXtomo, ContAiNerised Voxel-bAsed Simulation of Neutron and X-ray Tomography data, and part funded by the EPSRC prosperity partnership with Imperial College, INFUSE, Interface with the Future - Underpinning Science to Support the Energy transition EP/V038044/1.
+This work was financially supported by the EPSRC Centre for Doctoral Training (CDT) in Energy Storage and its Applications [grant ref: EP/R021295/1], the Ada Lovelace Centre (ALC) STFC project, CANVAS-NXtomo, ContAiNerised Voxel-bAsed Simulation of Neutron and X-ray Tomography data, the EPSRC prosperity partnership with Imperial College, INFUSE, Interface with the Future - Underpinning Science to Support the Energy transition EP/V038044/1, the Rutherford Appleton Laboratory and The Faraday Institution through James Le Houx's Emerging Leader Fellowship (Grant No. FIELF001), and from Research England’s ‘Expanding Excellence in England’ grant at the University of Greenwich via the “Multi-scale Multi-disciplinary Modelling for Impact” (M34Impact) programme.
 
-The authors acknowledge the use of the IRIDIS High Performance Computing Facility, and associated support services at the University of Southampton, in the completion of this work.
+The authors acknowledge the use of the IRIDIS High Performance Computing Facility, Diamond Light Source's Wilson HPC cluster, STFC's SCARF cluster and the University of Greenwich's M34Impact HPC Cluster in the completion of this work.
 
 We thank the developers of [AMReX](https://github.com/AMReX-Codes/amrex), [HYPRE](https://github.com/hypre-space/hypre), [libtiff](http://www.libtiff.org/), and [HDF5](https://www.hdfgroup.org/solutions/hdf5/) upon which OpenImpala relies.
 
