@@ -450,33 +450,90 @@ void TortuosityDirect::fillDomainBoundary(amrex::MultiFab& phi, int comp) {
         return;
 
     const amrex::Box& domain_box = m_geom.Domain();
+    const amrex::IntVect domlo = domain_box.smallEnd();
+    const amrex::IntVect domhi = domain_box.bigEnd();
 
-    int bc_c_array[AMREX_SPACEDIM * 2];
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
-        auto map_bc = [&](int amrex_bc_type_int) -> int {
-            if (amrex_bc_type_int == static_cast<int>(amrex::BCType::ext_dir))
-                return 1;
-            return 0;
-        };
-        bc_c_array[idim * 2 + 0] = map_bc(m_bc.lo(idim));
-        bc_c_array[idim * 2 + 1] = map_bc(m_bc.hi(idim));
+    // Determine which boundaries are Dirichlet
+    bool is_dirichlet_lo[AMREX_SPACEDIM];
+    bool is_dirichlet_hi[AMREX_SPACEDIM];
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        is_dirichlet_lo[d] = (m_bc.lo(d) == static_cast<int>(amrex::BCType::ext_dir));
+        is_dirichlet_hi[d] = (m_bc.hi(d) == static_cast<int>(amrex::BCType::ext_dir));
     }
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
     for (amrex::MFIter mfi(phi, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& fab_box_ghosts = mfi.fabbox();
+        const amrex::Box& fab_box = mfi.fabbox();
+        if (domain_box.contains(fab_box))
+            continue; // No ghost cells touch domain boundary
 
-        bool touches_boundary = !domain_box.contains(fab_box_ghosts);
-        if (touches_boundary) {
-            auto phi_arr = phi.array(mfi);
+        auto arr = phi.array(mfi);
+        const amrex::Box& valid = mfi.validbox();
 
-            int q_ncomp = phi.nComp();
-            const auto& qbox = phi.box(mfi.LocalTileIndex());
+        // Fill ghost cells at each domain boundary face
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            // Low boundary in dimension d
+            if (fab_box.smallEnd(d) < domlo[d]) {
+                amrex::Box ghost_lo = fab_box;
+                ghost_lo.setBig(d, domlo[d] - 1);
+                ghost_lo.setSmall(d, fab_box.smallEnd(d));
+                // Clamp lateral extents to domain to avoid corner overlap issues
+                for (int dd = 0; dd < AMREX_SPACEDIM; ++dd) {
+                    if (dd != d) {
+                        ghost_lo.setSmall(dd, std::max(ghost_lo.smallEnd(dd), domlo[dd]));
+                        ghost_lo.setBig(dd, std::min(ghost_lo.bigEnd(dd), domhi[dd]));
+                    }
+                }
+                if (is_dirichlet_lo[d]) {
+                    // Dirichlet: comp_phi = vlo, comp_ct = reflect interior
+                    amrex::Loop(ghost_lo, [&](int i, int j, int k) {
+                        arr(i, j, k, comp_phi) = m_vlo;
+                        amrex::IntVect iv(i, j, k);
+                        iv[d] = domlo[d]; // nearest interior cell
+                        arr(i, j, k, comp_ct) = arr(iv[0], iv[1], iv[2], comp_ct);
+                    });
+                } else {
+                    // Neumann (reflect_even): copy from nearest interior cell
+                    amrex::Loop(ghost_lo, [&](int i, int j, int k) {
+                        amrex::IntVect iv(i, j, k);
+                        iv[d] = domlo[d]; // nearest interior cell
+                        arr(i, j, k, comp_phi) = arr(iv[0], iv[1], iv[2], comp_phi);
+                        arr(i, j, k, comp_ct) = arr(iv[0], iv[1], iv[2], comp_ct);
+                    });
+                }
+            }
 
-            tortuosity_filbc(phi_arr.dataPtr(), qbox.loVect(), qbox.hiVect(), &q_ncomp,
-                             domain_box.loVect(), domain_box.hiVect(), &m_vlo, &m_vhi, bc_c_array);
+            // High boundary in dimension d
+            if (fab_box.bigEnd(d) > domhi[d]) {
+                amrex::Box ghost_hi = fab_box;
+                ghost_hi.setSmall(d, domhi[d] + 1);
+                ghost_hi.setBig(d, fab_box.bigEnd(d));
+                for (int dd = 0; dd < AMREX_SPACEDIM; ++dd) {
+                    if (dd != d) {
+                        ghost_hi.setSmall(dd, std::max(ghost_hi.smallEnd(dd), domlo[dd]));
+                        ghost_hi.setBig(dd, std::min(ghost_hi.bigEnd(dd), domhi[dd]));
+                    }
+                }
+                if (is_dirichlet_hi[d]) {
+                    // Dirichlet: comp_phi = vhi, comp_ct = reflect interior
+                    amrex::Loop(ghost_hi, [&](int i, int j, int k) {
+                        arr(i, j, k, comp_phi) = m_vhi;
+                        amrex::IntVect iv(i, j, k);
+                        iv[d] = domhi[d]; // nearest interior cell
+                        arr(i, j, k, comp_ct) = arr(iv[0], iv[1], iv[2], comp_ct);
+                    });
+                } else {
+                    // Neumann (reflect_even): copy from nearest interior cell
+                    amrex::Loop(ghost_hi, [&](int i, int j, int k) {
+                        amrex::IntVect iv(i, j, k);
+                        iv[d] = domhi[d]; // nearest interior cell
+                        arr(i, j, k, comp_phi) = arr(iv[0], iv[1], iv[2], comp_phi);
+                        arr(i, j, k, comp_ct) = arr(iv[0], iv[1], iv[2], comp_ct);
+                    });
+                }
+            }
         }
     }
 }
