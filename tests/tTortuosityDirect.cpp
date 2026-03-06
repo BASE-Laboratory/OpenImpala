@@ -2,16 +2,17 @@
 //
 // Integration test for OpenImpala::TortuosityDirect (legacy Forward Euler solver).
 //
-// Creates a synthetic uniform domain and validates:
-//   - Solver convergence
-//   - Tortuosity against analytical result: tau = (N-1)/N for uniform medium
-//   - Iteration count and residual diagnostics
-//   - Directional symmetry (X, Y, Z should give same result)
+// Creates a synthetic uniform domain and exercises:
+//   - Constructor (BC init, flux MultiFab init, cell size inversion)
+//   - solve() (fill initial state, fill cell types, advance loop, residual, flux calc)
+//   - value() (tortuosity computation from fluxes, caching)
+//   - Solver diagnostic getters
 //
-// This test exercises:
-//   - TortuosityDirect.cpp (167 uncovered lines)
-//   - Tortuosity_filcc.F90 (122 uncovered lines)
-//   - Tortuosity_poisson_3d.F90 (66 uncovered lines)
+// Purpose: Achieve code coverage for TortuosityDirect.cpp (167 lines),
+//   Tortuosity_filcc.F90 (122 lines), and Tortuosity_poisson_3d.F90 (66 lines),
+//   all previously at 0% coverage.
+//
+// Validates tortuosity against analytical result: tau = (N-1)/N for uniform medium.
 
 #include "TortuosityDirect.H"
 #include "Tortuosity.H"
@@ -34,8 +35,7 @@
 
 namespace {
 
-OpenImpala::Direction stringToDirection(const std::string& dir_str)
-{
+OpenImpala::Direction stringToDirection(const std::string& dir_str) {
     if (dir_str == "x" || dir_str == "X")
         return OpenImpala::Direction::X;
     if (dir_str == "y" || dir_str == "Y")
@@ -49,8 +49,7 @@ OpenImpala::Direction stringToDirection(const std::string& dir_str)
 } // anonymous namespace
 
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     amrex::Initialize(argc, argv);
     {
         bool test_passed = true;
@@ -86,8 +85,8 @@ int main(int argc, char* argv[])
 
         // Default expected_tau = (N-1)/N for uniform medium
         if (expected_tau < 0.0) {
-            expected_tau = static_cast<amrex::Real>(domain_size - 1) /
-                           static_cast<amrex::Real>(domain_size);
+            expected_tau =
+                static_cast<amrex::Real>(domain_size - 1) / static_cast<amrex::Real>(domain_size);
         }
 
         if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
@@ -105,11 +104,9 @@ int main(int argc, char* argv[])
 
         // --- Create synthetic uniform domain ---
         amrex::Box domain_box(amrex::IntVect(0, 0, 0),
-                              amrex::IntVect(domain_size - 1, domain_size - 1,
-                                             domain_size - 1));
+                              amrex::IntVect(domain_size - 1, domain_size - 1, domain_size - 1));
         amrex::RealBox rb({AMREX_D_DECL(0.0, 0.0, 0.0)},
-                          {AMREX_D_DECL(amrex::Real(domain_size),
-                                        amrex::Real(domain_size),
+                          {AMREX_D_DECL(amrex::Real(domain_size), amrex::Real(domain_size),
                                         amrex::Real(domain_size))});
         amrex::Array<int, AMREX_SPACEDIM> is_periodic{AMREX_D_DECL(0, 0, 0)};
         amrex::Geometry geom;
@@ -133,20 +130,18 @@ int main(int argc, char* argv[])
         // --- Construct TortuosityDirect ---
         std::unique_ptr<OpenImpala::TortuosityDirect> tort;
         try {
-            tort = std::make_unique<OpenImpala::TortuosityDirect>(
-                geom, ba, dm, mf_phase,
-                0,         // phase_id
-                direction, // direction
-                eps,       // convergence criterion
-                n_steps,   // max iterations
-                plot_interval,
-                resultsdir + "/plot",
-                0.0,  // vlo
-                1.0); // vhi
+            tort =
+                std::make_unique<OpenImpala::TortuosityDirect>(geom, ba, dm, mf_phase,
+                                                               0,         // phase_id
+                                                               direction, // direction
+                                                               eps,       // convergence criterion
+                                                               n_steps,   // max iterations
+                                                               plot_interval, resultsdir + "/plot",
+                                                               0.0,  // vlo
+                                                               1.0); // vhi
         } catch (const std::exception& e) {
             test_passed = false;
-            fail_reason =
-                "TortuosityDirect construction failed: " + std::string(e.what());
+            fail_reason = "TortuosityDirect construction failed: " + std::string(e.what());
         }
 
         // --- Calculate tortuosity ---
@@ -159,12 +154,11 @@ int main(int argc, char* argv[])
                     fail_reason = "Tortuosity value is NaN (solver may not have converged)";
                 } else if (std::isinf(actual_tau)) {
                     test_passed = false;
-                    fail_reason = "Tortuosity value is Inf";
+                    fail_reason = "Tortuosity value is Inf (zero flux detected)";
                 }
             } catch (const std::exception& e) {
                 test_passed = false;
-                fail_reason =
-                    "Exception during tortuosity calculation: " + std::string(e.what());
+                fail_reason = "Exception during tortuosity calculation: " + std::string(e.what());
             }
         }
 
@@ -180,22 +174,22 @@ int main(int argc, char* argv[])
             if (iters <= 0) {
                 test_passed = false;
                 fail_reason = "Solver reports zero iterations";
+            } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << " Diagnostics check: PASS\n";
             }
         }
 
-        // --- Validate tortuosity ---
+        // --- Validate tortuosity against analytical result ---
         if (test_passed) {
             amrex::Real diff = std::abs(actual_tau - expected_tau);
             if (diff > tau_tolerance) {
                 test_passed = false;
                 fail_reason = "Tortuosity mismatch: got " + std::to_string(actual_tau) +
-                              ", expected " + std::to_string(expected_tau) +
-                              ", diff " + std::to_string(diff) +
-                              ", tolerance " + std::to_string(tau_tolerance);
+                              ", expected " + std::to_string(expected_tau) + ", diff " +
+                              std::to_string(diff) + ", tolerance " + std::to_string(tau_tolerance);
             } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Tortuosity check:  PASS (tau=" << actual_tau
-                               << ", expected=" << expected_tau << ", diff=" << diff
-                               << ")\n";
+                               << ", expected=" << expected_tau << ", diff=" << diff << ")\n";
             }
         }
 
@@ -204,9 +198,8 @@ int main(int argc, char* argv[])
             amrex::Real cached_tau = tort->value(false);
             if (std::abs(cached_tau - actual_tau) > 1e-15) {
                 test_passed = false;
-                fail_reason = "Cached value differs from computed: " +
-                              std::to_string(cached_tau) + " vs " +
-                              std::to_string(actual_tau);
+                fail_reason = "Cached value differs from computed: " + std::to_string(cached_tau) +
+                              " vs " + std::to_string(actual_tau);
             } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Caching check:     PASS\n";
             }

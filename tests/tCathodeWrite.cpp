@@ -28,32 +28,28 @@ struct TestStatus {
     bool passed = true;
     std::string fail_reason;
 
-    void recordFail(const std::string& reason)
-    {
+    void recordFail(const std::string& reason) {
         passed = false;
         fail_reason = reason;
     }
 };
 
 // Read entire file into string
-std::string readFileContents(const std::string& filename)
-{
+std::string readFileContents(const std::string& filename) {
     std::ifstream ifs(filename);
     std::stringstream ss;
     ss << ifs.rdbuf();
     return ss.str();
 }
 
-bool containsSubstr(const std::string& haystack, const std::string& needle)
-{
+bool containsSubstr(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
 } // anonymous namespace
 
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     amrex::Initialize(argc, argv);
     {
         TestStatus status;
@@ -108,8 +104,7 @@ int main(int argc, char* argv[])
                 }
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 1 (DandeLiion write): PASS\n";
             }
         }
@@ -159,8 +154,7 @@ int main(int argc, char* argv[])
                 }
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 2 (PyBaMM write):     PASS\n";
             }
         }
@@ -220,8 +214,7 @@ int main(int argc, char* argv[])
                 status.recordFail("writePyBammParameters failed for small radius");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 4 (edge case):        PASS\n";
             }
         }
@@ -243,8 +236,7 @@ int main(int argc, char* argv[])
                 status.recordFail("writeDandeLiionParameters failed for out-of-range VF");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 5 (OOB VF):          PASS\n";
             }
         }

@@ -32,8 +32,7 @@ struct TestStatus {
     bool passed = true;
     std::string fail_reason;
 
-    void recordFail(const std::string& reason)
-    {
+    void recordFail(const std::string& reason) {
         passed = false;
         fail_reason = reason;
     }
@@ -42,8 +41,7 @@ struct TestStatus {
 } // anonymous namespace
 
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     amrex::Initialize(argc, argv);
     {
         TestStatus status;
@@ -60,11 +58,9 @@ int main(int argc, char* argv[])
 
         // Setup geometry and grid
         amrex::Box domain_box(amrex::IntVect(0, 0, 0),
-                              amrex::IntVect(domain_size - 1, domain_size - 1,
-                                             domain_size - 1));
+                              amrex::IntVect(domain_size - 1, domain_size - 1, domain_size - 1));
         amrex::RealBox rb({AMREX_D_DECL(0.0, 0.0, 0.0)},
-                          {AMREX_D_DECL(amrex::Real(domain_size),
-                                        amrex::Real(domain_size),
+                          {AMREX_D_DECL(amrex::Real(domain_size), amrex::Real(domain_size),
                                         amrex::Real(domain_size))});
         amrex::Array<int, AMREX_SPACEDIM> is_periodic{AMREX_D_DECL(0, 0, 0)};
         amrex::Geometry geom;
@@ -82,8 +78,8 @@ int main(int argc, char* argv[])
             mf.setVal(0);
             mf.FillBoundary(geom.periodicity());
 
-            OpenImpala::PercolationCheck perc(geom, ba, dm, mf, 0,
-                                              OpenImpala::Direction::X, verbose);
+            OpenImpala::PercolationCheck perc(geom, ba, dm, mf, 0, OpenImpala::Direction::X,
+                                              verbose);
 
             if (!perc.percolates()) {
                 status.recordFail("Test 1: uniform domain should percolate");
@@ -91,14 +87,11 @@ int main(int argc, char* argv[])
 
             amrex::Real avf = perc.activeVolumeFraction();
             if (std::abs(avf - 1.0) > 0.01) {
-                status.recordFail("Test 1: activeVF = " + std::to_string(avf) +
-                                  ", expected ~1.0");
+                status.recordFail("Test 1: activeVF = " + std::to_string(avf) + ", expected ~1.0");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
-                amrex::Print() << " Test 1 (fully connected): PASS (activeVF="
-                               << avf << ")\n";
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << " Test 1 (fully connected): PASS (activeVF=" << avf << ")\n";
             }
         }
 
@@ -116,8 +109,7 @@ int main(int argc, char* argv[])
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            for (amrex::MFIter mfi(mf, amrex::TilingIfNotGPU()); mfi.isValid();
-                 ++mfi) {
+            for (amrex::MFIter mfi(mf, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
                 const amrex::Box& bx = mfi.growntilebox();
                 auto arr = mf.array(mfi);
                 amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
@@ -128,15 +120,14 @@ int main(int argc, char* argv[])
             }
             mf.FillBoundary(geom.periodicity());
 
-            OpenImpala::PercolationCheck perc(geom, ba, dm, mf, 0,
-                                              OpenImpala::Direction::X, verbose);
+            OpenImpala::PercolationCheck perc(geom, ba, dm, mf, 0, OpenImpala::Direction::X,
+                                              verbose);
 
             if (perc.percolates()) {
                 status.recordFail("Test 2: blocked domain should NOT percolate in X");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 2 (X-blocked):       PASS\n";
             }
         }
@@ -150,8 +141,8 @@ int main(int argc, char* argv[])
             mf.FillBoundary(geom.periodicity());
 
             // Check percolation for phase 5 (not in the data)
-            OpenImpala::PercolationCheck perc(geom, ba, dm, mf, 5,
-                                              OpenImpala::Direction::X, verbose);
+            OpenImpala::PercolationCheck perc(geom, ba, dm, mf, 5, OpenImpala::Direction::X,
+                                              verbose);
 
             if (perc.percolates()) {
                 status.recordFail("Test 3: absent phase should not percolate");
@@ -159,12 +150,10 @@ int main(int argc, char* argv[])
 
             amrex::Real avf = perc.activeVolumeFraction();
             if (std::abs(avf) > 1e-12) {
-                status.recordFail("Test 3: activeVF = " + std::to_string(avf) +
-                                  ", expected 0.0");
+                status.recordFail("Test 3: activeVF = " + std::to_string(avf) + ", expected 0.0");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 3 (absent phase):    PASS\n";
             }
         }
@@ -181,8 +170,7 @@ int main(int argc, char* argv[])
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-            for (amrex::MFIter mfi(mf, amrex::TilingIfNotGPU()); mfi.isValid();
-                 ++mfi) {
+            for (amrex::MFIter mfi(mf, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
                 const amrex::Box& bx = mfi.growntilebox();
                 auto arr = mf.array(mfi);
                 amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
@@ -195,21 +183,20 @@ int main(int argc, char* argv[])
             mf.FillBoundary(geom.periodicity());
 
             // Should percolate in Y
-            OpenImpala::PercolationCheck perc_y(geom, ba, dm, mf, 0,
-                                                OpenImpala::Direction::Y, verbose);
+            OpenImpala::PercolationCheck perc_y(geom, ba, dm, mf, 0, OpenImpala::Direction::Y,
+                                                verbose);
             if (!perc_y.percolates()) {
                 status.recordFail("Test 4: Y-column should percolate in Y");
             }
 
             // Should NOT percolate in X (only at i=0, doesn't reach i=N-1)
-            OpenImpala::PercolationCheck perc_x(geom, ba, dm, mf, 0,
-                                                OpenImpala::Direction::X, verbose);
+            OpenImpala::PercolationCheck perc_x(geom, ba, dm, mf, 0, OpenImpala::Direction::X,
+                                                verbose);
             if (perc_x.percolates()) {
                 status.recordFail("Test 4: Y-column should NOT percolate in X");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 4 (directional):     PASS\n";
             }
         }
@@ -224,11 +211,11 @@ int main(int argc, char* argv[])
 
             for (int d = 0; d < 3; ++d) {
                 OpenImpala::Direction dir = static_cast<OpenImpala::Direction>(d);
-                OpenImpala::PercolationCheck perc(geom, ba, dm, mf, 0, dir,
-                                                  verbose);
+                OpenImpala::PercolationCheck perc(geom, ba, dm, mf, 0, dir, verbose);
                 if (!perc.percolates()) {
                     status.recordFail("Test 5: uniform domain should percolate in "
-                                      "direction " + std::to_string(d));
+                                      "direction " +
+                                      std::to_string(d));
                     break;
                 }
                 amrex::Real avf = perc.activeVolumeFraction();
@@ -239,8 +226,7 @@ int main(int argc, char* argv[])
                 }
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 5 (all directions):  PASS\n";
             }
         }

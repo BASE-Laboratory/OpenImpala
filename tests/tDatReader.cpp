@@ -32,13 +32,12 @@ namespace {
 
 // Write a DAT file: 3 x int32 header (W, H, D) + W*H*D x uint16 data (LE)
 bool writeDatFile(const std::string& filename, int w, int h, int d,
-                  const std::vector<std::uint16_t>& data)
-{
+                  const std::vector<std::uint16_t>& data) {
     std::ofstream ofs(filename, std::ios::binary);
-    if (!ofs.is_open()) return false;
+    if (!ofs.is_open())
+        return false;
 
-    std::int32_t dims[3] = {static_cast<std::int32_t>(w),
-                            static_cast<std::int32_t>(h),
+    std::int32_t dims[3] = {static_cast<std::int32_t>(w), static_cast<std::int32_t>(h),
                             static_cast<std::int32_t>(d)};
     ofs.write(reinterpret_cast<const char*>(dims), sizeof(dims));
     ofs.write(reinterpret_cast<const char*>(data.data()),
@@ -50,8 +49,7 @@ struct TestStatus {
     bool passed = true;
     std::string fail_reason;
 
-    void recordFail(const std::string& reason)
-    {
+    void recordFail(const std::string& reason) {
         passed = false;
         fail_reason = reason;
     }
@@ -60,8 +58,7 @@ struct TestStatus {
 } // anonymous namespace
 
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     amrex::Initialize(argc, argv);
     {
         TestStatus status;
@@ -104,12 +101,11 @@ int main(int argc, char* argv[])
             } else {
                 // Check dimensions
                 if (reader.width() != W || reader.height() != H || reader.depth() != D) {
-                    status.recordFail("Dimension mismatch: got (" +
-                                      std::to_string(reader.width()) + "," +
-                                      std::to_string(reader.height()) + "," +
+                    status.recordFail("Dimension mismatch: got (" + std::to_string(reader.width()) +
+                                      "," + std::to_string(reader.height()) + "," +
                                       std::to_string(reader.depth()) + "), expected (" +
-                                      std::to_string(W) + "," + std::to_string(H) +
-                                      "," + std::to_string(D) + ")");
+                                      std::to_string(W) + "," + std::to_string(H) + "," +
+                                      std::to_string(D) + ")");
                 }
 
                 // Check isRead
@@ -139,18 +135,16 @@ int main(int argc, char* argv[])
                             std::uint16_t expected = static_cast<std::uint16_t>(idx * 100);
                             std::uint16_t actual = reader.getRawValue(i, j, k);
                             if (actual != expected) {
-                                status.recordFail(
-                                    "getRawValue(" + std::to_string(i) + "," +
-                                    std::to_string(j) + "," + std::to_string(k) +
-                                    ") = " + std::to_string(actual) + ", expected " +
-                                    std::to_string(expected));
+                                status.recordFail("getRawValue(" + std::to_string(i) + "," +
+                                                  std::to_string(j) + "," + std::to_string(k) +
+                                                  ") = " + std::to_string(actual) + ", expected " +
+                                                  std::to_string(expected));
                             }
                         }
                     }
                 }
 
-                if (status.passed && verbose >= 1 &&
-                    amrex::ParallelDescriptor::IOProcessor()) {
+                if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                     amrex::Print() << " Test 1 (read + getters):  PASS\n";
                 }
             }
@@ -181,8 +175,7 @@ int main(int argc, char* argv[])
                 status.recordFail("getRawValue(W,0,0) did not throw std::out_of_range");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 2 (bounds checking): PASS\n";
             }
         }
@@ -217,21 +210,17 @@ int main(int argc, char* argv[])
                         count1++;
                 });
             }
-            amrex::ParallelAllReduce::Sum(count0,
-                                          amrex::ParallelContext::CommunicatorSub());
-            amrex::ParallelAllReduce::Sum(count1,
-                                          amrex::ParallelContext::CommunicatorSub());
+            amrex::ParallelAllReduce::Sum(count0, amrex::ParallelContext::CommunicatorSub());
+            amrex::ParallelAllReduce::Sum(count1, amrex::ParallelContext::CommunicatorSub());
 
             // Values 0,100,200,300,400,500 → 6 cells with val <= 500 → phase 0
             // Values 600,...,2300 → 18 cells with val > 500 → phase 1
             if (count0 != 6 || count1 != 18) {
-                status.recordFail("Threshold count mismatch: phase0=" +
-                                  std::to_string(count0) + " (exp 6), phase1=" +
-                                  std::to_string(count1) + " (exp 18)");
+                status.recordFail("Threshold count mismatch: phase0=" + std::to_string(count0) +
+                                  " (exp 6), phase1=" + std::to_string(count1) + " (exp 18)");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 3 (threshold):       PASS\n";
             }
         }
@@ -252,21 +241,17 @@ int main(int argc, char* argv[])
             int min_val = mf.min(0);
             int max_val = mf.max(0);
             // Should contain only 42 and 99
-            if (!((min_val == 42 && max_val == 99) ||
-                  (min_val == 99 && max_val == 42) ||
-                  (min_val == 42 && max_val == 42) ||
-                  (min_val == 99 && max_val == 99))) {
+            if (!((min_val == 42 && max_val == 99) || (min_val == 99 && max_val == 42) ||
+                  (min_val == 42 && max_val == 42) || (min_val == 99 && max_val == 99))) {
                 // More precisely: min should be 42, max should be 99
                 // (since we have both above and below threshold)
                 if (min_val != 42 || max_val != 99) {
                     status.recordFail("Custom threshold values wrong: min=" +
-                                      std::to_string(min_val) + " max=" +
-                                      std::to_string(max_val));
+                                      std::to_string(min_val) + " max=" + std::to_string(max_val));
                 }
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 4 (custom threshold): PASS\n";
             }
         }
@@ -285,8 +270,7 @@ int main(int argc, char* argv[])
                 status.recordFail("Constructor did not throw for missing file");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 5 (missing file):    PASS\n";
             }
         }
@@ -313,8 +297,7 @@ int main(int argc, char* argv[])
                 status.recordFail("isRead() should be false for truncated file");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 6 (truncated file):  PASS\n";
             }
         }
@@ -343,12 +326,10 @@ int main(int argc, char* argv[])
                 caught = true;
             }
             if (!caught) {
-                status.recordFail(
-                    "getRawValue on unread reader did not throw");
+                status.recordFail("getRawValue on unread reader did not throw");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 7 (default state):   PASS\n";
             }
         }
@@ -371,8 +352,7 @@ int main(int argc, char* argv[])
                 status.recordFail("readFile() should fail for zero-dimension header");
             }
 
-            if (status.passed && verbose >= 1 &&
-                amrex::ParallelDescriptor::IOProcessor()) {
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Test 8 (invalid dims):    PASS\n";
             }
         }

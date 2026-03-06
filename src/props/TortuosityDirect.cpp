@@ -269,6 +269,9 @@ void TortuosityDirect::global_fluxes(amrex::Real& fxin, amrex::Real& fxout) cons
                                    fy_ptr, fybox.loVect(), fybox.hiVect(), fz_ptr, fzbox.loVect(),
                                    fzbox.hiVect(), &dir_int, &lfxin, &lfxout);
         }
+        // Propagate local accumulations to the OMP reduction variables
+        fxin += lfxin;
+        fxout += lfxout;
     } // End OMP parallel region
 
     amrex::ParallelDescriptor::ReduceRealSum(fxin);
