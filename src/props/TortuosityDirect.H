@@ -1,3 +1,6 @@
+/** @file TortuosityDirect.H
+ *  @brief Legacy iterative tortuosity solver using Forward Euler time-stepping.
+ */
 #ifndef TORTUOSITYDIRECT_H
 #define TORTUOSITYDIRECT_H
 

@@ -1,3 +1,6 @@
+/** @file Tortuosity.H
+ *  @brief Abstract base class for tortuosity solvers and shared enums (Direction, CellType).
+ */
 #ifndef TORTUOSITY_H // Standard include guard
 #define TORTUOSITY_H
 

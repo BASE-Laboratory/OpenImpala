@@ -1,3 +1,6 @@
+/** @file RawReader.H
+ *  @brief Reads 3D image data from flat binary (RAW) files with configurable data types.
+ */
 #ifndef OPENIMPALA_RAW_READER_H
 #define OPENIMPALA_RAW_READER_H
 
