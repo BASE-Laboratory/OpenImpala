@@ -153,6 +153,8 @@ amrex::Real TortuosityDirect::value(const bool refresh) {
 bool TortuosityDirect::solve() {
     amrex::MultiFab mf_phi_old(m_ba, m_dm, 2, NUM_GHOST_CELLS);
     amrex::MultiFab mf_phi_new(m_ba, m_dm, 2, NUM_GHOST_CELLS);
+    mf_phi_old.setVal(0.0);
+    mf_phi_new.setVal(0.0);
 
     fillInitialState(mf_phi_old);
     fillCellTypes(mf_phi_old);
@@ -237,8 +239,17 @@ void TortuosityDirect::global_fluxes(amrex::Real& fxin, amrex::Real& fxout) cons
     fxin = 0.0;
     fxout = 0.0;
 
-    const amrex::Box& bx_domain = m_geom.Domain();
     const int dir_int = static_cast<int>(m_dir);
+    if (dir_int < 0 || dir_int >= AMREX_SPACEDIM) {
+        amrex::Abort("Invalid direction specified for global_fluxes");
+    }
+
+    // Use cell-based domain box for lo/hi passed to Fortran fio kernel.
+    // The fio kernel expects cell indices and computes flux at face lo(dir)
+    // (inlet) and hi(dir)+1 (outlet). Using edge-box coordinates from the
+    // flux MultiFab would shift hi(dir) by 1, causing the outlet face
+    // ownership check to fail and reading out-of-bounds data.
+    const amrex::Box& domain = m_geom.Domain();
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel reduction(+ : fxin, fxout)
@@ -246,13 +257,13 @@ void TortuosityDirect::global_fluxes(amrex::Real& fxin, amrex::Real& fxout) cons
     {
         amrex::Real lfxin = 0.0;
         amrex::Real lfxout = 0.0;
-        int idir = dir_int;
-        if (idir < 0 || idir >= AMREX_SPACEDIM) {
-            amrex::Abort("Invalid direction specified for global_fluxes");
-        }
 
-        for (amrex::MFIter mfi(m_flux[idir]); mfi.isValid(); ++mfi) {
-            const amrex::Box& bx = mfi.tilebox();
+        for (amrex::MFIter mfi(m_flux[dir_int]); mfi.isValid(); ++mfi) {
+            // Intersect the cell-based valid box for this FAB with the domain
+            // to get cell-based lo/hi for the fio kernel.
+            amrex::Box cell_bx = m_flux[dir_int].box(mfi.index());
+            cell_bx.enclosedCells(dir_int); // Convert edge box back to cell box
+            cell_bx &= domain;              // Intersect with domain
 
             const auto& fx_arr = m_flux[0].const_array(mfi);
             const auto& fy_arr = m_flux[1].const_array(mfi);
@@ -265,9 +276,9 @@ void TortuosityDirect::global_fluxes(amrex::Real& fxin, amrex::Real& fxout) cons
             const auto& fybox = m_flux[1].box(mfi.index());
             const auto& fzbox = m_flux[2].box(mfi.index());
 
-            tortuosity_poisson_fio(bx.loVect(), bx.hiVect(), fx_ptr, fxbox.loVect(), fxbox.hiVect(),
-                                   fy_ptr, fybox.loVect(), fybox.hiVect(), fz_ptr, fzbox.loVect(),
-                                   fzbox.hiVect(), &dir_int, &lfxin, &lfxout);
+            tortuosity_poisson_fio(cell_bx.loVect(), cell_bx.hiVect(), fx_ptr, fxbox.loVect(),
+                                   fxbox.hiVect(), fy_ptr, fybox.loVect(), fybox.hiVect(), fz_ptr,
+                                   fzbox.loVect(), fzbox.hiVect(), &dir_int, &lfxin, &lfxout);
         }
         // Propagate local accumulations to the OMP reduction variables
         fxin += lfxin;
