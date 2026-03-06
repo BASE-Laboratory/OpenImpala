@@ -1,3 +1,6 @@
+/** @file PercolationCheck.H
+ *  @brief Parallel flood-fill percolation connectivity check for phase data.
+ */
 #ifndef OPENIMPALA_PERCOLATION_CHECK_H
 #define OPENIMPALA_PERCOLATION_CHECK_H
 

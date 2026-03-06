@@ -1,3 +1,6 @@
+/** @file EffDiffFillMtx_F.H
+ *  @brief C interface to Fortran kernel for effective diffusivity HYPRE matrix fill.
+ */
 #ifndef OPENIMPALA_EFFDIFF_FILL_MTX_F_H_
 #define OPENIMPALA_EFFDIFF_FILL_MTX_F_H_
 

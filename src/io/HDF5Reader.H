@@ -1,3 +1,6 @@
+/** @file HDF5Reader.H
+ *  @brief Reads 3D datasets from HDF5 files with parallel I/O support.
+ */
 #ifndef HDF5_READER_H
 #define HDF5_READER_H
 

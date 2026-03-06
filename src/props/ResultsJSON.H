@@ -1,3 +1,6 @@
+/** @file ResultsJSON.H
+ *  @brief Structured JSON output for transport results (BPX/BattINFO compatible).
+ */
 // --- ResultsJSON.H ---
 //
 // Structured JSON output for OpenImpala transport property results.

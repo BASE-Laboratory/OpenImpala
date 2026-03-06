@@ -1,3 +1,6 @@
+/** @file TiffReader.H
+ *  @brief Reads 3D image data from single/multi-directory TIFFs or file sequences.
+ */
 #ifndef TIFF_READER_H
 #define TIFF_READER_H
 
