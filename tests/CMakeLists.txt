@@ -79,6 +79,23 @@ openimpala_add_test(tEffectiveDiffusivity   "${CMAKE_CURRENT_SOURCE_DIR}/tEffect
 openimpala_add_test(tPercolationCheck       "${CMAKE_CURRENT_SOURCE_DIR}/tPercolationCheck.cpp")
 
 # ==============================================================================
+# I/O Tests — Zero Coverage Targets (Issue #109)
+# ==============================================================================
+openimpala_add_test(tDatReader      "${CMAKE_CURRENT_SOURCE_DIR}/tDatReader.cpp")
+openimpala_add_test(tCathodeWrite   "${CMAKE_CURRENT_SOURCE_DIR}/tCathodeWrite.cpp")
+
+# ==============================================================================
+# Solver Tests — Zero Coverage Target (Issue #109)
+# ==============================================================================
+openimpala_add_test(tTortuosityDirect  "${CMAKE_CURRENT_SOURCE_DIR}/tTortuosityDirect.cpp")
+
+# ==============================================================================
+# Synthetic Data Tests — Improve Partial Coverage (Issue #109)
+# ==============================================================================
+openimpala_add_test(tSyntheticVolumeFraction  "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticVolumeFraction.cpp")
+openimpala_add_test(tSyntheticPercolation     "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticPercolation.cpp")
+
+# ==============================================================================
 # Multi-Phase Transport Tests
 # ==============================================================================
 
