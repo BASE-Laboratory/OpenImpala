@@ -1,3 +1,6 @@
+/** @file CathodeWrite.H
+ *  @brief Data structures for cathode electrode parameters (DandeLiion/PyBaMM output).
+ */
 #ifndef CATHODE_WRITE_H // Corrected and styled header guard
 #define CATHODE_WRITE_H
 

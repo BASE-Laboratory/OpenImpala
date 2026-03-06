@@ -33,6 +33,24 @@ jobs:
           find src/ tests/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.c" \) \
             -exec clang-format --dry-run --Werror {} +
 
+      - name: Check @file/@brief documentation in headers
+        run: |
+          MISSING=0
+          for f in $(find src/ -type f -name "*.H" -o -name "*.h" | sort); do
+            if ! head -5 "$f" | grep -q "@file"; then
+              echo "::warning file=$f::Missing @file doxygen tag"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          if [ "$MISSING" -gt 0 ]; then
+            echo ""
+            echo "WARNING: $MISSING header(s) missing @file/@brief documentation."
+            echo "Add a doxygen block before the include guard:"
+            echo '  /** @file MyHeader.H'
+            echo '   *  @brief One-line description of the file.'
+            echo '   */'
+          fi
+
   static-analysis:
     name: Static Analysis (clang-tidy)
     runs-on: ubuntu-latest

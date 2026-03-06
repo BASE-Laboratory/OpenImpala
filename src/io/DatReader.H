@@ -1,3 +1,6 @@
+/** @file DatReader.H
+ *  @brief Reads 3D image data from legacy DAT binary files.
+ */
 #ifndef DAT_READER_H // Corrected header guard style
 #define DAT_READER_H
 

@@ -1,3 +1,6 @@
+/** @file PhysicsConfig.H
+ *  @brief Maps solver output to physical quantities (diffusion, conductivity, thermal, etc.).
+ */
 // --- PhysicsConfig.H ---
 //
 // Lightweight configuration for different Laplacian-type physics problems.

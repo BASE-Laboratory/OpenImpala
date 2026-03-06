@@ -1,3 +1,6 @@
+/** @file VolumeFraction.H
+ *  @brief Computes volume fraction of a phase within an amrex::iMultiFab.
+ */
 #ifndef OPENIMPALA_VOLUME_FRACTION_H // Using project-specific guard
 #define OPENIMPALA_VOLUME_FRACTION_H
 
