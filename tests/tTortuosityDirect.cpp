@@ -12,10 +12,7 @@
 //   Tortuosity_filcc.F90 (122 lines), and Tortuosity_poisson_3d.F90 (66 lines),
 //   all previously at 0% coverage.
 //
-// Note: The legacy solver has a known issue in global_fluxes() where local
-//   accumulation variables are not propagated to the OMP reduction variables,
-//   resulting in zero flux output. The test validates that all code paths
-//   execute without crashing rather than checking tortuosity accuracy.
+// Validates tortuosity against analytical result: tau = (N-1)/N for uniform medium.
 
 #include "TortuosityDirect.H"
 #include "Tortuosity.H"
@@ -148,19 +145,16 @@ int main(int argc, char* argv[]) {
         }
 
         // --- Calculate tortuosity ---
-        // Note: The legacy solver has a known bug in global_fluxes() where
-        // Fortran-accumulated lfxin/lfxout are not propagated to the OMP
-        // reduction variables fxin/fxout, resulting in zero flux and thus
-        // infinite tortuosity. We accept NaN/Inf as valid outcomes while
-        // verifying that all code paths execute without crashing.
         amrex::Real actual_tau = std::numeric_limits<amrex::Real>::quiet_NaN();
         if (test_passed && tort) {
             try {
                 actual_tau = tort->value();
-                // value() should return a number (possibly Inf due to known bug)
-                // but should NOT throw
-                if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
-                    amrex::Print() << " Tortuosity value:  " << actual_tau << "\n";
+                if (std::isnan(actual_tau)) {
+                    test_passed = false;
+                    fail_reason = "Tortuosity value is NaN (solver may not have converged)";
+                } else if (std::isinf(actual_tau)) {
+                    test_passed = false;
+                    fail_reason = "Tortuosity value is Inf (zero flux detected)";
                 }
             } catch (const std::exception& e) {
                 test_passed = false;
@@ -185,34 +179,24 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // --- Validate tortuosity (informational, not failure condition) ---
-        if (test_passed && std::isfinite(actual_tau)) {
+        // --- Validate tortuosity against analytical result ---
+        if (test_passed) {
             amrex::Real diff = std::abs(actual_tau - expected_tau);
-            if (diff <= tau_tolerance && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            if (diff > tau_tolerance) {
+                test_passed = false;
+                fail_reason = "Tortuosity mismatch: got " + std::to_string(actual_tau) +
+                              ", expected " + std::to_string(expected_tau) + ", diff " +
+                              std::to_string(diff) + ", tolerance " + std::to_string(tau_tolerance);
+            } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Tortuosity check:  PASS (tau=" << actual_tau
                                << ", expected=" << expected_tau << ", diff=" << diff << ")\n";
-            } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
-                amrex::Print() << " Tortuosity check:  WARN (tau=" << actual_tau
-                               << ", expected=" << expected_tau << ", diff=" << diff << ")\n";
             }
-        } else if (test_passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << " Tortuosity check:  SKIP (non-finite value, known legacy issue)\n";
         }
 
-        // --- Test value() caching (second call should return same result) ---
+        // --- Test value() caching (second call should return cached result) ---
         if (test_passed && tort) {
             amrex::Real cached_tau = tort->value(false);
-            // Both might be NaN, Inf, or a finite value — they should match
-            bool cache_ok = false;
-            if (std::isnan(actual_tau) && std::isnan(cached_tau)) {
-                cache_ok = true;
-            } else if (actual_tau == cached_tau) {
-                cache_ok = true;
-            } else if (std::isfinite(actual_tau) && std::isfinite(cached_tau) &&
-                       std::abs(cached_tau - actual_tau) < 1e-15) {
-                cache_ok = true;
-            }
-            if (!cache_ok) {
+            if (std::abs(cached_tau - actual_tau) > 1e-15) {
                 test_passed = false;
                 fail_reason = "Cached value differs from computed: " + std::to_string(cached_tau) +
                               " vs " + std::to_string(actual_tau);
