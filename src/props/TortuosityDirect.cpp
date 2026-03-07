@@ -89,7 +89,6 @@ amrex::Real TortuosityDirect::value(const bool refresh) {
 
     amrex::Real fxin = 0.0, fxout = 0.0;
     global_fluxes(fxin, fxout);
-    amrex::Real fx = (fxin + fxout) / 2.0;
 
     const amrex::Box& bx_domain = m_geom.Domain();
     const amrex::IntVect& sz = bx_domain.size();
@@ -116,34 +115,32 @@ amrex::Real TortuosityDirect::value(const bool refresh) {
         return m_value;
     }
 
-    amrex::Real avg_flux_density = fx / cross_sectional_area;
+    // Use absolute values to match TortuosityHypre convention and avoid
+    // sign issues from the numerical flux direction.
+    amrex::Real avg_flux_mag = 0.5 * (std::abs(fxin) + std::abs(fxout)) / cross_sectional_area;
 
-    constexpr amrex::Real flux_dens_tol = 1e-15;
-    if (std::abs(avg_flux_density) < flux_dens_tol) {
+    constexpr amrex::Real tiny_tol = 1e-15;
+    if (avg_flux_mag < tiny_tol) {
         amrex::Warning(
             "Calculated average flux density is near zero. Setting tortuosity to infinity.");
         m_value = std::numeric_limits<amrex::Real>::infinity();
     } else {
         amrex::Real vf = 1.0; // Placeholder - Needs actual Volume Fraction calculation!
         amrex::Real length = m_geom.ProbLength(static_cast<int>(m_dir));
-        amrex::Real delta_V = m_vhi - m_vlo;
+        amrex::Real gradPhi = std::abs(m_vhi - m_vlo) / length;
 
-        if (std::abs(delta_V) < flux_dens_tol || length <= 0.0) {
+        if (gradPhi < tiny_tol || length <= 0.0) {
             amrex::Warning("TortuosityDirect::value: Cannot calculate tortuosity due to zero "
-                           "potential difference or non-positive length.");
+                           "potential gradient or non-positive length.");
             m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
         } else {
-            amrex::Real rel_diff = -avg_flux_density * length / delta_V;
-            if (std::abs(rel_diff) < flux_dens_tol) {
+            amrex::Real Deff = avg_flux_mag / gradPhi;
+            if (Deff < tiny_tol) {
                 amrex::Warning("Calculated relative diffusivity is near zero. Setting tortuosity "
                                "to infinity.");
                 m_value = std::numeric_limits<amrex::Real>::infinity();
             } else {
-                m_value = vf / rel_diff;
-                if (m_value < 0.0 && vf > 0.0) {
-                    amrex::Warning("Calculated negative tortuosity, check flux direction, BCs, or "
-                                   "definition.");
-                }
+                m_value = vf / Deff;
             }
         }
     }
