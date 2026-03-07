@@ -83,10 +83,10 @@ int main(int argc, char* argv[]) {
 
         OpenImpala::Direction direction = stringToDirection(direction_str);
 
-        // Default expected_tau = (N-1)/N for uniform medium
+        // Default expected_tau = (N+1)/N for uniform medium with cell-centered ghost BCs
         if (expected_tau < 0.0) {
             expected_tau =
-                static_cast<amrex::Real>(domain_size - 1) / static_cast<amrex::Real>(domain_size);
+                static_cast<amrex::Real>(domain_size + 1) / static_cast<amrex::Real>(domain_size);
         }
 
         if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
