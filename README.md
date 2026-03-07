@@ -1,16 +1,14 @@
 # OpenImpala
-
-<img src="https://user-images.githubusercontent.com/37665786/93309082-002ca800-f7fb-11ea-9ce7-d57b3e80c6ec.jpg" width="800" />
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/7a1902a0-a000-4111-b76b-226147ec6e30" alt="Logo" width="300">
+</p>
 
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![DOI](https://img.shields.io/badge/DOI-10.1016/j.softx.2021.100729-blue)](https://doi.org/10.1016/j.softx.2021.100729)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/kramergroup/openImpala)](https://github.com/kramergroup/openImpala/releases/latest)
-[![GitHub contributors](https://img.shields.io/github/contributors/kramergroup/openImpala)](https://github.com/kramergroup/openImpala/graphs/contributors)
-[![Build and Test Status](https://github.com/kramergroup/openImpala/actions/workflows/build-test.yml/badge.svg?branch=master)](https://github.com/kramergroup/openImpala/actions/workflows/build-test.yml)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/BASE-Laboratory/OpenImpala)](https://github.com/BASE-Laboratory/OpenImpala/releases/latest)
+[![GitHub contributors](https://img.shields.io/github/contributors/BASE-Laboratory/OpenImpala)](https://github.com/BASE-Laboratory/OpenImpala/graphs/contributors)
+[![Build and Test Status](https://github.com/BASE-Laboratory/OpenImpala/actions/workflows/build-test.yml/badge.svg?branch=master)](https://github.com/BASE-Laboratory/OpenImpala/actions/workflows/build-test.yml)
 [![codecov](https://codecov.io/gh/BASE-Laboratory/OpenImpala/branch/master/graph/badge.svg)](https://codecov.io/gh/BASE-Laboratory/OpenImpala)
-
-> ⚠️ **Active Development Notice:** > This repository is the active development fork maintained by the [BASE Laboratory](https://github.com/BASE-Laboratory). 
-> For the original archive, please visit [kramergroup/openImpala](https://github.com/kramergroup/openImpala).
 
 OpenImpala is a high-performance computing framework for image-based modelling, built upon the [AMReX library](https://github.com/AMReX-Codes/amrex) for massive parallelism using MPI. It tackles the challenge posed by large 3D imaging datasets (often billions of voxels) common in materials science and tomography.
 
@@ -73,7 +71,7 @@ The easiest way to use OpenImpala is by downloading the pre-built container from
 
 ### 1. Download the Container
 
-1.  Go to the [**GitHub Releases Page**](https://github.com/kramergroup/openImpala/releases).
+1.  Go to the [**GitHub Releases Page**](https://github.com/BASE-Laboratory/OpenImpala/releases).
 2.  Find the latest release and download the `.sif` file (e.g., `openimpala-vX.Y.Z.sif`) from the "Assets" section.
 3.  Ensure you have **Apptainer** or **Singularity** (version 3.x or later) installed on your system. See the [Apptainer documentation](https://apptainer.org/docs/user/main/installation.html).
 
@@ -322,15 +320,15 @@ Below are some examples of publications using or discussing OpenImpala:
 
 Contributions to OpenImpala are welcome! Whether it's reporting bugs, suggesting features, improving documentation, or submitting code, your input is valuable.
 
-* **Bug Reports & Feature Requests:** Please use the [GitHub Issues tracker](https://github.com/kramergroup/openImpala/issues) to report problems or propose new features. Provide as much detail as possible, including steps to reproduce for bugs.
+* **Bug Reports & Feature Requests:** Please use the [GitHub Issues tracker](https://github.com/BASE-Laboratory/OpenImpala/issues) to report problems or propose new features. Provide as much detail as possible, including steps to reproduce for bugs.
 * **Code Contributions:**
     * If you plan to make significant changes, please open an issue first to discuss your ideas.
     * For code contributions (bug fixes, enhancements, new features, tests), please follow this general workflow:
-        1.  Fork the repository ([https://github.com/kramergroup/openImpala](https://github.com/kramergroup/openImpala)).
+        1.  Fork the repository ([https://github.com/BASE-Laboratory/OpenImpala](https://github.com/BASE-Laboratory/OpenImpala)).
         2.  Create a new branch for your feature or fix (`git checkout -b feature/my-new-feature`).
         3.  Make your changes and commit them with clear messages.
         4.  Push your branch to your fork (`git push origin feature/my-new-feature`).
-        5.  Submit a [Pull Request](https://github.com/kramergroup/openImpala/pulls) to the main repository.
+        5.  Submit a [Pull Request](https://github.com/BASE-Laboratory/OpenImpala/pulls) to the main repository.
 * **Documentation:** Improvements to the README, code comments, or other documentation are always appreciated. You can submit these via Pull Requests.
 
 ## Code Formatting
@@ -426,9 +424,9 @@ The software is licensed under the **BSD 3-Clause "New" or "Revised" License**. 
 
 ## Acknowledgements
 
-This work was financially supported by the EPSRC Centre for Doctoral Training (CDT) in Energy Storage and its Applications [grant ref: EP/R021295/1], the Ada Lovelace Centre (ALC) STFC project, CANVAS-NXtomo, ContAiNerised Voxel-bAsed Simulation of Neutron and X-ray Tomography data, and part funded by the EPSRC prosperity partnership with Imperial College, INFUSE, Interface with the Future - Underpinning Science to Support the Energy transition EP/V038044/1.
+This work was financially supported by the EPSRC Centre for Doctoral Training (CDT) in Energy Storage and its Applications [grant ref: EP/R021295/1], the Ada Lovelace Centre (ALC) STFC project, CANVAS-NXtomo, ContAiNerised Voxel-bAsed Simulation of Neutron and X-ray Tomography data, the EPSRC prosperity partnership with Imperial College, INFUSE, Interface with the Future - Underpinning Science to Support the Energy transition EP/V038044/1, the Rutherford Appleton Laboratory and The Faraday Institution through James Le Houx's Emerging Leader Fellowship (Grant No. FIELF001), and from Research England’s ‘Expanding Excellence in England’ grant at the University of Greenwich via the “Multi-scale Multi-disciplinary Modelling for Impact” (M34Impact) programme.
 
-The authors acknowledge the use of the IRIDIS High Performance Computing Facility, and associated support services at the University of Southampton, in the completion of this work.
+The authors acknowledge the use of the IRIDIS High Performance Computing Facility, Diamond Light Source's Wilson HPC cluster, STFC's SCARF cluster and the University of Greenwich's M34Impact HPC Cluster in the completion of this work.
 
 We thank the developers of [AMReX](https://github.com/AMReX-Codes/amrex), [HYPRE](https://github.com/hypre-space/hypre), [libtiff](http://www.libtiff.org/), and [HDF5](https://www.hdfgroup.org/solutions/hdf5/) upon which OpenImpala relies.
 
@@ -436,4 +434,4 @@ We thank the developers of [AMReX](https://github.com/AMReX-Codes/amrex), [HYPRE
 
 ## Contact & Support
 
-For questions, bug reports, or feature requests, please use the [GitHub Issues tracker](https://github.com/kramergroup/openImpala/issues) for this repository.
+For questions, bug reports, or feature requests, please use the [GitHub Issues tracker](https://github.com/BASE-Laboratory/OpenImpala/issues) for this repository.
