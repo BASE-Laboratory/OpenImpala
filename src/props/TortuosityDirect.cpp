@@ -326,6 +326,10 @@ void TortuosityDirect::advance(amrex::MultiFab& phi_old, amrex::MultiFab& phi_ne
                                     solbox.hiVect(), dxinv_ptr);
         }
 
+#ifdef AMREX_USE_OMP
+#pragma omp barrier
+#endif
+
         for (amrex::MFIter mfi(phi_new, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
             const amrex::Box& bx = mfi.tilebox();
 
@@ -349,8 +353,11 @@ void TortuosityDirect::advance(amrex::MultiFab& phi_old, amrex::MultiFab& phi_ne
 
             const amrex::Real* dxinv_ptr = m_dxinv.data(); // Assumes m_dxinv is amrex::Array
 
-            // *** FIX: Add ncomp argument to the call ***
-            const int ncomp_val = phi_new.nComp(); // Get number of components
+            // Only diffuse comp_phi (component 0), NOT comp_ct (component 1).
+            // Passing nComp()=2 would apply the Euler stencil to cell types,
+            // corrupting them from integer 1 to fractional values like 0.99,
+            // which then cast to 0 in the residual check, hiding all updates.
+            const int ncomp_val = 1;
 
             tortuosity_poisson_update(bx.loVect(), bx.hiVect(), p_ptr, pbox.loVect(), pbox.hiVect(),
                                       n_ptr, nbox.loVect(), nbox.hiVect(), fx_ptr, fxbox.loVect(),
@@ -443,7 +450,9 @@ void TortuosityDirect::fillInitialState(amrex::MultiFab& phi) {
         auto phi_arr = phi.array(mfi);
         const auto& phase_arr = m_mf_phase.const_array(mfi);
 
-        int q_ncomp = phi.nComp();
+        // Only fill comp_phi (1 component). Passing nComp()=2 would also
+        // overwrite comp_ct with the linear gradient, corrupting cell types.
+        int q_ncomp = 1;
         int p_ncomp = m_mf_phase.nComp();
         const auto& qbox = phi.box(mfi.LocalTileIndex());
         const auto& pbox = m_mf_phase.box(mfi.LocalTileIndex());
