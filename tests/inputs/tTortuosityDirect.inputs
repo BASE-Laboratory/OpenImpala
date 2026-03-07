@@ -1,0 +1,21 @@
+# TortuosityDirect Test: Uniform block with Forward Euler solver
+#
+# Geometry:  8^3 domain, all voxels = single conducting phase
+# Solver:    Forward Euler (TortuosityDirect), not HYPRE
+# Analytical: tau = (N+1)/N = 9/8 = 1.125 (cell-centered ghost Dirichlet BCs
+#             stretch the diffusion path by half a cell on each side)
+#
+# Note: Forward Euler is slow to converge — needs many iterations.
+#       Tolerance is set looser than HYPRE-based tests.
+
+domain_size = 8
+box_size = 8
+verbose = 2
+direction = X
+n_steps = 50000
+plot_interval = 5000
+eps = 1e-6
+expected_tau = 1.125
+tau_tolerance = 0.05
+
+resultsdir = ./tTortuosityDirect_results

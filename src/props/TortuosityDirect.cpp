@@ -1,6 +1,5 @@
 #include "TortuosityDirect.H"
 #include "Tortuosity_poisson_3d_F.H" // Assuming Fortran interface for poisson steps
-#include "Tortuosity_filcc_F.H"      // Assuming Fortran interface for fill/condition steps
 
 #include <cstdlib> // For std::getenv
 #include <cmath>   // For std::abs
@@ -89,7 +88,6 @@ amrex::Real TortuosityDirect::value(const bool refresh) {
 
     amrex::Real fxin = 0.0, fxout = 0.0;
     global_fluxes(fxin, fxout);
-    amrex::Real fx = (fxin + fxout) / 2.0;
 
     const amrex::Box& bx_domain = m_geom.Domain();
     const amrex::IntVect& sz = bx_domain.size();
@@ -116,34 +114,32 @@ amrex::Real TortuosityDirect::value(const bool refresh) {
         return m_value;
     }
 
-    amrex::Real avg_flux_density = fx / cross_sectional_area;
+    // Use absolute values to match TortuosityHypre convention and avoid
+    // sign issues from the numerical flux direction.
+    amrex::Real avg_flux_mag = 0.5 * (std::abs(fxin) + std::abs(fxout)) / cross_sectional_area;
 
-    constexpr amrex::Real flux_dens_tol = 1e-15;
-    if (std::abs(avg_flux_density) < flux_dens_tol) {
+    constexpr amrex::Real tiny_tol = 1e-15;
+    if (avg_flux_mag < tiny_tol) {
         amrex::Warning(
             "Calculated average flux density is near zero. Setting tortuosity to infinity.");
         m_value = std::numeric_limits<amrex::Real>::infinity();
     } else {
         amrex::Real vf = 1.0; // Placeholder - Needs actual Volume Fraction calculation!
         amrex::Real length = m_geom.ProbLength(static_cast<int>(m_dir));
-        amrex::Real delta_V = m_vhi - m_vlo;
+        amrex::Real gradPhi = std::abs(m_vhi - m_vlo) / length;
 
-        if (std::abs(delta_V) < flux_dens_tol || length <= 0.0) {
+        if (gradPhi < tiny_tol || length <= 0.0) {
             amrex::Warning("TortuosityDirect::value: Cannot calculate tortuosity due to zero "
-                           "potential difference or non-positive length.");
+                           "potential gradient or non-positive length.");
             m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
         } else {
-            amrex::Real rel_diff = -avg_flux_density * length / delta_V;
-            if (std::abs(rel_diff) < flux_dens_tol) {
+            amrex::Real Deff = avg_flux_mag / gradPhi;
+            if (Deff < tiny_tol) {
                 amrex::Warning("Calculated relative diffusivity is near zero. Setting tortuosity "
                                "to infinity.");
                 m_value = std::numeric_limits<amrex::Real>::infinity();
             } else {
-                m_value = vf / rel_diff;
-                if (m_value < 0.0 && vf > 0.0) {
-                    amrex::Warning("Calculated negative tortuosity, check flux direction, BCs, or "
-                                   "definition.");
-                }
+                m_value = vf / Deff;
             }
         }
     }
@@ -153,6 +149,8 @@ amrex::Real TortuosityDirect::value(const bool refresh) {
 bool TortuosityDirect::solve() {
     amrex::MultiFab mf_phi_old(m_ba, m_dm, 2, NUM_GHOST_CELLS);
     amrex::MultiFab mf_phi_new(m_ba, m_dm, 2, NUM_GHOST_CELLS);
+    mf_phi_old.setVal(0.0);
+    mf_phi_new.setVal(0.0);
 
     fillInitialState(mf_phi_old);
     fillCellTypes(mf_phi_old);
@@ -237,8 +235,17 @@ void TortuosityDirect::global_fluxes(amrex::Real& fxin, amrex::Real& fxout) cons
     fxin = 0.0;
     fxout = 0.0;
 
-    const amrex::Box& bx_domain = m_geom.Domain();
     const int dir_int = static_cast<int>(m_dir);
+    if (dir_int < 0 || dir_int >= AMREX_SPACEDIM) {
+        amrex::Abort("Invalid direction specified for global_fluxes");
+    }
+
+    // Use cell-based domain box for lo/hi passed to Fortran fio kernel.
+    // The fio kernel expects cell indices and computes flux at face lo(dir)
+    // (inlet) and hi(dir)+1 (outlet). Using edge-box coordinates from the
+    // flux MultiFab would shift hi(dir) by 1, causing the outlet face
+    // ownership check to fail and reading out-of-bounds data.
+    const amrex::Box& domain = m_geom.Domain();
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel reduction(+ : fxin, fxout)
@@ -246,13 +253,13 @@ void TortuosityDirect::global_fluxes(amrex::Real& fxin, amrex::Real& fxout) cons
     {
         amrex::Real lfxin = 0.0;
         amrex::Real lfxout = 0.0;
-        int idir = dir_int;
-        if (idir < 0 || idir >= AMREX_SPACEDIM) {
-            amrex::Abort("Invalid direction specified for global_fluxes");
-        }
 
-        for (amrex::MFIter mfi(m_flux[idir]); mfi.isValid(); ++mfi) {
-            const amrex::Box& bx = mfi.tilebox();
+        for (amrex::MFIter mfi(m_flux[dir_int]); mfi.isValid(); ++mfi) {
+            // Intersect the cell-based valid box for this FAB with the domain
+            // to get cell-based lo/hi for the fio kernel.
+            amrex::Box cell_bx = m_flux[dir_int].box(mfi.index());
+            cell_bx.enclosedCells(dir_int); // Convert edge box back to cell box
+            cell_bx &= domain;              // Intersect with domain
 
             const auto& fx_arr = m_flux[0].const_array(mfi);
             const auto& fy_arr = m_flux[1].const_array(mfi);
@@ -261,14 +268,18 @@ void TortuosityDirect::global_fluxes(amrex::Real& fxin, amrex::Real& fxout) cons
             const auto* fy_ptr = fy_arr.dataPtr();
             const auto* fz_ptr = fz_arr.dataPtr();
 
-            const auto& fxbox = m_flux[0].box(mfi.index());
-            const auto& fybox = m_flux[1].box(mfi.index());
-            const auto& fzbox = m_flux[2].box(mfi.index());
+            // FIX: Use [mfi].box() for actual allocated memory bounds
+            const auto& fxbox = m_flux[0][mfi].box();
+            const auto& fybox = m_flux[1][mfi].box();
+            const auto& fzbox = m_flux[2][mfi].box();
 
-            tortuosity_poisson_fio(bx.loVect(), bx.hiVect(), fx_ptr, fxbox.loVect(), fxbox.hiVect(),
-                                   fy_ptr, fybox.loVect(), fybox.hiVect(), fz_ptr, fzbox.loVect(),
-                                   fzbox.hiVect(), &dir_int, &lfxin, &lfxout);
+            tortuosity_poisson_fio(cell_bx.loVect(), cell_bx.hiVect(), fx_ptr, fxbox.loVect(),
+                                   fxbox.hiVect(), fy_ptr, fybox.loVect(), fybox.hiVect(), fz_ptr,
+                                   fzbox.loVect(), fzbox.hiVect(), &dir_int, &lfxin, &lfxout);
         }
+        // Propagate local accumulations to the OMP reduction variables
+        fxin += lfxin;
+        fxout += lfxout;
     } // End OMP parallel region
 
     amrex::ParallelDescriptor::ReduceRealSum(fxin);
@@ -299,18 +310,26 @@ void TortuosityDirect::advance(amrex::MultiFab& phi_old, amrex::MultiFab& phi_ne
             const auto& sol_arr = phi_old.const_array(mfi);
             const auto* sol_ptr = sol_arr.dataPtr();
 
-            const auto& fxbox = m_flux[0].box(mfi.index());
-            const auto& fybox = m_flux[1].box(mfi.index());
-            const auto& fzbox = m_flux[2].box(mfi.index());
-            const auto& solbox = phi_old.box(mfi.index());
+            // FIX: Use [mfi].box() to get the actual allocated memory Box
+            // (including ghost cells), not .box(mfi.index()) which returns
+            // the valid box only. dataPtr() points to memory including ghosts,
+            // so Fortran needs the ghost-inclusive bounds to index correctly.
+            const auto& fxbox = m_flux[0][mfi].box();
+            const auto& fybox = m_flux[1][mfi].box();
+            const auto& fzbox = m_flux[2][mfi].box();
+            const auto& solbox = phi_old[mfi].box();
 
-            const amrex::Real* dxinv_ptr = m_dxinv.data(); // Assumes m_dxinv is amrex::Array
+            const amrex::Real* dxinv_ptr = m_dxinv.data();
 
             tortuosity_poisson_flux(bx.loVect(), bx.hiVect(), fx_ptr, fxbox.loVect(),
                                     fxbox.hiVect(), fy_ptr, fybox.loVect(), fybox.hiVect(), fz_ptr,
                                     fzbox.loVect(), fzbox.hiVect(), sol_ptr, solbox.loVect(),
                                     solbox.hiVect(), dxinv_ptr);
         }
+
+#ifdef AMREX_USE_OMP
+#pragma omp barrier
+#endif
 
         for (amrex::MFIter mfi(phi_new, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
             const amrex::Box& bx = mfi.tilebox();
@@ -327,16 +346,20 @@ void TortuosityDirect::advance(amrex::MultiFab& phi_old, amrex::MultiFab& phi_ne
             const auto* fy_ptr = fy_arr.dataPtr();
             const auto* fz_ptr = fz_arr.dataPtr();
 
-            const auto& pbox = phi_old.box(mfi.index());
-            const auto& nbox = phi_new.box(mfi.index());
-            const auto& fxbox = m_flux[0].box(mfi.index());
-            const auto& fybox = m_flux[1].box(mfi.index());
-            const auto& fzbox = m_flux[2].box(mfi.index());
+            // FIX: Use [mfi].box() for actual allocated memory bounds
+            const auto& pbox = phi_old[mfi].box();
+            const auto& nbox = phi_new[mfi].box();
+            const auto& fxbox = m_flux[0][mfi].box();
+            const auto& fybox = m_flux[1][mfi].box();
+            const auto& fzbox = m_flux[2][mfi].box();
 
-            const amrex::Real* dxinv_ptr = m_dxinv.data(); // Assumes m_dxinv is amrex::Array
+            const amrex::Real* dxinv_ptr = m_dxinv.data();
 
-            // *** FIX: Add ncomp argument to the call ***
-            const int ncomp_val = phi_new.nComp(); // Get number of components
+            // Only diffuse comp_phi (component 0), NOT comp_ct (component 1).
+            // Passing nComp()=2 would apply the Euler stencil to cell types,
+            // corrupting them from integer 1 to fractional values like 0.99,
+            // which then cast to 0 in the residual check, hiding all updates.
+            const int ncomp_val = 1;
 
             tortuosity_poisson_update(bx.loVect(), bx.hiVect(), p_ptr, pbox.loVect(), pbox.hiVect(),
                                       n_ptr, nbox.loVect(), nbox.hiVect(), fx_ptr, fxbox.loVect(),
@@ -396,48 +419,53 @@ void TortuosityDirect::initializeBoundaryConditions() {
 }
 
 void TortuosityDirect::fillCellTypes(amrex::MultiFab& phi) {
-    const amrex::Box& domain_box = m_geom.Domain();
-
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-    for (amrex::MFIter mfi(phi, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        auto phi_arr = phi.array(mfi);
-        const auto& phase_arr = m_mf_phase.const_array(mfi);
-
-        int q_ncomp = phi.nComp();
-        int p_ncomp = m_mf_phase.nComp();
-        const auto& qbox = phi.box(mfi.LocalTileIndex());
-        const auto& pbox = m_mf_phase.box(mfi.LocalTileIndex());
-
-        tortuosity_filct(phi_arr.dataPtr(), qbox.loVect(), qbox.hiVect(), &q_ncomp,
-                         phase_arr.dataPtr(), pbox.loVect(), pbox.hiVect(), &p_ncomp,
-                         domain_box.loVect(), domain_box.hiVect(), &m_phase);
-    }
-}
-
-void TortuosityDirect::fillInitialState(amrex::MultiFab& phi) {
-    const amrex::Box& domain_box = m_geom.Domain();
-    const int dir_int = static_cast<int>(m_dir);
+    int target_phase = m_phase;
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
     for (amrex::MFIter mfi(phi, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.tilebox();
-
         auto phi_arr = phi.array(mfi);
         const auto& phase_arr = m_mf_phase.const_array(mfi);
 
-        int q_ncomp = phi.nComp();
-        int p_ncomp = m_mf_phase.nComp();
-        const auto& qbox = phi.box(mfi.LocalTileIndex());
-        const auto& pbox = m_mf_phase.box(mfi.LocalTileIndex());
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            if (phase_arr(i, j, k) == target_phase) {
+                phi_arr(i, j, k, comp_ct) = 1.0;
+            } else {
+                phi_arr(i, j, k, comp_ct) = 0.0;
+            }
+        });
+    }
+}
 
-        tortuosity_filic(phi_arr.dataPtr(), qbox.loVect(), qbox.hiVect(), &q_ncomp,
-                         phase_arr.dataPtr(), pbox.loVect(), pbox.hiVect(), &p_ncomp, bx.loVect(),
-                         bx.hiVect(), domain_box.loVect(), domain_box.hiVect(), &m_vlo, &m_vhi,
-                         &m_phase, &dir_int);
+void TortuosityDirect::fillInitialState(amrex::MultiFab& phi) {
+    const int d = static_cast<int>(m_dir);
+    const amrex::Box& domain_box = m_geom.Domain();
+    int lo_idx = domain_box.smallEnd(d);
+    amrex::Real dom_len = static_cast<amrex::Real>(domain_box.length(d));
+    amrex::Real factor = (dom_len > 0.0) ? 1.0 / dom_len : 0.0;
+    int target_phase = m_phase;
+    amrex::Real vlo = m_vlo;
+    amrex::Real vhi = m_vhi;
+
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+    for (amrex::MFIter mfi(phi, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.tilebox();
+        auto phi_arr = phi.array(mfi);
+        const auto& phase_arr = m_mf_phase.const_array(mfi);
+
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            if (phase_arr(i, j, k) == target_phase) {
+                amrex::IntVect iv(i, j, k);
+                amrex::Real coord = static_cast<amrex::Real>(iv[d] - lo_idx);
+                phi_arr(i, j, k, comp_phi) = vlo + coord * factor * (vhi - vlo);
+            } else {
+                phi_arr(i, j, k, comp_phi) = 0.0;
+            }
+        });
     }
 }
 
@@ -447,33 +475,90 @@ void TortuosityDirect::fillDomainBoundary(amrex::MultiFab& phi, int comp) {
         return;
 
     const amrex::Box& domain_box = m_geom.Domain();
+    const amrex::IntVect domlo = domain_box.smallEnd();
+    const amrex::IntVect domhi = domain_box.bigEnd();
 
-    int bc_c_array[AMREX_SPACEDIM * 2];
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
-        auto map_bc = [&](int amrex_bc_type_int) -> int {
-            if (amrex_bc_type_int == static_cast<int>(amrex::BCType::ext_dir))
-                return 1;
-            return 0;
-        };
-        bc_c_array[idim * 2 + 0] = map_bc(m_bc.lo(idim));
-        bc_c_array[idim * 2 + 1] = map_bc(m_bc.hi(idim));
+    // Determine which boundaries are Dirichlet
+    bool is_dirichlet_lo[AMREX_SPACEDIM];
+    bool is_dirichlet_hi[AMREX_SPACEDIM];
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        is_dirichlet_lo[d] = (m_bc.lo(d) == static_cast<int>(amrex::BCType::ext_dir));
+        is_dirichlet_hi[d] = (m_bc.hi(d) == static_cast<int>(amrex::BCType::ext_dir));
     }
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
     for (amrex::MFIter mfi(phi, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& fab_box_ghosts = mfi.fabbox();
+        const amrex::Box& fab_box = mfi.fabbox();
+        if (domain_box.contains(fab_box))
+            continue; // No ghost cells touch domain boundary
 
-        bool touches_boundary = !domain_box.contains(fab_box_ghosts);
-        if (touches_boundary) {
-            auto phi_arr = phi.array(mfi);
+        auto arr = phi.array(mfi);
+        const amrex::Box& valid = mfi.validbox();
 
-            int q_ncomp = phi.nComp();
-            const auto& qbox = phi.box(mfi.LocalTileIndex());
+        // Fill ghost cells at each domain boundary face
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            // Low boundary in dimension d
+            if (fab_box.smallEnd(d) < domlo[d]) {
+                amrex::Box ghost_lo = fab_box;
+                ghost_lo.setBig(d, domlo[d] - 1);
+                ghost_lo.setSmall(d, fab_box.smallEnd(d));
+                // Clamp lateral extents to domain to avoid corner overlap issues
+                for (int dd = 0; dd < AMREX_SPACEDIM; ++dd) {
+                    if (dd != d) {
+                        ghost_lo.setSmall(dd, std::max(ghost_lo.smallEnd(dd), domlo[dd]));
+                        ghost_lo.setBig(dd, std::min(ghost_lo.bigEnd(dd), domhi[dd]));
+                    }
+                }
+                if (is_dirichlet_lo[d]) {
+                    // Dirichlet: comp_phi = vlo, comp_ct = reflect interior
+                    amrex::Loop(ghost_lo, [&](int i, int j, int k) {
+                        arr(i, j, k, comp_phi) = m_vlo;
+                        amrex::IntVect iv(i, j, k);
+                        iv[d] = domlo[d]; // nearest interior cell
+                        arr(i, j, k, comp_ct) = arr(iv[0], iv[1], iv[2], comp_ct);
+                    });
+                } else {
+                    // Neumann (reflect_even): copy from nearest interior cell
+                    amrex::Loop(ghost_lo, [&](int i, int j, int k) {
+                        amrex::IntVect iv(i, j, k);
+                        iv[d] = domlo[d]; // nearest interior cell
+                        arr(i, j, k, comp_phi) = arr(iv[0], iv[1], iv[2], comp_phi);
+                        arr(i, j, k, comp_ct) = arr(iv[0], iv[1], iv[2], comp_ct);
+                    });
+                }
+            }
 
-            tortuosity_filbc(phi_arr.dataPtr(), qbox.loVect(), qbox.hiVect(), &q_ncomp,
-                             domain_box.loVect(), domain_box.hiVect(), &m_vlo, &m_vhi, bc_c_array);
+            // High boundary in dimension d
+            if (fab_box.bigEnd(d) > domhi[d]) {
+                amrex::Box ghost_hi = fab_box;
+                ghost_hi.setSmall(d, domhi[d] + 1);
+                ghost_hi.setBig(d, fab_box.bigEnd(d));
+                for (int dd = 0; dd < AMREX_SPACEDIM; ++dd) {
+                    if (dd != d) {
+                        ghost_hi.setSmall(dd, std::max(ghost_hi.smallEnd(dd), domlo[dd]));
+                        ghost_hi.setBig(dd, std::min(ghost_hi.bigEnd(dd), domhi[dd]));
+                    }
+                }
+                if (is_dirichlet_hi[d]) {
+                    // Dirichlet: comp_phi = vhi, comp_ct = reflect interior
+                    amrex::Loop(ghost_hi, [&](int i, int j, int k) {
+                        arr(i, j, k, comp_phi) = m_vhi;
+                        amrex::IntVect iv(i, j, k);
+                        iv[d] = domhi[d]; // nearest interior cell
+                        arr(i, j, k, comp_ct) = arr(iv[0], iv[1], iv[2], comp_ct);
+                    });
+                } else {
+                    // Neumann (reflect_even): copy from nearest interior cell
+                    amrex::Loop(ghost_hi, [&](int i, int j, int k) {
+                        amrex::IntVect iv(i, j, k);
+                        iv[d] = domhi[d]; // nearest interior cell
+                        arr(i, j, k, comp_phi) = arr(iv[0], iv[1], iv[2], comp_phi);
+                        arr(i, j, k, comp_ct) = arr(iv[0], iv[1], iv[2], comp_ct);
+                    });
+                }
+            }
         }
     }
 }
