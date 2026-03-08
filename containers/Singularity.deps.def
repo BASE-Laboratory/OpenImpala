@@ -189,12 +189,15 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     
     # pyAMReX requires CMake 3.24+, pybind11, and numpy to compile.
     # Rocky's EPEL cmake3 is too old, so we grab the latest CMake via pip.
+    # CRITICAL: Pin pybind11 to 2.13.x — pybind11 3.0 introduced an ABI break
+    # and both pyAMReX and OpenImpala's _core must share the exact same
+    # pybind11 version for cross-module type casting to work.
     python3.11 -m pip install --upgrade pip
-    python3.11 -m pip install "cmake>=3.24" pybind11 numpy build packaging wheel setuptools pytest
-    
+    python3.11 -m pip install "cmake>=3.24" "pybind11>=2.13,<3" numpy build packaging wheel setuptools pytest
+
     # Ensure pip's cmake is prioritized in the PATH
-    export PATH=/usr/local/bin:$PATH 
-    
+    export PATH=/usr/local/bin:$PATH
+
     # Tell pyAMReX to link against the C++ AMReX library we just built
     export pyAMReX_amrex_internal=OFF
     export CMAKE_PREFIX_PATH="${AMREX_INSTALL_PREFIX}:${HDF5_INSTALL_PREFIX}:${LIBTIFF_INSTALL_PREFIX}"
@@ -202,7 +205,14 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     export AMREX_OMP=ON
     export CC=$(which mpicc)
     export CXX=$(which mpicxx)
-    
+
+    # Force pyAMReX to use the pip-installed pybind11 instead of fetching
+    # its own via FetchContent. This ensures both pyAMReX and OpenImpala's
+    # _core extension share identical pybind11 internals, which is required
+    # for cross-module py::cast<amrex::iMultiFab&>() to work.
+    PYBIND11_DIR=$(python3.11 -m pybind11 --cmakedir)
+    export CMAKE_ARGS="-DpyAMReX_pybind11_internal=OFF -Dpybind11_DIR=${PYBIND11_DIR}"
+
     # Build and install directly into the system Python 3.11 site-packages
     python3.11 -m pip install -v .
     
