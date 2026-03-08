@@ -17,9 +17,8 @@ void init_solvers(py::module_& m);
 void init_config(py::module_& m);
 
 PYBIND11_MODULE(_core, m) {
-    // Import pyAMReX's 3D module to merge the pybind11 type registries.
-    // This allows Python to pass an amrex.iMultiFab into OpenImpala's C++ functions
-    py::module_::import("amrex.space3d");
+    // Import pyAMReX's exact C++ extension to merge the pybind11 type registries.
+    py::module_::import("amrex.space3d.amrex_3d_pybind");
 
     m.doc() = "OpenImpala C++ backend — low-level bindings for transport property "
               "computation on 3-D voxel images of porous microstructures.";
