@@ -20,13 +20,25 @@ Quick-start::
         print(f"Volume fraction: {vf.fraction:.4f}")
 """
 
+import os
+import sys
+
 __version__ = "0.1.0"
 
-# Re-export the C++ backend under ``openimpala.core``
-from . import _core as core  # noqa: F401
+# --- CRITICAL PYBIND11 INTEROP FIX ---
+# We must force Linux to use RTLD_GLOBAL so that openimpala._core.so can 
+# physically see the C++ type registry inside pyAMReX's extension. 
+_old_flags = sys.getdlopenflags()
+sys.setdlopenflags(os.RTLD_GLOBAL | os.RTLD_NOW)
+
+try:
+    import amrex.space3d as amrex  # 1. Load pyAMReX globally
+    from . import _core as core    # 2. Load OpenImpala so it links to pyAMReX
+finally:
+    sys.setdlopenflags(_old_flags) # 3. Restore safe defaults
 
 # Enums — available at top level for convenience
-from ._core import (  # noqa: F401
+from ._core import (
     Direction,
     CellType,
     RawDataType,
@@ -36,19 +48,39 @@ from ._core import (  # noqa: F401
 )
 
 # Session context manager
-from .session import Session  # noqa: F401
+from .session import Session
 
 # Custom exceptions
-from .exceptions import (  # noqa: F401
+from .exceptions import (
     OpenImpalaError,
     ConvergenceError,
     PercolationError,
 )
 
 # High-level facade functions
-from .facade import (  # noqa: F401
+from .facade import (
     volume_fraction,
     percolation_check,
     tortuosity,
     read_image,
 )
+
+# Explicitly define the public API for IDEs and static analysis
+__all__ = [
+    "__version__",
+    "core",
+    "Direction",
+    "CellType",
+    "RawDataType",
+    "SolverType",
+    "EffDiffSolverType",
+    "PhysicsType",
+    "Session",
+    "OpenImpalaError",
+    "ConvergenceError",
+    "PercolationError",
+    "volume_fraction",
+    "percolation_check",
+    "tortuosity",
+    "read_image",
+]
