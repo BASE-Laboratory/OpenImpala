@@ -44,8 +44,9 @@ void init_io(py::module_& m) {
         .def(
             "threshold",
             [](const TiffReader& self, double raw_threshold, py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, mf);
+                auto* mf_ptr = py::cast<amrex::iMultiFab*>(mf_obj);
+                if (!mf_ptr) throw py::value_error("Invalid amrex::iMultiFab object");
+                self.threshold(raw_threshold, *mf_ptr);
             },
             py::arg("raw_threshold"), py::arg("mf"),
             "Fill *mf* with 1 where pixel > threshold, else 0.")
@@ -55,8 +56,9 @@ void init_io(py::module_& m) {
             "threshold",
             [](const TiffReader& self, double raw_threshold, int value_if_true, int value_if_false,
                py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, value_if_true, value_if_false, mf);
+                auto* mf_ptr = py::cast<amrex::iMultiFab*>(mf_obj);
+                if (!mf_ptr) throw py::value_error("Invalid amrex::iMultiFab object");
+                self.threshold(raw_threshold, value_if_true, value_if_false, *mf_ptr);
             },
             py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
             py::arg("mf"), "Fill *mf* with custom values based on threshold comparison.")
@@ -96,8 +98,9 @@ void init_io(py::module_& m) {
         .def(
             "threshold",
             [](const HDF5Reader& self, double raw_threshold, py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, mf);
+                auto* mf_ptr = py::cast<amrex::iMultiFab*>(mf_obj);
+                if (!mf_ptr) throw py::value_error("Invalid amrex::iMultiFab object");
+                self.threshold(raw_threshold, *mf_ptr);
             },
             py::arg("raw_threshold"), py::arg("mf"))
 
@@ -105,8 +108,9 @@ void init_io(py::module_& m) {
             "threshold",
             [](const HDF5Reader& self, double raw_threshold, int value_if_true, int value_if_false,
                py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, value_if_true, value_if_false, mf);
+                auto* mf_ptr = py::cast<amrex::iMultiFab*>(mf_obj);
+                if (!mf_ptr) throw py::value_error("Invalid amrex::iMultiFab object");
+                self.threshold(raw_threshold, value_if_true, value_if_false, *mf_ptr);
             },
             py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
             py::arg("mf"))
@@ -147,8 +151,9 @@ void init_io(py::module_& m) {
         .def(
             "threshold",
             [](const RawReader& self, double threshold_value, py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(threshold_value, mf);
+                auto* mf_ptr = py::cast<amrex::iMultiFab*>(mf_obj);
+                if (!mf_ptr) throw py::value_error("Invalid amrex::iMultiFab object");
+                self.threshold(threshold_value, *mf_ptr);
             },
             py::arg("threshold_value"), py::arg("mf"))
 
@@ -156,8 +161,9 @@ void init_io(py::module_& m) {
             "threshold",
             [](const RawReader& self, double threshold_value, int value_if_true, int value_if_false,
                py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(threshold_value, value_if_true, value_if_false, mf);
+                auto* mf_ptr = py::cast<amrex::iMultiFab*>(mf_obj);
+                if (!mf_ptr) throw py::value_error("Invalid amrex::iMultiFab object");
+                self.threshold(threshold_value, value_if_true, value_if_false, *mf_ptr);
             },
             py::arg("threshold_value"), py::arg("value_if_true"), py::arg("value_if_false"),
             py::arg("mf"))
@@ -193,8 +199,9 @@ void init_io(py::module_& m) {
         .def(
             "threshold",
             [](const DatReader& self, DatReader::DataType raw_threshold, py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, mf);
+                auto* mf_ptr = py::cast<amrex::iMultiFab*>(mf_obj);
+                if (!mf_ptr) throw py::value_error("Invalid amrex::iMultiFab object");
+                self.threshold(raw_threshold, *mf_ptr);
             },
             py::arg("raw_threshold"), py::arg("mf"))
 
@@ -202,12 +209,13 @@ void init_io(py::module_& m) {
             "threshold",
             [](const DatReader& self, DatReader::DataType raw_threshold, int value_if_true,
                int value_if_false, py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, value_if_true, value_if_false, mf);
+                auto* mf_ptr = py::cast<amrex::iMultiFab*>(mf_obj);
+                if (!mf_ptr) throw py::value_error("Invalid amrex::iMultiFab object");
+                self.threshold(raw_threshold, value_if_true, value_if_false, *mf_ptr);
             },
             py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
             py::arg("mf"))
-
+        
         .def_property_readonly("box", &DatReader::box)
         .def_property_readonly("width", &DatReader::width)
         .def_property_readonly("height", &DatReader::height)
