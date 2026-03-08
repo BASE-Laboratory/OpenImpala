@@ -85,6 +85,12 @@ jobs:
               source /opt/rh/gcc-toolset-11/enable
               dnf install -y clang-tools-extra 2>&1 | tail -3
               echo "clang-tidy version: $(clang-tidy --version 2>&1 | head -1)"
+              # Install pybind11 headers for python/bindings/ analysis
+              pip3 install pybind11 2>&1 | tail -1
+              PYBIND11_FLAGS=$(python3 -m pybind11 --includes)
+              PYTHON_INCLUDE=$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
+              echo "pybind11 flags: ${PYBIND11_FLAGS}"
+              echo "Python include: ${PYTHON_INCLUDE}"
               cd /src
               # Fetch nlohmann/json header (used by ResultsJSON.H, normally via CMake FetchContent)
               NLOHMANN_VERSION="v3.11.3"
@@ -104,7 +110,10 @@ jobs:
                   -I/opt/hypre/v2.32.0/include \
                   -I/opt/hdf5/1.12.3/include \
                   -I/opt/libtiff/4.6.0/include \
-                  -I/tmp/nlohmann_include || ERRORS=$((ERRORS+1))
+                  -I/tmp/nlohmann_include \
+                  -I${PYTHON_INCLUDE} \
+                  ${PYBIND11_FLAGS} \
+                  || ERRORS=$((ERRORS+1))
               done
               if [ $ERRORS -ne 0 ]; then
                 echo "::error::clang-tidy found issues in $ERRORS file(s)."
@@ -406,7 +415,8 @@ jobs:
             ./dependency_image.sif \
             bash -c '
               source /opt/rh/gcc-toolset-11/enable
-              # Install pybind11 and pytest
+              # Install Python development headers and pip packages
+              dnf install -y python3-devel 2>&1 | tail -3
               pip3 install pybind11 pytest numpy 2>&1 | tail -5
               cd /src
               rm -rf cmake_build_py && mkdir cmake_build_py && cd cmake_build_py
