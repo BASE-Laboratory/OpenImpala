@@ -404,15 +404,12 @@ jobs:
           #!/bin/bash
           set -e
           source /opt/rh/gcc-toolset-11/enable
-          # Install Python development headers
-          dnf install -y python3-devel 2>&1 | tail -3
-          dnf install -y python3.11-devel 2>&1 | tail -3 || true
-          # Determine which python3 to use
-          PYTHON_EXE=$(which python3)
+          # Rocky 8 ships Python 3.6 — install Python 3.11 via dnf module
+          dnf install -y python3.11 python3.11-devel python3.11-pip 2>&1 | tail -5
+          # Use python3.11 explicitly
+          PYTHON_EXE=/usr/bin/python3.11
           echo "Using Python: ${PYTHON_EXE} ($(${PYTHON_EXE} --version))"
-          PYINCLUDE=$(${PYTHON_EXE} -c "import sysconfig; print(sysconfig.get_path('include'))")
-          echo "Python include: ${PYINCLUDE}"
-          pip3 install pybind11 pytest numpy 2>&1 | tail -5
+          ${PYTHON_EXE} -m pip install pybind11 pytest numpy 2>&1 | tail -5
           cd /src
           rm -rf cmake_build_py && mkdir cmake_build_py && cd cmake_build_py
           cmake3 .. \
