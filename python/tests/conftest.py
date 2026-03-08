@@ -15,7 +15,7 @@ def amrex_session():
     except ImportError:
         pass
 
-    import amrex
+    import amrex.space3d as amrex
 
     if not amrex.initialized():
         amrex.initialize([])
