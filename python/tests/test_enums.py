@@ -21,7 +21,7 @@ def test_raw_data_type_roundtrip():
 
 
 def test_solver_type_names():
-    names = [s.name for s in _core.SolverType]
+    names = [s.name for s in _core.SolverType.__members__.values()]
     assert "FlexGMRES" in names
     assert "PFMG" in names
 
