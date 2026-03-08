@@ -5,7 +5,7 @@ Ensures AMReX is initialised exactly once per test session.
 
 import pytest
 import numpy as np
-
+import gc  
 
 @pytest.fixture(scope="session", autouse=True)
 def amrex_session():
@@ -19,8 +19,15 @@ def amrex_session():
 
     if not amrex.initialized():
         amrex.initialize([])
+    
     yield
-    # pyAMReX handles finalize via atexit
+    
+    # Force Python to destroy all C++ Pybind11 objects NOW
+    gc.collect()
+    
+    # Safely shut down AMReX and MPI before Python exits
+    if amrex.initialized():
+        amrex.finalize()
 
 
 @pytest.fixture
