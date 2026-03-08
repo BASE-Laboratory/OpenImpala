@@ -73,6 +73,15 @@ target_link_libraries(openimpala_props PUBLIC
 )
 
 # ==============================================================================
+# Position-Independent Code (required for pybind11 shared library linking)
+# ==============================================================================
+if(OPENIMPALA_PYTHON)
+    set_target_properties(openimpala_io openimpala_props PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+    )
+endif()
+
+# ==============================================================================
 # Diffusion Application
 # ==============================================================================
 add_executable(Diffusion
