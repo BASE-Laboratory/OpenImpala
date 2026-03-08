@@ -19,8 +19,12 @@ void init_props(py::module_& m) {
                                "Computes volume fraction of a phase within an iMultiFab.")
 
         .def(py::init([](py::object mf_obj, int phase, int comp) {
-                 auto& mf = py::cast<const amrex::iMultiFab&>(mf_obj);
-                 return new VolumeFraction(mf, phase, comp);
+                 // Cast to pointer and check validity
+                 auto* mf_ptr = py::cast<amrex::iMultiFab*>(mf_obj);
+                 if (!mf_ptr) throw py::value_error("Invalid amrex::iMultiFab object");
+                 
+                 // Dereference the pointer for the constructor
+                 return new VolumeFraction(*mf_ptr, phase, comp);
              }),
              py::arg("mf"), py::arg("phase") = 0, py::arg("comp") = 0,
              // keep mf alive while this object lives
@@ -52,11 +56,19 @@ void init_props(py::module_& m) {
 
         .def(py::init([](py::object geom_obj, py::object ba_obj, py::object dm_obj,
                          py::object mf_obj, int phase_id, OpenImpala::Direction dir, int verbose) {
-                 auto& geom = py::cast<const amrex::Geometry&>(geom_obj);
-                 auto& ba = py::cast<const amrex::BoxArray&>(ba_obj);
-                 auto& dm = py::cast<const amrex::DistributionMapping&>(dm_obj);
-                 auto& mf = py::cast<const amrex::iMultiFab&>(mf_obj);
-                 return new PercolationCheck(geom, ba, dm, mf, phase_id, dir, verbose);
+                 
+                 // Cast all AMReX objects to pointers
+                 auto* geom_ptr = py::cast<amrex::Geometry*>(geom_obj);
+                 auto* ba_ptr = py::cast<amrex::BoxArray*>(ba_obj);
+                 auto* dm_ptr = py::cast<amrex::DistributionMapping*>(dm_obj);
+                 auto* mf_ptr = py::cast<amrex::iMultiFab*>(mf_obj);
+                 
+                 if (!geom_ptr || !ba_ptr || !dm_ptr || !mf_ptr) {
+                     throw py::value_error("Invalid AMReX objects passed to PercolationCheck");
+                 }
+                 
+                 // Dereference for the constructor
+                 return new PercolationCheck(*geom_ptr, *ba_ptr, *dm_ptr, *mf_ptr, phase_id, dir, verbose);
              }),
              py::arg("geom"), py::arg("ba"), py::arg("dm"), py::arg("mf_phase"),
              py::arg("phase_id"), py::arg("dir"), py::arg("verbose") = 0,
