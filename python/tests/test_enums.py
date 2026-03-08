@@ -16,7 +16,7 @@ def test_cell_type_values():
 
 
 def test_raw_data_type_roundtrip():
-    for member in _core.RawDataType:
+    for member in _core.RawDataType.__members__.values():
         assert _core.RawDataType(member.value) is member
 
 
