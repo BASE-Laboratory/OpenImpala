@@ -406,13 +406,11 @@ jobs:
           source /opt/rh/gcc-toolset-11/enable
           # Rocky 8 ships Python 3.6 — install Python 3.11 via dnf module
           dnf install -y python3.11 python3.11-devel python3.11-pip 2>&1 | tail -5
-          # Use python3.11 explicitly
           PYTHON_EXE=/usr/bin/python3.11
           echo "Using Python: ${PYTHON_EXE} ($(${PYTHON_EXE} --version))"
           ${PYTHON_EXE} -m pip install pybind11 pytest numpy 2>&1 | tail -5
-          # Locate pybind11 CMake config installed by pip
           PYBIND11_DIR=$(${PYTHON_EXE} -m pybind11 --cmakedir)
-          echo "pybind11 CMake dir: ${PYBIND11_DIR}"
+          
           cd /src
           rm -rf cmake_build_py && mkdir cmake_build_py && cd cmake_build_py
           cmake3 .. \
@@ -426,12 +424,15 @@ jobs:
             -DBUILD_TESTING=ON \
             -DOPENIMPALA_PYTHON=ON
           make -j$(nproc)
+          
+          # Run tests immediately while the tmpfs and pip packages still exist
+          echo "Running Python tests..."
+          ctest --output-on-failure --timeout 120 -L python
           SCRIPT
           chmod +x /tmp/python_build.sh
 
-      - name: Install Python deps and build with Python bindings
-        id: python_build
-        continue-on-error: true
+      - name: Build and Test Python Bindings
+        id: python_build_and_test
         run: |
           sudo apptainer exec \
             --writable-tmpfs \
@@ -439,20 +440,6 @@ jobs:
             --bind /tmp/python_build.sh:/tmp/python_build.sh \
             ./dependency_image.sif \
             bash /tmp/python_build.sh
-
-      - name: Run Python tests (CTest label=python)
-        if: steps.python_build.outcome == 'success'
-        continue-on-error: true
-        run: |
-          sudo apptainer exec \
-            --writable-tmpfs \
-            --bind $PWD:/src \
-            ./dependency_image.sif \
-            bash -c '
-              source /opt/rh/gcc-toolset-11/enable
-              cd /src/cmake_build_py
-              ctest --output-on-failure --timeout 120 -L python
-            '
 
   coverage:
     name: Code Coverage
