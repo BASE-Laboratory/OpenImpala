@@ -18,8 +18,11 @@ void init_props(py::module_& m) {
     py::class_<VolumeFraction>(m, "VolumeFraction",
                                "Computes volume fraction of a phase within an iMultiFab.")
 
-        .def(py::init<const amrex::iMultiFab&, int, int>(), py::arg("mf"), py::arg("phase") = 0,
-             py::arg("comp") = 0,
+        .def(py::init([](py::object mf_obj, int phase, int comp) {
+                 auto& mf = py::cast<const amrex::iMultiFab&>(mf_obj);
+                 return new VolumeFraction(mf, phase, comp);
+             }),
+             py::arg("mf"), py::arg("phase") = 0, py::arg("comp") = 0,
              // keep mf alive while this object lives
              py::keep_alive<1, 2>(),
              "Create a volume-fraction calculator for *phase* in component *comp* of *mf*.")
@@ -47,9 +50,14 @@ void init_props(py::module_& m) {
         m, "PercolationCheck",
         "Parallel flood-fill connectivity check for a phase in a given direction.")
 
-        .def(py::init<const amrex::Geometry&, const amrex::BoxArray&,
-                      const amrex::DistributionMapping&, const amrex::iMultiFab&, int,
-                      OpenImpala::Direction, int>(),
+        .def(py::init([](py::object geom_obj, py::object ba_obj, py::object dm_obj,
+                         py::object mf_obj, int phase_id, OpenImpala::Direction dir, int verbose) {
+                 auto& geom = py::cast<const amrex::Geometry&>(geom_obj);
+                 auto& ba = py::cast<const amrex::BoxArray&>(ba_obj);
+                 auto& dm = py::cast<const amrex::DistributionMapping&>(dm_obj);
+                 auto& mf = py::cast<const amrex::iMultiFab&>(mf_obj);
+                 return new PercolationCheck(geom, ba, dm, mf, phase_id, dir, verbose);
+             }),
              py::arg("geom"), py::arg("ba"), py::arg("dm"), py::arg("mf_phase"),
              py::arg("phase_id"), py::arg("dir"), py::arg("verbose") = 0,
              // prevent GC of referenced AMReX objects

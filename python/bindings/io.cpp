@@ -41,17 +41,25 @@ void init_io(py::module_& m) {
              "Read metadata from a TIFF sequence (clears previous state).")
 
         // Two-arg threshold (binary 0/1 output)
-        .def("threshold",
-             py::overload_cast<double, amrex::iMultiFab&>(&TiffReader::threshold, py::const_),
-             py::arg("raw_threshold"), py::arg("mf"),
-             "Fill *mf* with 1 where pixel > threshold, else 0.")
+        .def(
+            "threshold",
+            [](const TiffReader& self, double raw_threshold, py::object mf_obj) {
+                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
+                self.threshold(raw_threshold, mf);
+            },
+            py::arg("raw_threshold"), py::arg("mf"),
+            "Fill *mf* with 1 where pixel > threshold, else 0.")
 
         // Four-arg threshold (custom output values)
-        .def("threshold",
-             py::overload_cast<double, int, int, amrex::iMultiFab&>(&TiffReader::threshold,
-                                                                    py::const_),
-             py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
-             py::arg("mf"), "Fill *mf* with custom values based on threshold comparison.")
+        .def(
+            "threshold",
+            [](const TiffReader& self, double raw_threshold, int value_if_true, int value_if_false,
+               py::object mf_obj) {
+                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
+                self.threshold(raw_threshold, value_if_true, value_if_false, mf);
+            },
+            py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
+            py::arg("mf"), "Fill *mf* with custom values based on threshold comparison.")
 
         // Metadata properties
         .def_property_readonly("box", &TiffReader::box)
@@ -85,15 +93,23 @@ void init_io(py::module_& m) {
         .def("read_file", &HDF5Reader::readFile, py::arg("filename"), py::arg("hdf5dataset"),
              "Read metadata from an HDF5 file + dataset (clears previous state).")
 
-        .def("threshold",
-             py::overload_cast<double, amrex::iMultiFab&>(&HDF5Reader::threshold, py::const_),
-             py::arg("raw_threshold"), py::arg("mf"))
+        .def(
+            "threshold",
+            [](const HDF5Reader& self, double raw_threshold, py::object mf_obj) {
+                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
+                self.threshold(raw_threshold, mf);
+            },
+            py::arg("raw_threshold"), py::arg("mf"))
 
-        .def("threshold",
-             py::overload_cast<double, int, int, amrex::iMultiFab&>(&HDF5Reader::threshold,
-                                                                    py::const_),
-             py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
-             py::arg("mf"))
+        .def(
+            "threshold",
+            [](const HDF5Reader& self, double raw_threshold, int value_if_true, int value_if_false,
+               py::object mf_obj) {
+                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
+                self.threshold(raw_threshold, value_if_true, value_if_false, mf);
+            },
+            py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
+            py::arg("mf"))
 
         .def_property_readonly("box", &HDF5Reader::box)
         .def_property_readonly("width", &HDF5Reader::width)
@@ -128,15 +144,23 @@ void init_io(py::module_& m) {
         .def("read_file", &RawReader::readFile, py::arg("filename"), py::arg("width"),
              py::arg("height"), py::arg("depth"), py::arg("data_type"))
 
-        .def("threshold",
-             py::overload_cast<double, amrex::iMultiFab&>(&RawReader::threshold, py::const_),
-             py::arg("threshold_value"), py::arg("mf"))
+        .def(
+            "threshold",
+            [](const RawReader& self, double threshold_value, py::object mf_obj) {
+                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
+                self.threshold(threshold_value, mf);
+            },
+            py::arg("threshold_value"), py::arg("mf"))
 
-        .def("threshold",
-             py::overload_cast<double, int, int, amrex::iMultiFab&>(&RawReader::threshold,
-                                                                    py::const_),
-             py::arg("threshold_value"), py::arg("value_if_true"), py::arg("value_if_false"),
-             py::arg("mf"))
+        .def(
+            "threshold",
+            [](const RawReader& self, double threshold_value, int value_if_true, int value_if_false,
+               py::object mf_obj) {
+                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
+                self.threshold(threshold_value, value_if_true, value_if_false, mf);
+            },
+            py::arg("threshold_value"), py::arg("value_if_true"), py::arg("value_if_false"),
+            py::arg("mf"))
 
         .def_property_readonly("box", &RawReader::box)
         .def_property_readonly("width", &RawReader::width)
@@ -166,16 +190,23 @@ void init_io(py::module_& m) {
 
         .def("read_file", &DatReader::readFile, py::arg("filename"))
 
-        .def("threshold",
-             py::overload_cast<DatReader::DataType, amrex::iMultiFab&>(&DatReader::threshold,
-                                                                       py::const_),
-             py::arg("raw_threshold"), py::arg("mf"))
+        .def(
+            "threshold",
+            [](const DatReader& self, DatReader::DataType raw_threshold, py::object mf_obj) {
+                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
+                self.threshold(raw_threshold, mf);
+            },
+            py::arg("raw_threshold"), py::arg("mf"))
 
-        .def("threshold",
-             py::overload_cast<DatReader::DataType, int, int, amrex::iMultiFab&>(
-                 &DatReader::threshold, py::const_),
-             py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
-             py::arg("mf"))
+        .def(
+            "threshold",
+            [](const DatReader& self, DatReader::DataType raw_threshold, int value_if_true,
+               int value_if_false, py::object mf_obj) {
+                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
+                self.threshold(raw_threshold, value_if_true, value_if_false, mf);
+            },
+            py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
+            py::arg("mf"))
 
         .def_property_readonly("box", &DatReader::box)
         .def_property_readonly("width", &DatReader::width)
