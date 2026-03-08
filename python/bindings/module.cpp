@@ -16,8 +16,7 @@ void init_props(py::module_& m);
 void init_solvers(py::module_& m);
 void init_config(py::module_& m);
 
-PYBIND11_MODULE(_core, m)
-{
+PYBIND11_MODULE(_core, m) {
     m.doc() = "OpenImpala C++ backend — low-level bindings for transport property "
               "computation on 3-D voxel images of porous microstructures.";
 

@@ -61,3 +61,61 @@ install(FILES
     openimpala/cli.py
     DESTINATION openimpala
 )
+
+# ==============================================================================
+# Python Tests (pytest via CTest)
+# ==============================================================================
+# Register pytest as a CTest target.  The PYTHONPATH must include both the
+# build directory (for _core.so) and the source directory (for the pure-Python
+# package).  Tests are only registered when BUILD_TESTING is ON.
+if(BUILD_TESTING)
+    # Discover pytest executable
+    execute_process(
+        COMMAND ${Python_EXECUTABLE} -m pytest --version
+        RESULT_VARIABLE PYTEST_FOUND
+        OUTPUT_QUIET ERROR_QUIET
+    )
+
+    if(PYTEST_FOUND EQUAL 0)
+        set(PYTHON_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        set(PYTHON_PKG_DIR  "${CMAKE_CURRENT_SOURCE_DIR}")
+
+        # Helper: register one pytest file as a CTest test
+        function(openimpala_add_pytest TEST_NAME TEST_FILE)
+            add_test(
+                NAME ${TEST_NAME}
+                COMMAND ${Python_EXECUTABLE} -m pytest
+                        ${TEST_FILE}
+                        -v --tb=short
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            )
+            set_tests_properties(${TEST_NAME} PROPERTIES
+                ENVIRONMENT "PYTHONPATH=${PYTHON_PKG_DIR}:$<TARGET_FILE_DIR:_core>:$ENV{PYTHONPATH}"
+                TIMEOUT 120
+                LABELS "python"
+            )
+        endfunction()
+
+        # --- Pure-Python tests (no compiled module needed) ---
+        openimpala_add_pytest(pytest_cli
+            "${PYTHON_TEST_DIR}/test_cli.py")
+
+        # --- Tests requiring _core module + pyAMReX ---
+        openimpala_add_pytest(pytest_enums
+            "${PYTHON_TEST_DIR}/test_enums.py")
+        openimpala_add_pytest(pytest_facade_helpers
+            "${PYTHON_TEST_DIR}/test_facade_helpers.py")
+        openimpala_add_pytest(pytest_config
+            "${PYTHON_TEST_DIR}/test_config.py")
+        openimpala_add_pytest(pytest_volume_fraction
+            "${PYTHON_TEST_DIR}/test_volume_fraction.py")
+        openimpala_add_pytest(pytest_percolation
+            "${PYTHON_TEST_DIR}/test_percolation.py")
+        openimpala_add_pytest(pytest_tortuosity
+            "${PYTHON_TEST_DIR}/test_tortuosity.py")
+
+        message(STATUS "Python tests registered with CTest (label: python)")
+    else()
+        message(STATUS "pytest not found — Python tests will not be registered with CTest")
+    endif()
+endif()
