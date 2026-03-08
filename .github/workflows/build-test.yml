@@ -410,6 +410,9 @@ jobs:
           PYTHON_EXE=/usr/bin/python3.11
           echo "Using Python: ${PYTHON_EXE} ($(${PYTHON_EXE} --version))"
           ${PYTHON_EXE} -m pip install pybind11 pytest numpy 2>&1 | tail -5
+          # Locate pybind11 CMake config installed by pip
+          PYBIND11_DIR=$(${PYTHON_EXE} -m pybind11 --cmakedir)
+          echo "pybind11 CMake dir: ${PYBIND11_DIR}"
           cd /src
           rm -rf cmake_build_py && mkdir cmake_build_py && cd cmake_build_py
           cmake3 .. \
@@ -418,6 +421,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=$(which mpicxx) \
             -DCMAKE_Fortran_COMPILER=$(which mpif90) \
             -DPython_EXECUTABLE=${PYTHON_EXE} \
+            -Dpybind11_DIR=${PYBIND11_DIR} \
             -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
             -DBUILD_TESTING=ON \
             -DOPENIMPALA_PYTHON=ON
