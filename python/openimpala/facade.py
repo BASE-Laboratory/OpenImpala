@@ -93,7 +93,6 @@ _SOLVER_MAP = {
     "hypre": _core.SolverType.FlexGMRES,  # convenience alias
 }
 
-
 def _parse_direction(d: Union[str, _core.Direction]) -> _core.Direction:
     if isinstance(d, _core.Direction):
         return d
@@ -102,6 +101,14 @@ def _parse_direction(d: Union[str, _core.Direction]) -> _core.Direction:
         raise ValueError(f"Unknown direction '{d}'. Use 'x', 'y', or 'z'.")
     return _DIRECTION_MAP[key]
 
+def _ensure_initialized():
+    import amrex.space3d as amrex
+    if not amrex.initialized():
+        raise RuntimeError(
+            "OpenImpala is not initialized! Please wrap your code in a session block:\n\n"
+            "with openimpala.Session():\n"
+            "    openimpala.volume_fraction(...)"
+        )
 
 def _parse_solver(s: Union[str, _core.SolverType]) -> _core.SolverType:
     if isinstance(s, _core.SolverType):
@@ -183,6 +190,7 @@ def volume_fraction(
     -------
     VolumeFractionResult
     """
+    _ensure_initialized()
     _, _, _, mf = _numpy_to_imultifab(data, max_grid_size)
     vf = _core.VolumeFraction(mf, phase, 0)
     pc, tc = vf.value()
@@ -213,6 +221,7 @@ def percolation_check(
     -------
     PercolationResult
     """
+    _ensure_initialized()
     d = _parse_direction(direction)
     geom, ba, dm, mf = _numpy_to_imultifab(data, max_grid_size)
     pc = _core.PercolationCheck(geom, ba, dm, mf, phase, d, verbose)
@@ -257,6 +266,7 @@ def tortuosity(
     PercolationError
         If the phase does not percolate in the given direction.
     """
+    _ensure_initialized()
     d = _parse_direction(direction)
     st = _parse_solver(solver)
     geom, ba, dm, mf = _numpy_to_imultifab(data, max_grid_size)
@@ -329,6 +339,7 @@ def read_image(
     (reader, geom, ba, dm, mf)
         The reader object and the AMReX infrastructure objects.
     """
+    _ensure_initialized()
     import amrex.space3d as amrex
 
     # Auto-detect format
