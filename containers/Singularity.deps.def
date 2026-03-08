@@ -320,7 +320,7 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     echo "Checking OpenMPI lib ($MPI_LIB)..."; ldd "$MPI_LIB"
     echo "--- Basic dependency container tests passed. ---"
     echo "Checking Python 3.11 and pyAMReX..."
-    python3.11 -c "import amrex; print(f'pyAMReX version {amrex.__version__} loaded successfully!')"
+    python3.11 -c "import amrex; print('pyAMReX loaded successfully!')"
 
 %runscript
     echo "Container with build environment (GCC 11) and runtime dependencies for OpenImpala."
