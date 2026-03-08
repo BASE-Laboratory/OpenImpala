@@ -83,7 +83,7 @@ jobs:
           sudo apptainer exec --writable-tmpfs --bind $PWD:/src ./dependency_image.sif \
             bash -c '
               source /opt/rh/gcc-toolset-11/enable
-              dnf install -y clang-tools-extra 2>&1 | tail -3
+              dnf install -y clang-tools-extra python3-devel 2>&1 | tail -3
               echo "clang-tidy version: $(clang-tidy --version 2>&1 | head -1)"
               # Install pybind11 headers for python/bindings/ analysis
               pip3 install pybind11 2>&1 | tail -1
@@ -415,8 +415,13 @@ jobs:
             ./dependency_image.sif \
             bash -c '
               source /opt/rh/gcc-toolset-11/enable
-              # Install Python development headers and pip packages
+              # Install Python development headers (try python3-devel and python3.11-devel)
               dnf install -y python3-devel 2>&1 | tail -3
+              dnf install -y python3.11-devel 2>&1 | tail -3 || true
+              # Determine which python3 to use and get its include path
+              PYTHON_EXE=$(which python3)
+              echo "Using Python: ${PYTHON_EXE} ($(${PYTHON_EXE} --version))"
+              echo "Python include: $(${PYTHON_EXE} -c 'import sysconfig; print(sysconfig.get_path("include"))')"
               pip3 install pybind11 pytest numpy 2>&1 | tail -5
               cd /src
               rm -rf cmake_build_py && mkdir cmake_build_py && cd cmake_build_py
@@ -425,6 +430,7 @@ jobs:
                 -DCMAKE_C_COMPILER=$(which mpicc) \
                 -DCMAKE_CXX_COMPILER=$(which mpicxx) \
                 -DCMAKE_Fortran_COMPILER=$(which mpif90) \
+                -DPython_EXECUTABLE=${PYTHON_EXE} \
                 -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
                 -DBUILD_TESTING=ON \
                 -DOPENIMPALA_PYTHON=ON
