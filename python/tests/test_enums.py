@@ -17,11 +17,11 @@ def test_cell_type_values():
 
 def test_raw_data_type_roundtrip():
     for member in _core.RawDataType.__members__.values():
-        assert _core.RawDataType(member.value) is member
+        assert _core.RawDataType(member.value) == member
 
 
 def test_solver_type_names():
-    names = [s.name for s in _core.SolverType]
+    names = [s.name for s in _core.SolverType.__members__.values()]
     assert "FlexGMRES" in names
     assert "PFMG" in names
 

@@ -146,20 +146,16 @@ def _numpy_to_imultifab(
 
     mf = amrex.iMultiFab(ba, dm, 1, 1)  # 1 component, 1 ghost cell
 
-    # Fill the iMultiFab from the numpy array in one fast vectorized operation
+    # Fill the iMultiFab from the numpy array
     for mfi in mf:
         bx = mfi.validbox()
         lo = bx.small_end
         hi = bx.big_end
-        
-        # Get the AMReX array view
         arr = mf.array(mfi)
-        
-        # Slice the subset of the NumPy array corresponding to this box
-        data_subset = data[lo[2]:hi[2] + 1, lo[1]:hi[1] + 1, lo[0]:hi[0] + 1]
-        
-        # Transpose from (z, y, x) to (x, y, z) and assign it to the 0th component
-        arr[lo[0]:hi[0] + 1, lo[1]:hi[1] + 1, lo[2]:hi[2] + 1, 0] = data_subset.transpose(2, 1, 0)
+        for k in range(lo[2], hi[2] + 1):
+            for j in range(lo[1], hi[1] + 1):
+                for i in range(lo[0], hi[0] + 1):
+                    arr[i, j, k, 0] = int(data[k, j, i])
 
     mf.fill_boundary(geom.periodicity())
     return geom, ba, dm, mf
