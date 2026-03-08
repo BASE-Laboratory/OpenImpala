@@ -51,6 +51,13 @@ target_include_directories(_core PRIVATE
 # Compile with C++17 to match the rest of the project
 target_compile_features(_core PRIVATE cxx_std_17)
 
+# --- Place the compiled extension directly into the Python package ---
+# This ensures Python's relative imports (from . import _core) work 
+# natively during testing without complex PYTHONPATH juggling.
+set_target_properties(_core PROPERTIES 
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/openimpala"
+)
+
 # --- Install into the Python package layout ---
 install(TARGETS _core LIBRARY DESTINATION openimpala)
 install(FILES
@@ -90,12 +97,12 @@ if(BUILD_TESTING)
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             )
             set_tests_properties(${TEST_NAME} PROPERTIES
-                ENVIRONMENT "PYTHONPATH=${PYTHON_PKG_DIR}:$<TARGET_FILE_DIR:_core>:$ENV{PYTHONPATH}"
+                ENVIRONMENT "PYTHONPATH=${PYTHON_PKG_DIR}:$ENV{PYTHONPATH}"
                 TIMEOUT 120
                 LABELS "python"
             )
         endfunction()
-
+        
         # --- Pure-Python tests (no compiled module needed) ---
         openimpala_add_pytest(pytest_cli
             "${PYTHON_TEST_DIR}/test_cli.py")
