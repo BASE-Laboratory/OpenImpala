@@ -41,14 +41,19 @@ class Session:
         except ImportError:
             pass
 
-        import amrex
+        import amrex.space3d as amrex
 
         if not amrex.initialized():
             amrex.initialize([])
 
     @staticmethod
     def _do_finalize() -> None:
-        import amrex
+        import gc
+        import amrex.space3d as amrex
 
         if amrex.initialized():
+            # Force Python to destroy all orphaned C++ pybind11 objects NOW
+            gc.collect()
+            
+            # Now it is safe to shut down the C++ backend
             amrex.finalize()

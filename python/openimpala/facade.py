@@ -93,7 +93,6 @@ _SOLVER_MAP = {
     "hypre": _core.SolverType.FlexGMRES,  # convenience alias
 }
 
-
 def _parse_direction(d: Union[str, _core.Direction]) -> _core.Direction:
     if isinstance(d, _core.Direction):
         return d
@@ -102,6 +101,14 @@ def _parse_direction(d: Union[str, _core.Direction]) -> _core.Direction:
         raise ValueError(f"Unknown direction '{d}'. Use 'x', 'y', or 'z'.")
     return _DIRECTION_MAP[key]
 
+def _ensure_initialized():
+    import amrex.space3d as amrex
+    if not amrex.initialized():
+        raise RuntimeError(
+            "OpenImpala is not initialized! Please wrap your code in a session block:\n\n"
+            "with openimpala.Session():\n"
+            "    openimpala.volume_fraction(...)"
+        )
 
 def _parse_solver(s: Union[str, _core.SolverType]) -> _core.SolverType:
     if isinstance(s, _core.SolverType):
@@ -120,7 +127,7 @@ def _numpy_to_imultifab(
 
     Returns (geom, ba, dm, mf).
     """
-    import amrex
+    import amrex.space3d as amrex
 
     if data.ndim != 3:
         raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
@@ -139,16 +146,20 @@ def _numpy_to_imultifab(
 
     mf = amrex.iMultiFab(ba, dm, 1, 1)  # 1 component, 1 ghost cell
 
-    # Fill the iMultiFab from the numpy array
+    # Fill the iMultiFab from the numpy array in one fast vectorized operation
     for mfi in mf:
         bx = mfi.validbox()
         lo = bx.small_end
         hi = bx.big_end
+        
+        # Get the AMReX array view
         arr = mf.array(mfi)
-        for k in range(lo[2], hi[2] + 1):
-            for j in range(lo[1], hi[1] + 1):
-                for i in range(lo[0], hi[0] + 1):
-                    arr[i, j, k, 0] = int(data[k, j, i])
+        
+        # Slice the subset of the NumPy array corresponding to this box
+        data_subset = data[lo[2]:hi[2] + 1, lo[1]:hi[1] + 1, lo[0]:hi[0] + 1]
+        
+        # Transpose from (z, y, x) to (x, y, z) and assign it to the 0th component
+        arr[lo[0]:hi[0] + 1, lo[1]:hi[1] + 1, lo[2]:hi[2] + 1, 0] = data_subset.transpose(2, 1, 0)
 
     mf.fill_boundary(geom.periodicity())
     return geom, ba, dm, mf
@@ -179,6 +190,7 @@ def volume_fraction(
     -------
     VolumeFractionResult
     """
+    _ensure_initialized()
     _, _, _, mf = _numpy_to_imultifab(data, max_grid_size)
     vf = _core.VolumeFraction(mf, phase, 0)
     pc, tc = vf.value()
@@ -209,6 +221,7 @@ def percolation_check(
     -------
     PercolationResult
     """
+    _ensure_initialized()
     d = _parse_direction(direction)
     geom, ba, dm, mf = _numpy_to_imultifab(data, max_grid_size)
     pc = _core.PercolationCheck(geom, ba, dm, mf, phase, d, verbose)
@@ -253,6 +266,7 @@ def tortuosity(
     PercolationError
         If the phase does not percolate in the given direction.
     """
+    _ensure_initialized()
     d = _parse_direction(direction)
     st = _parse_solver(solver)
     geom, ba, dm, mf = _numpy_to_imultifab(data, max_grid_size)
@@ -325,7 +339,8 @@ def read_image(
     (reader, geom, ba, dm, mf)
         The reader object and the AMReX infrastructure objects.
     """
-    import amrex
+    _ensure_initialized()
+    import amrex.space3d as amrex
 
     # Auto-detect format
     if file_format is None:
