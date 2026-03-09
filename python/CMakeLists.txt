@@ -53,10 +53,13 @@ target_compile_features(_core PRIVATE cxx_std_17)
 
 # --- Place the compiled extension directly into the Python package ---
 # This ensures Python's relative imports (from . import _core) work 
-# natively during testing without complex PYTHONPATH juggling.
-set_target_properties(_core PROPERTIES 
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/openimpala"
-)
+# natively during local testing. We skip this during wheel builds 
+# (when SKBUILD is defined) so scikit-build-core can track the artifact.
+if(NOT SKBUILD)
+    set_target_properties(_core PROPERTIES 
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/openimpala"
+    )
+endif()
 
 # --- Install into the Python package layout ---
 install(TARGETS _core LIBRARY DESTINATION openimpala COMPONENT python)
