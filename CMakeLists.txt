@@ -74,6 +74,10 @@ find_package(HYPRE REQUIRED)
 # We need the C++ bindings (hdf5_cpp).
 find_package(HDF5 REQUIRED COMPONENTS C CXX)
 
+# --- Transitive dependencies for static TIFF ---
+find_package(ZLIB REQUIRED)
+find_package(JPEG REQUIRED)
+
 # --- TIFF ---
 find_package(TIFF REQUIRED)
 
