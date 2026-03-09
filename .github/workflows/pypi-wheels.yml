@@ -25,6 +25,16 @@ jobs:
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel==2.16.5
 
+      # Cache the compiled C/C++ dependencies (HDF5, libtiff, HYPRE, AMReX)
+      # inside the manylinux container. cibuildwheel runs CIBW_BEFORE_ALL only
+      # once per container launch, so we tar /usr/local after the first build
+      # and restore it on subsequent runs to skip the ~5-minute dep compile.
+      - name: Cache native dependencies
+        uses: actions/cache@v4
+        with:
+          path: .cibw-deps-cache
+          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v1
+
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
@@ -43,12 +53,21 @@ jobs:
           #     get linked into the wheel without auditwheel needing to vendor them
           #   - HYPRE is built static (--enable-shared=no)
           #   - AMReX is built static (-DBUILD_SHARED_LIBS=OFF)
+          # Install system packages, then restore cached deps or build from source.
+          # The cache tarball (.cibw-deps-cache/deps.tar.gz) is mounted into the
+          # container via the project bind-mount. On cache hit we just untar it;
+          # on miss we build everything and create the tarball for next time.
           CIBW_BEFORE_ALL_LINUX: >
             dnf install -y epel-release &&
             dnf --enablerepo=powertools install -y
             openmpi-devel gcc-gfortran gcc-c++ cmake wget git
             zlib-devel libjpeg-turbo-devel &&
             export PATH=/usr/lib64/openmpi/bin:$PATH &&
+            if [ -f /project/.cibw-deps-cache/deps.tar.gz ]; then
+            echo "=== Restoring cached dependencies ===" &&
+            tar xzf /project/.cibw-deps-cache/deps.tar.gz -C / ;
+            else
+            echo "=== Building dependencies from source ===" &&
             wget -q https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.6/hdf5-1.14.6.tar.gz &&
             tar xzf hdf5-1.14.6.tar.gz &&
             cd hdf5-1.14.6 &&
@@ -96,7 +115,10 @@ jobs:
             -DAMReX_PARTICLES=OFF
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
-            cmake --install /tmp/amrex/build
+            cmake --install /tmp/amrex/build &&
+            mkdir -p /project/.cibw-deps-cache &&
+            tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
+            fi
 
           # Point scikit-build-core to our newly compiled dependencies and MPI compilers
           CIBW_ENVIRONMENT_LINUX: >
