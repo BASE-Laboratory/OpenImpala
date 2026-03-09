@@ -58,15 +58,9 @@ class Session:
         if not amrex.initialized():
             amrex.initialize([])
 
-        # Initialise HYPRE (required before any HYPRE-based solver is used).
-        # Guarded with try/except so that pure-Python usage (e.g. CLI parser
-        # tests) still works when _core.so is not available.
-        try:
-            import importlib
-            _core = importlib.import_module("openimpala._core")
-            _core.hypre_init()
-        except (ImportError, ModuleNotFoundError):
-            pass
+        # NOTE: HYPRE initialisation is handled automatically by the C++
+        # solver constructors (TortuosityHypre, EffectiveDiffusivityHypre)
+        # via std::call_once, so no Python-side HYPRE_Init() is needed.
 
     @staticmethod
     def _do_finalize() -> None:
@@ -76,14 +70,6 @@ class Session:
         if amrex.initialized():
             # Force Python to destroy all orphaned C++ pybind11 objects NOW
             gc.collect()
-
-            # Shut down HYPRE before AMReX finalises MPI.
-            try:
-                import importlib
-                _core = importlib.import_module("openimpala._core")
-                _core.hypre_finalize()
-            except (ImportError, ModuleNotFoundError):
-                pass
 
             # Now it is safe to shut down the C++ backend
             amrex.finalize()
