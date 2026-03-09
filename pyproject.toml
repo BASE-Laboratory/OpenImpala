@@ -1,0 +1,46 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.8",
+    "pybind11>=2.11",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "openimpala"
+version = "0.1.0"
+description = "Python bindings for OpenImpala — transport-property computation on 3-D voxel images"
+readme = "README.md"
+license = {text = "BSD-3-Clause"}
+requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+]
+
+[project.optional-dependencies]
+mpi = ["mpi4py"]
+amrex = ["pyamrex"]
+progress = ["tqdm"]
+jupyter = ["matplotlib", "ipywidgets"]
+test = [
+    "pytest>=7",
+    "numpy",
+]
+all = [
+    "mpi4py",
+    "pyamrex",
+    "tqdm",
+    "matplotlib",
+    "ipywidgets",
+    "pytest>=7",
+]
+
+[project.scripts]
+openimpala = "openimpala.cli:main"
+
+[tool.scikit-build]
+cmake.args = ["-DOPENIMPALA_PYTHON=ON"]
+wheel.packages = ["python/openimpala"]
+install.components = ["python"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

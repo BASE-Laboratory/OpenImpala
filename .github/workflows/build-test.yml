@@ -30,7 +30,7 @@ jobs:
 
       - name: Run clang-format check
         run: |
-          find src/ tests/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.c" \) \
+          find src/ tests/ python/bindings/ -type f \( -name "*.cpp" -o -name "*.H" -o -name "*.h" -o -name "*.hpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.c" \) \
             -exec clang-format --dry-run --Werror {} +
 
       - name: Check @file/@brief documentation in headers
@@ -93,6 +93,8 @@ jobs:
                 -o /tmp/nlohmann_include/nlohmann/json.hpp
               echo "nlohmann/json ${NLOHMANN_VERSION} downloaded for clang-tidy"
               ERRORS=0
+              # Note: python/bindings/ excluded — pybind11 + Python.h not available
+              # in the dependency container; those files are checked by clang-format
               for f in $(find src/ tests/ -path tests/unit -prune -o -type f -name "*.cpp" -print); do
                 echo "Analyzing $f..."
                 clang-tidy "$f" \
@@ -117,257 +119,107 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Check out the repository code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Install Apptainer
       - name: Set up Apptainer
         uses: eWaterCycle/setup-apptainer@v2
         with:
           apptainer-version: 1.2.5
 
-      # Step 3: Restore Dependency SIF Cache
       - name: Restore Dependency SIF Cache
         id: cache-restore-sif
         uses: actions/cache/restore@v4
         with:
           path: dependency_image.sif
           key: ${{ runner.os }}-apptainer-sif-${{ hashFiles('containers/Singularity.deps.def') }}
-          restore-keys: |
-            ${{ runner.os }}-apptainer-sif-
 
-      - name: Debug cache hit status
-        if: always()
-        run: echo "Cache hit status is >>>${{ steps.cache-restore-sif.outputs.cache-hit }}<<<"
-
-      # Step 4: Build Dependency SIF Image (if cache miss)
-      - name: Build Dependency SIF Image Locally (if cache miss)
-        id: build_sif
+      - name: Build Dependency SIF Image (if cache miss)
         if: steps.cache-restore-sif.outputs.cache-hit != 'true'
-        run: |
-          RECIPE_FILE="containers/Singularity.deps.def"
-          TARGET_SIF="dependency_image.sif"
-          if [ ! -f "$RECIPE_FILE" ]; then
-            echo "Error: Dependency recipe file $RECIPE_FILE not found!"
-            exit 1
-          fi
-          echo "Cache miss or invalid. Building dependencies SIF image '$TARGET_SIF' from $RECIPE_FILE..."
-          sudo apptainer build --force "$TARGET_SIF" "$RECIPE_FILE"
-          BUILD_EXIT_CODE=$?
-          if [ $BUILD_EXIT_CODE -ne 0 ]; then
-            echo "Error: Apptainer SIF build failed with exit code $BUILD_EXIT_CODE."
-            exit $BUILD_EXIT_CODE
-          fi
-          echo "Apptainer SIF build successful."
-          ls -lh ./dependency_image.sif
+        run: sudo apptainer build --force dependency_image.sif containers/Singularity.deps.def
 
-      # Step 5: Verify SIF exists
-      - name: Verify SIF exists after cache/build step
-        id: verify_sif
-        run: |
-          if [ ! -f "./dependency_image.sif" ]; then
-            echo "Error: dependency_image.sif not found after cache/build steps!"
-            exit 1
-          else
-            echo "dependency_image.sif found."
-            ls -lh ./dependency_image.sif
-          fi
-
-      - name: Copy HYPRE Check Log from Container
-        if: always() && steps.verify_sif.outcome == 'success'
-        run: |
-          if sudo apptainer exec ./dependency_image.sif test -f /hypre_make_check.log; then
-            echo "Copying /hypre_make_check.log..."
-            sudo apptainer exec ./dependency_image.sif cat /hypre_make_check.log > ./hypre_make_check.log
-            ls -l ./hypre_make_check.log
-          else
-            echo "HYPRE check log /hypre_make_check.log not found in container."
-          fi
-        continue-on-error: true
-
-      - name: Upload HYPRE Check Log Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hypre-make-check-log-${{ github.run_id }}
-          path: hypre_make_check.log
-          retention-days: 5
-          if-no-files-found: warn
-
-      # Step 6: Save the SIF image to the cache (only if built)
       - name: Save Dependency SIF Image Cache
-        if: steps.cache-restore-sif.outputs.cache-hit != 'true' && steps.build_sif.outcome == 'success'
+        if: steps.cache-restore-sif.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: dependency_image.sif
           key: ${{ runner.os }}-apptainer-sif-${{ hashFiles('containers/Singularity.deps.def') }}
 
-      # Standalone HYPRE Test (unchanged)
-      - name: Verify hypre_test.cpp exists
-        id: check_hypre_test_file
+      - name: Build and Test OpenImpala C++
         run: |
-          if [ ! -f ./src/props/hypre_test.cpp ]; then
-            echo "::error::Standalone test file ./src/props/hypre_test.cpp not found!"
-            exit 1
-          else
-            echo "Standalone test file ./src/props/hypre_test.cpp found."
-          fi
-
-      - name: Compile Standalone HYPRE Test
-        id: compile_hypre_test
-        if: steps.check_hypre_test_file.outcome == 'success'
-        run: |
-          echo "Compiling hypre_test.cpp inside container..."
           sudo apptainer exec \
             --bind $PWD:/src \
             ./dependency_image.sif \
-            bash -c 'source /opt/rh/gcc-toolset-11/enable && \
-                     cd /src && \
-                     echo "Running: mpic++ src/props/hypre_test.cpp -o hypre_test -I/opt/hypre/v2.32.0/include -L/opt/hypre/v2.32.0/lib -lHYPRE -fopenmp -lm" && \
-                     mpic++ src/props/hypre_test.cpp -o hypre_test -I/opt/hypre/v2.32.0/include -L/opt/hypre/v2.32.0/lib -lHYPRE -fopenmp -lm' > compile_hypre_test.log 2>&1
-          COMPILE_EXIT_CODE=$?
-          cat compile_hypre_test.log
-          if [ $COMPILE_EXIT_CODE -ne 0 ]; then
-            echo "::error::Standalone HYPRE test compilation failed! Exit code: $COMPILE_EXIT_CODE"
-            exit $COMPILE_EXIT_CODE
-          fi
-          echo "Standalone HYPRE test compilation successful."
-          ls -l ./hypre_test
+            bash -c '
+              source /opt/rh/gcc-toolset-11/enable
+              cd /src
+              rm -rf cmake_build && mkdir cmake_build && cd cmake_build
+              
+              # Notice we can use standard cmake now!
+              cmake .. \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER=$(which mpicc) \
+                -DCMAKE_CXX_COMPILER=$(which mpicxx) \
+                -DCMAKE_Fortran_COMPILER=$(which mpif90) \
+                -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
+                -DBUILD_TESTING=ON
+              
+              make -j$(nproc)
+              ctest --output-on-failure --timeout 300
+            '
 
-      - name: Run Standalone HYPRE Test (Direct Output)
-        id: run_hypre_test
-        if: steps.compile_hypre_test.outcome == 'success'
-        continue-on-error: true
-        run: |
-          echo "Running hypre_test inside container (logging directly)..."
-          sudo apptainer exec \
-            --bind $PWD:/src \
-            ./dependency_image.sif \
-            bash -c 'source /opt/rh/gcc-toolset-11/enable && \
-                     cd /src && \
-                     echo "Executing: mpirun -np 1 --allow-run-as-root ./hypre_test 2>&1" && \
-                     mpirun -np 1 --allow-run-as-root ./hypre_test 2>&1'
-          RUN_EXIT_CODE=$?
-          echo "Standalone HYPRE test execution finished with exit code: $RUN_EXIT_CODE"
-          echo "exit_code=$RUN_EXIT_CODE" >> $GITHUB_OUTPUT
+  python-bindings-test:
+    name: Python Bindings Test
+    runs-on: ubuntu-latest
+    needs: build-and-test-openimpala
 
-      - name: Check Standalone Test Outcome
-        if: steps.run_hypre_test.outcome == 'failure' || steps.run_hypre_test.outputs.exit_code != '0'
-        run: |
-          echo "::error::Standalone HYPRE test execution failed (Exit Code: ${{ steps.run_hypre_test.outputs.exit_code }}). See output above."
-          echo "::warning::Standalone HYPRE test failed, but continuing workflow..."
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # Step 7: Build OpenImpala with CMake inside the Dependency SIF
-      - name: Build OpenImpala (CMake)
-        id: cmake_build
-        continue-on-error: true
-        run: |
-          echo "Configuring and building OpenImpala with CMake..."
-          sudo apptainer exec \
-            --writable-tmpfs \
-            --bind $PWD:/src \
-            ./dependency_image.sif \
-            bash -c 'source /opt/rh/gcc-toolset-11/enable && \
-                     cd /src && \
-                     rm -rf cmake_build && mkdir cmake_build && cd cmake_build && \
-                     cmake3 .. \
-                       -DCMAKE_BUILD_TYPE=Release \
-                       -DCMAKE_C_COMPILER=$(which mpicc) \
-                       -DCMAKE_CXX_COMPILER=$(which mpicxx) \
-                       -DCMAKE_Fortran_COMPILER=$(which mpif90) \
-                       -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
-                       -DBUILD_TESTING=ON && \
-                     make -j$(nproc)' > cmake_build_output.log 2>&1
-          CMAKE_EXIT_CODE=$?
-          echo "CMake build exit code: $CMAKE_EXIT_CODE"
-          exit $CMAKE_EXIT_CODE
-
-      # Step 8: Upload Build Log
-      - name: Upload Build Log
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Set up Apptainer
+        uses: eWaterCycle/setup-apptainer@v2
         with:
-          name: cmake-build-log-${{ github.run_id }}
-          path: cmake_build_output.log
-          retention-days: 5
-          if-no-files-found: warn
+          apptainer-version: 1.2.5
 
-      # Step 9: Fail if build failed
-      - name: Check build outcome
-        if: steps.cmake_build.outcome == 'failure'
-        run: |
-          echo "CMake build failed. See uploaded 'cmake-build-log' artifact for details."
-          cat cmake_build_output.log || true
-          exit 1
-
-      # Step 9.5: Check Test TIFF File Before Running Tests
-      - name: Check Test TIFF File Status Inside Container
-        if: steps.cmake_build.outcome == 'success'
-        run: |
-          echo "Checking status of data/SampleData_2Phase_stack_3d_1bit.tif inside container..."
-          TARGET_FILE="data/SampleData_2Phase_stack_3d_1bit.tif"
-          sudo apptainer exec \
-            --bind $PWD:/src \
-            ./dependency_image.sif \
-            bash -c "cd /src && \
-                     echo '--- Running ls -l:' && \
-                     ls -l \"${TARGET_FILE}\" && \
-                     echo '--- Running file command:' && \
-                     file \"${TARGET_FILE}\" && \
-                     echo '--- Running tiffinfo:' && \
-                     tiffinfo \"${TARGET_FILE}\"" || echo "::warning::Checking test file failed, proceeding anyway..."
-          echo "Finished checking test file status."
-        continue-on-error: true
-
-      # Step 10: Run Tests with CTest
-      - name: Run Tests (CTest)
-        id: ctest_run
-        if: steps.cmake_build.outcome == 'success'
-        continue-on-error: true
-        run: |
-          echo "Running ctest..."
-          timeout 1200 sudo apptainer exec \
-            --bind $PWD:/src \
-            ./dependency_image.sif \
-            bash -c 'source /opt/rh/gcc-toolset-11/enable && \
-                     cd /src/cmake_build && \
-                     ctest --output-on-failure --timeout 300' > ctest_output.log 2>&1
-          TEST_EXIT_CODE=$?
-          if [ $TEST_EXIT_CODE -eq 124 ]; then
-              echo "::error::Test step timed out after 20 minutes!"
-          fi
-          echo "CTest exit code: $TEST_EXIT_CODE"
-
-          # Attempt to copy Backtrace files
-          echo "Attempting to find and copy Backtrace files..."
-          sudo apptainer exec \
-            --bind $PWD:/src \
-            ./dependency_image.sif \
-            bash -c 'find /src -maxdepth 2 -name "Backtrace.*" -exec echo "==> Found Backtrace file:" {} \; -exec cp {} /src/ \;' || true
-
-          exit $TEST_EXIT_CODE
-
-      # Step 11: Upload Test Log and Backtrace
-      - name: Upload Test Log and Backtrace Artifacts
-        if: always() && steps.cmake_build.outcome == 'success'
-        uses: actions/upload-artifact@v4
+      - name: Restore Dependency SIF Cache
+        uses: actions/cache/restore@v4
         with:
-          name: ctest-output-${{ github.run_id }}
-          path: |
-            ctest_output.log
-            Backtrace.*
-          retention-days: 5
-          if-no-files-found: warn
+          path: dependency_image.sif
+          key: ${{ runner.os }}-apptainer-sif-${{ hashFiles('containers/Singularity.deps.def') }}
 
-      # Step 12: Fail if tests failed
-      - name: Check test outcome
-        if: steps.cmake_build.outcome == 'success' && steps.ctest_run.outcome == 'failure'
+      - name: Build and Test Python Bindings
         run: |
-          echo "CTest failed. See uploaded 'ctest-output' artifact for details."
-          cat ctest_output.log || true
-          exit 1
-
+          sudo apptainer exec \
+            --bind $PWD:/src \
+            ./dependency_image.sif \
+            bash -c '
+              source /opt/rh/gcc-toolset-11/enable
+              cd /src
+              rm -rf cmake_build_py && mkdir cmake_build_py && cd cmake_build_py
+              
+              # 1. Ask Python exactly where the pybind11 CMake files are
+              PYBIND11_DIR=$(python3.11 -m pybind11 --cmakedir)
+              echo "Found pybind11 CMake dir at: $PYBIND11_DIR"
+              
+              # 2. Pass it to CMake using -Dpybind11_DIR
+              cmake .. \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER=$(which mpicc) \
+                -DCMAKE_CXX_COMPILER=$(which mpicxx) \
+                -DCMAKE_Fortran_COMPILER=$(which mpif90) \
+                -DPython_EXECUTABLE=/usr/bin/python3.11 \
+                -Dpybind11_DIR=${PYBIND11_DIR} \
+                -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
+                -DBUILD_TESTING=ON \
+                -DOPENIMPALA_PYTHON=ON
+              
+              make -j$(nproc)
+              
+              # pytest and pyAMReX are native to the container now!
+              ctest --output-on-failure --timeout 120 -L python
+            '
+            
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
@@ -408,7 +260,9 @@ jobs:
               source /opt/rh/gcc-toolset-11/enable
               cd /src
               rm -rf cmake_build_cov && mkdir cmake_build_cov && cd cmake_build_cov
-              cmake3 .. \
+              
+              # Changed cmake3 to cmake
+              cmake .. \
                 -DCMAKE_BUILD_TYPE=Debug \
                 -DCMAKE_C_COMPILER=$(which mpicc) \
                 -DCMAKE_CXX_COMPILER=$(which mpicxx) \
@@ -416,6 +270,7 @@ jobs:
                 -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
                 -DBUILD_TESTING=ON \
                 -DENABLE_COVERAGE=ON
+              
               make -j$(nproc)
               ctest --output-on-failure --timeout 300 || true
             '
@@ -428,8 +283,10 @@ jobs:
             ./dependency_image.sif \
             bash -c '
               source /opt/rh/gcc-toolset-11/enable
-              dnf install -y python3-pip 2>&1 | tail -1
-              pip3 install gcovr 2>&1 | tail -1
+              
+              # Dropped the dnf install and used native python3.11 pip!
+              python3.11 -m pip install gcovr
+              
               cd /src
               gcovr --root . \
                 --filter "src/" \

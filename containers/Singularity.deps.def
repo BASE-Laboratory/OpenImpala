@@ -57,8 +57,9 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
         wget \
         git \
         patch \
-        python3 \
-        python3-pip \
+        python3.11 \
+        python3.11-devel \
+        python3.11-pip \
         hostname \
         infiniband-diags \
         libibverbs-devel \
@@ -166,9 +167,9 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
         -DCMAKE_CXX_COMPILER=$(which mpicxx) \
         -DCMAKE_Fortran_COMPILER=$(which mpif90) \
         -DBUILD_SHARED_LIBS=ON \
-        -DCMAKE_CXX_FLAGS="-O3 -march=native" \
-        -DCMAKE_C_FLAGS="-O3 -march=native" \
-        -DCMAKE_Fortran_FLAGS="-O3 -march=native" \
+        -DCMAKE_CXX_FLAGS="-O3 -march=x86-64-v2" \
+        -DCMAKE_C_FLAGS="-O3 -march=x86-64-v2" \
+        -DCMAKE_Fortran_FLAGS="-O3 -march=x86-64-v2" \
         -DCMAKE_PREFIX_PATH="${HDF5_INSTALL_PREFIX};${LIBTIFF_INSTALL_PREFIX}" \
     || { echo "*** AMReX Configure Failed!"; exit 1; }
     echo "--- Building AMReX (make) ---"
@@ -180,6 +181,43 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     echo "--- Cleaning up AMReX source ---"
     rm -rf amrex
 
+    # --- Install pyAMReX ---
+    echo "--- Building pyAMReX ${AMREX_VERSION} ---"
+    cd /tmp/build_src
+    git clone --depth 1 --branch ${AMREX_VERSION} https://github.com/AMReX-Codes/pyamrex.git
+    cd pyamrex
+    
+    # pyAMReX requires CMake 3.24+, pybind11, and numpy to compile.
+    # Rocky's EPEL cmake3 is too old, so we grab the latest CMake via pip.
+    # CRITICAL: Pin pybind11 to 2.13.x — pybind11 3.0 introduced an ABI break
+    # and both pyAMReX and OpenImpala's _core must share the exact same
+    # pybind11 version for cross-module type casting to work.
+    python3.11 -m pip install --upgrade pip
+    python3.11 -m pip install "cmake>=3.24" "pybind11>=2.13,<3" numpy build packaging wheel setuptools pytest
+
+    # Ensure pip's cmake is prioritized in the PATH
+    export PATH=/usr/local/bin:$PATH
+
+    # Tell pyAMReX to link against the C++ AMReX library we just built
+    export pyAMReX_amrex_internal=OFF
+    export CMAKE_PREFIX_PATH="${AMREX_INSTALL_PREFIX}:${HDF5_INSTALL_PREFIX}:${LIBTIFF_INSTALL_PREFIX}"
+    export AMREX_MPI=ON
+    export AMREX_OMP=ON
+    export CC=$(which mpicc)
+    export CXX=$(which mpicxx)
+
+    # Force pyAMReX to use the pip-installed pybind11 instead of fetching
+    # its own via FetchContent. This ensures both pyAMReX and OpenImpala's
+    # _core extension share identical pybind11 internals, which is required
+    # for cross-module py::cast<amrex::iMultiFab&>() to work.
+    PYBIND11_DIR=$(python3.11 -m pybind11 --cmakedir)
+    export CMAKE_ARGS="-DpyAMReX_pybind11_internal=OFF -Dpybind11_DIR=${PYBIND11_DIR}"
+
+    # Build and install directly into the system Python 3.11 site-packages
+    python3.11 -m pip install -v .
+    
+    cd ..
+    rm -rf pyamrex
 
     # --- Install HYPRE ---
     echo "--- Building HYPRE ${HYPRE_VERSION} ---"
@@ -190,7 +228,7 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
         --with-MPI \
         --with-openmp \
         --enable-shared \
-        CFLAGS="-O3 -march=native" CXXFLAGS="-O3 -march=native"
+        CFLAGS="-O3 -march=x86-64-v2" CXXFLAGS="-O3 -march=x86-64-v2"
 
     echo "--- Making HYPRE library ---"
     make -j$(nproc)
@@ -244,6 +282,7 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     export LD_LIBRARY_PATH=${AMREX_HOME}/lib:${HYPRE_HOME}/lib:${LIBTIFF_INSTALL_PREFIX}/lib:${HDF5_HOME}/lib:${OPENMPI_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
     export CMAKE_PREFIX_PATH=${AMREX_HOME}:${HYPRE_HOME}:${LIBTIFF_INSTALL_PREFIX}:${HDF5_HOME}:${OPENMPI_INSTALL_PREFIX}:${CMAKE_PREFIX_PATH}
     export OMPI_MCA_btl_vader_single_copy_mechanism=none; export OMPI_MCA_rmaps_base_oversubscribe=1
+    export PATH=/usr/local/bin:${AMREX_HOME}/bin:${HYPRE_HOME}/bin:${LIBTIFF_INSTALL_PREFIX}/bin:${HDF5_HOME}/bin:${OPENMPI_INSTALL_PREFIX}/bin:${PATH}
 
 %test
     set -e
@@ -290,6 +329,8 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     if [ ! -f "$MPI_LIB" ]; then echo "*** ERROR: OpenMPI library not found at $MPI_LIB!"; exit 1; fi
     echo "Checking OpenMPI lib ($MPI_LIB)..."; ldd "$MPI_LIB"
     echo "--- Basic dependency container tests passed. ---"
+    echo "Checking Python 3.11 and pyAMReX..."
+    python3.11 -c "import amrex; print('pyAMReX loaded successfully!')"
 
 %runscript
     echo "Container with build environment (GCC 11) and runtime dependencies for OpenImpala."
