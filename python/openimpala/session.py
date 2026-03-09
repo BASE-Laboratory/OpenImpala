@@ -58,14 +58,24 @@ class Session:
         if not amrex.initialized():
             amrex.initialize([])
 
+        # Initialise HYPRE (required before any HYPRE-based solver is used).
+        import importlib
+        _core = importlib.import_module("openimpala._core")
+        _core.hypre_init()
+
     @staticmethod
     def _do_finalize() -> None:
         import gc
+        import importlib
         import amrex.space3d as amrex
 
         if amrex.initialized():
             # Force Python to destroy all orphaned C++ pybind11 objects NOW
             gc.collect()
-            
+
+            # Shut down HYPRE before AMReX finalises MPI.
+            _core = importlib.import_module("openimpala._core")
+            _core.hypre_finalize()
+
             # Now it is safe to shut down the C++ backend
             amrex.finalize()
