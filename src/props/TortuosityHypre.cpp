@@ -7,6 +7,7 @@
 // Includes remain the same...
 #include <cstdlib>
 #include <ctime>
+#include <mutex>
 #include <vector>
 #include <string>
 #include <cmath>     // Required for std::isnan, std::isinf, std::abs
@@ -118,6 +119,11 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
       m_stencil(nullptr), m_A(nullptr), m_b(nullptr), m_x(nullptr), m_num_iterations(-1),
       m_final_res_norm(std::numeric_limits<amrex::Real>::quiet_NaN()), m_converged(false),
       m_flux_in(0.0), m_flux_out(0.0) {
+    // Ensure HYPRE is initialised exactly once (thread-safe via std::call_once).
+    // C++ tests call HYPRE_Init() in main(), but Python bindings have no main().
+    static std::once_flag hypre_once;
+    std::call_once(hypre_once, []() { HYPRE_Init(); });
+
     // Copy data from input iMultiFab to member iMultiFab
     amrex::Copy(m_mf_phase, mf_phase_input, 0, 0, m_mf_phase.nComp(), m_mf_phase.nGrow());
 

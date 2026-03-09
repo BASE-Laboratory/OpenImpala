@@ -7,11 +7,6 @@
 
 #include <pybind11/pybind11.h>
 
-#include <HYPRE.h>
-
-#include <stdexcept>
-#include <string>
-
 namespace py = pybind11;
 
 // Forward declarations — each implemented in its own .cpp
@@ -27,29 +22,6 @@ PYBIND11_MODULE(_core, m) {
 
     m.doc() = "OpenImpala C++ backend — low-level bindings for transport property "
               "computation on 3-D voxel images of porous microstructures.";
-
-    // --- HYPRE lifecycle functions ---
-    m.def(
-        "hypre_init",
-        []() {
-            int ierr = HYPRE_Init();
-            if (ierr != 0) {
-                throw std::runtime_error("HYPRE_Init() failed with error code " +
-                                         std::to_string(ierr));
-            }
-        },
-        "Initialise the HYPRE library.  Must be called before using any HYPRE-based solver.");
-
-    m.def(
-        "hypre_finalize",
-        []() {
-            int ierr = HYPRE_Finalize();
-            if (ierr != 0) {
-                throw std::runtime_error("HYPRE_Finalize() failed with error code " +
-                                         std::to_string(ierr));
-            }
-        },
-        "Shut down the HYPRE library.  Call after all HYPRE solvers have been destroyed.");
 
     // Register enums first (used by everything else)
     init_enums(m);
