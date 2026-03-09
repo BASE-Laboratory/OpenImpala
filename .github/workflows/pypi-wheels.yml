@@ -125,7 +125,8 @@ jobs:
           CIBW_BEFORE_BUILD: pip install "cmake>=3.28,<4"
 
           # Point scikit-build-core to our newly compiled dependencies and MPI compilers.
-          # CMAKE_FIND_PACKAGE_PREFER_CONFIG makes find_package() use HDF5Config.cmake
+          # CMAKE_FIND_PACKAGE_PREFER_CONFIG is passed via SKBUILD_CMAKE_ARGS so it
+          # reaches CMake as a -D flag. This makes find_package() use HDF5Config.cmake
           # (installed by our CMake-built HDF5) instead of the FindHDF5.cmake module,
           # which fails its compiler-wrapper test inside the manylinux container.
           CIBW_ENVIRONMENT_LINUX: >
@@ -134,7 +135,7 @@ jobs:
             CMAKE_CXX_COMPILER="mpicxx"
             CMAKE_Fortran_COMPILER="mpif90"
             CMAKE_PREFIX_PATH="/usr/local"
-            CMAKE_FIND_PACKAGE_PREFER_CONFIG="ON"
+            SKBUILD_CMAKE_ARGS="-DOPENIMPALA_PYTHON=ON;-DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON"
 
           # Vendor libraries into the wheel, but exclude host-specific MPI and
           # runtime libraries that users must provide on their system.
