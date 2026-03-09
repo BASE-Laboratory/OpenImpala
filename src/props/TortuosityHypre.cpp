@@ -280,16 +280,23 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
 // --- Destructor ---
 // Remains the same...
 OpenImpala::TortuosityHypre::~TortuosityHypre() {
-    if (m_x)
-        HYPRE_StructVectorDestroy(m_x);
-    if (m_b)
-        HYPRE_StructVectorDestroy(m_b);
-    if (m_A)
-        HYPRE_StructMatrixDestroy(m_A);
-    if (m_stencil)
-        HYPRE_StructStencilDestroy(m_stencil);
-    if (m_grid)
-        HYPRE_StructGridDestroy(m_grid);
+    // Guard HYPRE cleanup: these functions use MPI internally, so they must
+    // not be called after MPI_Finalize (e.g. during Python interpreter
+    // shutdown when AMReX has already been finalised).
+    int mpi_finalized = 0;
+    MPI_Finalized(&mpi_finalized);
+    if (!mpi_finalized) {
+        if (m_x)
+            HYPRE_StructVectorDestroy(m_x);
+        if (m_b)
+            HYPRE_StructVectorDestroy(m_b);
+        if (m_A)
+            HYPRE_StructMatrixDestroy(m_A);
+        if (m_stencil)
+            HYPRE_StructStencilDestroy(m_stencil);
+        if (m_grid)
+            HYPRE_StructGridDestroy(m_grid);
+    }
     m_x = m_b = nullptr;
     m_A = nullptr;
     m_stencil = nullptr;
