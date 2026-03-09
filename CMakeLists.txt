@@ -78,6 +78,14 @@ find_package(HDF5 REQUIRED COMPONENTS C CXX)
 find_package(ZLIB REQUIRED)
 find_package(JPEG REQUIRED)
 
+# libtiff 4.6.0 statically links the math library and exports CMath::CMath.
+# We must manually define this target so CMake can resolve TIFF::tiff.
+find_library(MATH_LIBRARY m)
+if(MATH_LIBRARY AND NOT TARGET CMath::CMath)
+    add_library(CMath::CMath UNKNOWN IMPORTED)
+    set_target_properties(CMath::CMath PROPERTIES IMPORTED_LOCATION "${MATH_LIBRARY}")
+endif()
+
 # --- TIFF ---
 find_package(TIFF REQUIRED)
 
