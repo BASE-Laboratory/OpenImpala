@@ -1,33 +1,25 @@
 """Shared pytest fixtures for OpenImpala Python binding tests.
 
-Ensures AMReX is initialised exactly once per test session.
+Ensures AMReX is initialised exactly once per test session via
+``openimpala.Session``, which sets the required RTLD_GLOBAL dlopen
+flags before loading pyAMReX.
 """
 
 import pytest
 import numpy as np
-import gc  
+
+from openimpala.session import Session
+
+# Single session instance shared across all tests.
+_session = Session()
+
 
 @pytest.fixture(scope="session", autouse=True)
 def amrex_session():
     """Initialise AMReX for the entire test session."""
-    try:
-        from mpi4py import MPI  # noqa: F401
-    except ImportError:
-        pass
-
-    import amrex.space3d as amrex
-
-    if not amrex.initialized():
-        amrex.initialize([])
-    
+    _session.__enter__()
     yield
-    
-    # Force Python to destroy all C++ Pybind11 objects NOW
-    gc.collect()
-    
-    # Safely shut down AMReX and MPI before Python exits
-    if amrex.initialized():
-        amrex.finalize()
+    _session.__exit__(None, None, None)
 
 
 @pytest.fixture

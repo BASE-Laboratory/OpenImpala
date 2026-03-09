@@ -35,13 +35,25 @@ class Session:
     # ------------------------------------------------------------------
     @staticmethod
     def _do_initialize() -> None:
+        import os
+        import sys
+
         # Import mpi4py first so MPI_Init happens before AMReX touches MPI.
         try:
             from mpi4py import MPI  # noqa: F401
         except ImportError:
             pass
 
-        import amrex.space3d as amrex
+        # CRITICAL: Set RTLD_GLOBAL *before* the first import of amrex so that
+        # pyAMReX's C++ type registry is visible to openimpala._core.so.
+        # If amrex is loaded with RTLD_LOCAL (the default), pybind11 cross-module
+        # type casts will segfault.
+        old_flags = sys.getdlopenflags()
+        sys.setdlopenflags(os.RTLD_GLOBAL | os.RTLD_NOW)
+        try:
+            import amrex.space3d as amrex
+        finally:
+            sys.setdlopenflags(old_flags)
 
         if not amrex.initialized():
             amrex.initialize([])
