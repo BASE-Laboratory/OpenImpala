@@ -25,45 +25,61 @@ import sys
 
 __version__ = "0.1.0"
 
-# --- CRITICAL PYBIND11 INTEROP FIX ---
-# We must force Linux to use RTLD_GLOBAL so that openimpala._core.so can 
-# physically see the C++ type registry inside pyAMReX's extension. 
-_old_flags = sys.getdlopenflags()
-sys.setdlopenflags(os.RTLD_GLOBAL | os.RTLD_NOW)
-
-try:
-    import amrex.space3d as amrex  # 1. Load pyAMReX globally
-    from . import _core as core    # 2. Load OpenImpala so it links to pyAMReX
-finally:
-    sys.setdlopenflags(_old_flags) # 3. Restore safe defaults
-
-# Enums — available at top level for convenience
-from ._core import (
-    Direction,
-    CellType,
-    RawDataType,
-    SolverType,
-    EffDiffSolverType,
-    PhysicsType,
-)
-
-# Session context manager
+# Session context manager (pure Python — always available)
 from .session import Session
 
-# Custom exceptions
+# Custom exceptions (pure Python — always available)
 from .exceptions import (
     OpenImpalaError,
     ConvergenceError,
     PercolationError,
 )
 
-# High-level facade functions
-from .facade import (
-    volume_fraction,
-    percolation_check,
-    tortuosity,
-    read_image,
-)
+
+def _load_core():
+    """Load the _core C extension with the correct dlopen flags.
+
+    Must be called after amrex.space3d is loaded (e.g. inside a Session).
+    Repeated calls are cheap — Python caches the import.
+    """
+    old_flags = sys.getdlopenflags()
+    sys.setdlopenflags(os.RTLD_GLOBAL | os.RTLD_NOW)
+    try:
+        import amrex.space3d  # noqa: F401 — load pyAMReX globally first
+        from . import _core
+    finally:
+        sys.setdlopenflags(old_flags)
+    return _core
+
+
+def __getattr__(name):
+    """Lazy-load C extension symbols on first access.
+
+    This allows ``from openimpala.cli import _build_parser`` and other
+    pure-Python imports to succeed without loading the compiled backend.
+    """
+    # Symbols that live in the _core C extension
+    _CORE_ATTRS = {
+        "core", "_core", "Direction", "CellType", "RawDataType",
+        "SolverType", "EffDiffSolverType", "PhysicsType",
+    }
+    # Symbols that live in the facade module
+    _FACADE_ATTRS = {
+        "volume_fraction", "percolation_check", "tortuosity", "read_image",
+    }
+
+    if name in _CORE_ATTRS:
+        _core = _load_core()
+        if name in ("core", "_core"):
+            return _core
+        return getattr(_core, name)
+
+    if name in _FACADE_ATTRS:
+        from . import facade
+        return getattr(facade, name)
+
+    raise AttributeError(f"module 'openimpala' has no attribute {name!r}")
+
 
 # Explicitly define the public API for IDEs and static analysis
 __all__ = [
