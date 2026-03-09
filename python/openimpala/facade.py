@@ -81,8 +81,8 @@ class TortuosityResult:
 
 def _get_core():
     """Import and return the _core C extension (lazy, cached by Python)."""
-    from . import _core
-    return _core
+    import importlib
+    return importlib.import_module("openimpala._core")
 
 
 def _parse_direction(d):

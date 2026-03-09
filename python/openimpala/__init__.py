@@ -20,6 +20,7 @@ Quick-start::
         print(f"Volume fraction: {vf.fraction:.4f}")
 """
 
+import importlib
 import os
 import sys
 
@@ -46,7 +47,7 @@ def _load_core():
     sys.setdlopenflags(os.RTLD_GLOBAL | os.RTLD_NOW)
     try:
         import amrex.space3d  # noqa: F401 — load pyAMReX globally first
-        from . import _core
+        _core = importlib.import_module("openimpala._core")
     finally:
         sys.setdlopenflags(old_flags)
     return _core
