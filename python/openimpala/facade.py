@@ -11,7 +11,6 @@ from typing import Optional, Union
 
 import numpy as np
 
-from . import _core
 from .exceptions import ConvergenceError, PercolationError
 
 
@@ -80,26 +79,23 @@ class TortuosityResult:
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DIRECTION_MAP = {"x": _core.Direction.X, "y": _core.Direction.Y, "z": _core.Direction.Z}
+def _get_core():
+    """Import and return the _core C extension (lazy, cached by Python)."""
+    from . import _core
+    return _core
 
-_SOLVER_MAP = {
-    "jacobi": _core.SolverType.Jacobi,
-    "gmres": _core.SolverType.GMRES,
-    "flexgmres": _core.SolverType.FlexGMRES,
-    "pcg": _core.SolverType.PCG,
-    "bicgstab": _core.SolverType.BiCGSTAB,
-    "smg": _core.SolverType.SMG,
-    "pfmg": _core.SolverType.PFMG,
-    "hypre": _core.SolverType.FlexGMRES,  # convenience alias
-}
 
-def _parse_direction(d: Union[str, _core.Direction]) -> _core.Direction:
+def _parse_direction(d):
+    """Parse a direction string ('x', 'y', 'z') or Direction enum value."""
+    _core = _get_core()
     if isinstance(d, _core.Direction):
         return d
+    direction_map = {"x": _core.Direction.X, "y": _core.Direction.Y, "z": _core.Direction.Z}
     key = d.strip().lower()
-    if key not in _DIRECTION_MAP:
+    if key not in direction_map:
         raise ValueError(f"Unknown direction '{d}'. Use 'x', 'y', or 'z'.")
-    return _DIRECTION_MAP[key]
+    return direction_map[key]
+
 
 def _ensure_initialized():
     import amrex.space3d as amrex
@@ -110,13 +106,26 @@ def _ensure_initialized():
             "    openimpala.volume_fraction(...)"
         )
 
-def _parse_solver(s: Union[str, _core.SolverType]) -> _core.SolverType:
+
+def _parse_solver(s):
+    """Parse a solver string or SolverType enum value."""
+    _core = _get_core()
     if isinstance(s, _core.SolverType):
         return s
+    solver_map = {
+        "jacobi": _core.SolverType.Jacobi,
+        "gmres": _core.SolverType.GMRES,
+        "flexgmres": _core.SolverType.FlexGMRES,
+        "pcg": _core.SolverType.PCG,
+        "bicgstab": _core.SolverType.BiCGSTAB,
+        "smg": _core.SolverType.SMG,
+        "pfmg": _core.SolverType.PFMG,
+        "hypre": _core.SolverType.FlexGMRES,  # convenience alias
+    }
     key = s.strip().lower()
-    if key not in _SOLVER_MAP:
-        raise ValueError(f"Unknown solver '{s}'. Options: {list(_SOLVER_MAP)}")
-    return _SOLVER_MAP[key]
+    if key not in solver_map:
+        raise ValueError(f"Unknown solver '{s}'. Options: {list(solver_map)}")
+    return solver_map[key]
 
 
 def _numpy_to_imultifab(
@@ -187,6 +196,7 @@ def volume_fraction(
     VolumeFractionResult
     """
     _ensure_initialized()
+    _core = _get_core()
     _, _, _, mf = _numpy_to_imultifab(data, max_grid_size)
     vf = _core.VolumeFraction(mf, phase, 0)
     pc, tc = vf.value()
@@ -197,7 +207,7 @@ def volume_fraction(
 def percolation_check(
     data: np.ndarray,
     phase: int = 0,
-    direction: Union[str, _core.Direction] = "x",
+    direction: Union[str, "Direction"] = "x",
     *,
     max_grid_size: int = 32,
     verbose: int = 0,
@@ -218,6 +228,7 @@ def percolation_check(
     PercolationResult
     """
     _ensure_initialized()
+    _core = _get_core()
     d = _parse_direction(direction)
     geom, ba, dm, mf = _numpy_to_imultifab(data, max_grid_size)
     pc = _core.PercolationCheck(geom, ba, dm, mf, phase, d, verbose)
@@ -231,8 +242,8 @@ def percolation_check(
 def tortuosity(
     data: np.ndarray,
     phase: int = 0,
-    direction: Union[str, _core.Direction] = "x",
-    solver: Union[str, _core.SolverType] = "flexgmres",
+    direction: Union[str, "Direction"] = "x",
+    solver: Union[str, "SolverType"] = "flexgmres",
     *,
     max_grid_size: int = 32,
     results_path: str = ".",
@@ -263,6 +274,7 @@ def tortuosity(
         If the phase does not percolate in the given direction.
     """
     _ensure_initialized()
+    _core = _get_core()
     d = _parse_direction(direction)
     st = _parse_solver(solver)
     geom, ba, dm, mf = _numpy_to_imultifab(data, max_grid_size)
@@ -311,7 +323,7 @@ def read_image(
     raw_width: int = 0,
     raw_height: int = 0,
     raw_depth: int = 0,
-    raw_data_type: _core.RawDataType = _core.RawDataType.UINT8,
+    raw_data_type = None,
     max_grid_size: int = 32,
 ) -> tuple:
     """Read a 3-D image file and threshold it into an iMultiFab.
@@ -336,7 +348,11 @@ def read_image(
         The reader object and the AMReX infrastructure objects.
     """
     _ensure_initialized()
+    _core = _get_core()
     import amrex.space3d as amrex
+
+    if raw_data_type is None:
+        raw_data_type = _core.RawDataType.UINT8
 
     # Auto-detect format
     if file_format is None:
