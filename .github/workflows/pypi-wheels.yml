@@ -124,13 +124,17 @@ jobs:
           # Ensure each Python version has cmake >= 3.28 (needed by AMReX)
           CIBW_BEFORE_BUILD: pip install "cmake>=3.28,<4"
 
-          # Point scikit-build-core to our newly compiled dependencies and MPI compilers
+          # Point scikit-build-core to our newly compiled dependencies and MPI compilers.
+          # CMAKE_FIND_PACKAGE_PREFER_CONFIG makes find_package() use HDF5Config.cmake
+          # (installed by our CMake-built HDF5) instead of the FindHDF5.cmake module,
+          # which fails its compiler-wrapper test inside the manylinux container.
           CIBW_ENVIRONMENT_LINUX: >
             PATH="/usr/lib64/openmpi/bin:$PATH"
             CMAKE_C_COMPILER="mpicc"
             CMAKE_CXX_COMPILER="mpicxx"
             CMAKE_Fortran_COMPILER="mpif90"
             CMAKE_PREFIX_PATH="/usr/local"
+            CMAKE_FIND_PACKAGE_PREFER_CONFIG="ON"
 
           # Vendor libraries into the wheel, but exclude host-specific MPI and
           # runtime libraries that users must provide on their system.
