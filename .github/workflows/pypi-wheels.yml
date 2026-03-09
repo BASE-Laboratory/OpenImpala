@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v1
+          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v2
 
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -60,8 +60,9 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: >
             dnf install -y epel-release &&
             dnf --enablerepo=powertools install -y
-            openmpi-devel gcc-gfortran gcc-c++ cmake wget git
-            zlib-devel libjpeg-turbo-devel &&
+            openmpi-devel gcc-gfortran gcc-c++ wget git
+            zlib-devel libjpeg-turbo-devel python3-pip &&
+            pip3 install cmake &&
             export PATH=/usr/lib64/openmpi/bin:$PATH &&
             if [ -f /project/.cibw-deps-cache/deps.tar.gz ]; then
             echo "=== Restoring cached dependencies ===" &&
@@ -119,6 +120,9 @@ jobs:
             mkdir -p /project/.cibw-deps-cache &&
             tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
             fi
+
+          # Ensure each Python version has cmake >= 3.28 (needed by AMReX)
+          CIBW_BEFORE_BUILD: pip install cmake
 
           # Point scikit-build-core to our newly compiled dependencies and MPI compilers
           CIBW_ENVIRONMENT_LINUX: >
