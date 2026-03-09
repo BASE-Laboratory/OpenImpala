@@ -167,9 +167,9 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
         -DCMAKE_CXX_COMPILER=$(which mpicxx) \
         -DCMAKE_Fortran_COMPILER=$(which mpif90) \
         -DBUILD_SHARED_LIBS=ON \
-        -DCMAKE_CXX_FLAGS="-O3 -march=native" \
-        -DCMAKE_C_FLAGS="-O3 -march=native" \
-        -DCMAKE_Fortran_FLAGS="-O3 -march=native" \
+        -DCMAKE_CXX_FLAGS="-O3 -march=x86-64-v2" \
+        -DCMAKE_C_FLAGS="-O3 -march=x86-64-v2" \
+        -DCMAKE_Fortran_FLAGS="-O3 -march=x86-64-v2" \
         -DCMAKE_PREFIX_PATH="${HDF5_INSTALL_PREFIX};${LIBTIFF_INSTALL_PREFIX}" \
     || { echo "*** AMReX Configure Failed!"; exit 1; }
     echo "--- Building AMReX (make) ---"
@@ -228,7 +228,7 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
         --with-MPI \
         --with-openmp \
         --enable-shared \
-        CFLAGS="-O3 -march=native" CXXFLAGS="-O3 -march=native"
+        CFLAGS="-O3 -march=x86-64-v2" CXXFLAGS="-O3 -march=x86-64-v2"
 
     echo "--- Making HYPRE library ---"
     make -j$(nproc)
