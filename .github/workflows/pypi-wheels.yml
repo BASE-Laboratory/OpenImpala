@@ -33,12 +33,13 @@ jobs:
           CIBW_SKIP: "*musllinux* *i686*"
           CIBW_ARCHS_LINUX: "x86_64"
 
-          # 1. Install system dependencies via yum (CentOS)
-          # 2. Build HYPRE statically with -fPIC
-          # 3. Build AMReX statically with Position Independent Code
+          # Explicitly use AlmaLinux 8 (matches your Rocky 8 environment)
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+
+          # Swap 'yum' for 'dnf' for the EL8 package manager
           CIBW_BEFORE_ALL_LINUX: >
-            yum install -y epel-release &&
-            yum install -y openmpi-devel hdf5-devel libtiff-devel wget git &&
+            dnf install -y epel-release &&
+            dnf --enablerepo=powertools install -y openmpi-devel hdf5-devel libtiff-devel wget git &&
             export PATH=/usr/lib64/openmpi/bin:$PATH &&
             wget -q https://github.com/hypre-space/hypre/archive/v2.31.0.tar.gz &&
             tar xzf v2.31.0.tar.gz &&
@@ -68,7 +69,6 @@ jobs:
             CMAKE_PREFIX_PATH="/usr/local"
 
           # Vendor libraries into the wheel, but STRICTLY EXCLUDE host-specific MPI libraries.
-          # We rely on the end-user having a compatible MPI fabric installed.
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} 
             --exclude libmpi.so 
