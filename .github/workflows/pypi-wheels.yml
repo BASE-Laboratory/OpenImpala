@@ -10,7 +10,7 @@ jobs:
   build_wheels:
     name: Build manylinux wheels on ubuntu-latest
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,27 +36,64 @@ jobs:
           # Explicitly use AlmaLinux 8 (matches your Rocky 8 environment)
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
 
-          # Swap 'yum' for 'dnf' for the EL8 package manager
+          # Install all build dependencies inside the manylinux container.
+          # Key points:
+          #   - gcc-gfortran is explicitly installed for Fortran kernel compilation
+          #   - HDF5 and libtiff are built from source as static libraries so they
+          #     get linked into the wheel without auditwheel needing to vendor them
+          #   - HYPRE is built static (--enable-shared=no)
+          #   - AMReX is built static (-DBUILD_SHARED_LIBS=OFF)
           CIBW_BEFORE_ALL_LINUX: >
             dnf install -y epel-release &&
-            dnf --enablerepo=powertools install -y openmpi-devel hdf5-devel libtiff-devel wget git &&
+            dnf --enablerepo=powertools install -y
+            openmpi-devel gcc-gfortran gcc-c++ cmake wget git
+            zlib-devel libjpeg-turbo-devel &&
             export PATH=/usr/lib64/openmpi/bin:$PATH &&
+            wget -q https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.6/hdf5-1.14.6.tar.gz &&
+            tar xzf hdf5-1.14.6.tar.gz &&
+            cd hdf5-1.14.6 &&
+            cmake -S . -B build
+            -DCMAKE_INSTALL_PREFIX=/usr/local
+            -DCMAKE_BUILD_TYPE=Release
+            -DBUILD_SHARED_LIBS=OFF
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+            -DHDF5_BUILD_CXX=ON
+            -DHDF5_ENABLE_PARALLEL=ON
+            -DCMAKE_C_COMPILER=mpicc
+            -DCMAKE_CXX_COMPILER=mpicxx &&
+            cmake --build build -j$(nproc) &&
+            cmake --install build &&
+            cd .. &&
+            wget -q https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz &&
+            tar xzf tiff-4.6.0.tar.gz &&
+            cd tiff-4.6.0 &&
+            cmake -S . -B build
+            -DCMAKE_INSTALL_PREFIX=/usr/local
+            -DCMAKE_BUILD_TYPE=Release
+            -DBUILD_SHARED_LIBS=OFF
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON &&
+            cmake --build build -j$(nproc) &&
+            cmake --install build &&
+            cd .. &&
             wget -q https://github.com/hypre-space/hypre/archive/v2.31.0.tar.gz &&
             tar xzf v2.31.0.tar.gz &&
             cd hypre-2.31.0/src &&
-            ./configure --prefix=/usr/local --with-MPI --enable-shared=no CC=mpicc CXX=mpicxx FC=mpif90 CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" &&
+            ./configure --prefix=/usr/local --with-MPI --enable-shared=no
+            CC=mpicc CXX=mpicxx FC=mpif90
+            CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" FFLAGS="-O2 -fPIC" &&
             make -j$(nproc) &&
             make install &&
             cd ../.. &&
             git clone --depth 1 --branch 25.03 https://github.com/AMReX-Codes/amrex.git /tmp/amrex &&
-            cmake -S /tmp/amrex -B /tmp/amrex/build 
-            -DCMAKE_INSTALL_PREFIX=/usr/local 
-            -DCMAKE_BUILD_TYPE=Release 
-            -DAMReX_MPI=ON 
-            -DAMReX_OMP=ON 
-            -DAMReX_SPACEDIM=3 
-            -DAMReX_FORTRAN=ON 
-            -DAMReX_PARTICLES=OFF 
+            cmake -S /tmp/amrex -B /tmp/amrex/build
+            -DCMAKE_INSTALL_PREFIX=/usr/local
+            -DCMAKE_BUILD_TYPE=Release
+            -DBUILD_SHARED_LIBS=OFF
+            -DAMReX_MPI=ON
+            -DAMReX_OMP=ON
+            -DAMReX_SPACEDIM=3
+            -DAMReX_FORTRAN=ON
+            -DAMReX_PARTICLES=OFF
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build
@@ -66,21 +103,30 @@ jobs:
             PATH="/usr/lib64/openmpi/bin:$PATH"
             CMAKE_C_COMPILER="mpicc"
             CMAKE_CXX_COMPILER="mpicxx"
+            CMAKE_Fortran_COMPILER="mpif90"
             CMAKE_PREFIX_PATH="/usr/local"
 
-          # Vendor libraries into the wheel, but STRICTLY EXCLUDE host-specific MPI libraries.
+          # Vendor libraries into the wheel, but exclude host-specific MPI and
+          # runtime libraries that users must provide on their system.
+          # With all C/C++ deps statically linked, the only external shared libs
+          # left are MPI, OpenMP runtime (libgomp), and Fortran runtime.
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
-            auditwheel repair -w {dest_dir} {wheel} 
-            --exclude libmpi.so 
-            --exclude libmpi.so.12 
-            --exclude libmpi.so.40 
-            --exclude libmpi_cxx.so 
-            --exclude libmpi_cxx.so.1 
-            --exclude libmpi_cxx.so.40 
-            --exclude libopen-rte.so 
-            --exclude libopen-rte.so.40 
-            --exclude libopen-pal.so 
+            auditwheel repair -w {dest_dir} {wheel}
+            --exclude libmpi.so
+            --exclude libmpi.so.12
+            --exclude libmpi.so.40
+            --exclude libmpi_cxx.so
+            --exclude libmpi_cxx.so.1
+            --exclude libmpi_cxx.so.40
+            --exclude libopen-rte.so
+            --exclude libopen-rte.so.40
+            --exclude libopen-pal.so
             --exclude libopen-pal.so.40
+            --exclude libmpi_mpifh.so
+            --exclude libmpi_mpifh.so.40
+            --exclude libgomp.so.1
+            --exclude libgfortran.so.5
+            --exclude libquadmath.so.0
 
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v4
@@ -95,8 +141,8 @@ jobs:
     # Required for PyPI's Trusted Publishing
     environment: pypi
     permissions:
-      id-token: write 
-      
+      id-token: write
+
     steps:
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
