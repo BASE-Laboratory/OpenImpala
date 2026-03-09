@@ -8,7 +8,9 @@
 #include <pybind11/pybind11.h>
 
 #include <HYPRE.h>
+
 #include <stdexcept>
+#include <string>
 
 namespace py = pybind11;
 

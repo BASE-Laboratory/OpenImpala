@@ -59,14 +59,18 @@ class Session:
             amrex.initialize([])
 
         # Initialise HYPRE (required before any HYPRE-based solver is used).
-        import importlib
-        _core = importlib.import_module("openimpala._core")
-        _core.hypre_init()
+        # Guarded with try/except so that pure-Python usage (e.g. CLI parser
+        # tests) still works when _core.so is not available.
+        try:
+            import importlib
+            _core = importlib.import_module("openimpala._core")
+            _core.hypre_init()
+        except (ImportError, ModuleNotFoundError):
+            pass
 
     @staticmethod
     def _do_finalize() -> None:
         import gc
-        import importlib
         import amrex.space3d as amrex
 
         if amrex.initialized():
@@ -74,8 +78,12 @@ class Session:
             gc.collect()
 
             # Shut down HYPRE before AMReX finalises MPI.
-            _core = importlib.import_module("openimpala._core")
-            _core.hypre_finalize()
+            try:
+                import importlib
+                _core = importlib.import_module("openimpala._core")
+                _core.hypre_finalize()
+            except (ImportError, ModuleNotFoundError):
+                pass
 
             # Now it is safe to shut down the C++ backend
             amrex.finalize()
