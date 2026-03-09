@@ -59,7 +59,7 @@ set_target_properties(_core PROPERTIES
 )
 
 # --- Install into the Python package layout ---
-install(TARGETS _core LIBRARY DESTINATION openimpala)
+install(TARGETS _core LIBRARY DESTINATION openimpala COMPONENT python)
 install(FILES
     openimpala/__init__.py
     openimpala/session.py
@@ -67,6 +67,7 @@ install(FILES
     openimpala/facade.py
     openimpala/cli.py
     DESTINATION openimpala
+    COMPONENT python
 )
 
 # ==============================================================================
