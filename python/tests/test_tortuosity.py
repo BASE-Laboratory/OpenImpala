@@ -35,6 +35,9 @@ class TestTortuosityHypreCore:
         expected = (N - 1.0) / N
         assert tau == pytest.approx(expected, rel=1e-6)
 
+        # Explicitly clean up C++ objects before pytest caches the frame
+        del solver, mf, dm, ba, geom
+
     def test_solver_diagnostics(self):
         N = 8
         data = np.zeros((N, N, N), dtype=np.int32)
@@ -49,6 +52,9 @@ class TestTortuosityHypreCore:
         assert solver.iterations >= 0
         assert solver.residual_norm >= 0.0
         assert abs(solver.flux_in) > 0.0
+
+        # Explicitly clean up C++ objects before pytest caches the frame
+        del solver, mf, dm, ba, geom
 
 
 class TestTortuosityFacade:
