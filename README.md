@@ -3,6 +3,7 @@
   <img src="https://github.com/user-attachments/assets/7a1902a0-a000-4111-b76b-226147ec6e30" alt="Logo" width="300">
 </p>
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/01_hello_openimpala.ipynb)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![DOI](https://img.shields.io/badge/DOI-10.1016/j.softx.2021.100729-blue)](https://doi.org/10.1016/j.softx.2021.100729)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/BASE-Laboratory/OpenImpala)](https://github.com/BASE-Laboratory/OpenImpala/releases/latest)
