@@ -20,10 +20,14 @@ class TestPercolationCheckCore:
         assert pc.percolates is True
         assert pc.active_volume_fraction > 0.0
 
+        del pc, mf, dm, ba, geom
+
     def test_disconnected_does_not_percolate(self, disconnected_phase):
         geom, ba, dm, mf = _make_mf(disconnected_phase)
         pc = _core.PercolationCheck(geom, ba, dm, mf, 0, _core.Direction.X, 0)
         assert pc.percolates is False
+
+        del pc, mf, dm, ba, geom
 
     def test_direction_string(self):
         assert _core.PercolationCheck.direction_string(_core.Direction.X) == "X"
