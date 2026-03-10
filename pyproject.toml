@@ -38,8 +38,7 @@ all = [
 openimpala = "openimpala.cli:main"
 
 [tool.scikit-build]
-cmake.args = ["-DOPENIMPALA_PYTHON=ON", "-DBUILD_TESTING=OFF"]
-build.targets = ["_core"]
+cmake.args =["-DOPENIMPALA_PYTHON=ON", "-DBUILD_TESTING=OFF"]
 install.components = ["python"]
 
 [tool.pytest.ini_options]
