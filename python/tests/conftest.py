@@ -1,8 +1,7 @@
 """Shared pytest fixtures for OpenImpala Python binding tests.
 
 Ensures AMReX is initialised exactly once per test session via
-``openimpala.Session``, which sets the required RTLD_GLOBAL dlopen
-flags before loading pyAMReX.
+``openimpala.Session``.
 """
 
 import pytest

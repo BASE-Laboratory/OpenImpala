@@ -3,8 +3,8 @@
 # ==============================================================================
 #
 # Builds the _core pybind11 extension module, linking against the existing
-# openimpala_io and openimpala_props OBJECT libraries and pyAMReX for AMReX
-# type interop.
+# openimpala_io and openimpala_props OBJECT libraries.  AMReX types are
+# managed natively — no pyamrex dependency.
 #
 # Usage (from the top-level build directory):
 #   cmake .. -DOPENIMPALA_PYTHON=ON
@@ -43,6 +43,7 @@ target_link_libraries(_core PRIVATE
 )
 
 target_include_directories(_core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/bindings
     ${CMAKE_SOURCE_DIR}/src/io
     ${CMAKE_SOURCE_DIR}/src/props
     ${HDF5_INCLUDE_DIRS}
@@ -111,7 +112,7 @@ if(BUILD_TESTING)
         openimpala_add_pytest(pytest_cli
             "${PYTHON_TEST_DIR}/test_cli.py")
 
-        # --- Tests requiring _core module + pyAMReX ---
+        # --- Tests requiring _core module ---
         openimpala_add_pytest(pytest_enums
             "${PYTHON_TEST_DIR}/test_enums.py")
         openimpala_add_pytest(pytest_facade_helpers

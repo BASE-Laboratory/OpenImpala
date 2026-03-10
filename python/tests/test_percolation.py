@@ -6,28 +6,26 @@ import pytest
 from openimpala import _core
 
 
-def _make_mf(data: np.ndarray, max_grid_size: int = 32):
-    from openimpala.facade import _numpy_to_imultifab
-
-    return _numpy_to_imultifab(data, max_grid_size)
+def _make_img(data: np.ndarray, max_grid_size: int = 32):
+    return _core.VoxelImage.from_numpy(np.ascontiguousarray(data, dtype=np.int32), max_grid_size)
 
 
 class TestPercolationCheckCore:
 
     def test_connected_channel_percolates(self, connected_channel):
-        geom, ba, dm, mf = _make_mf(connected_channel)
-        pc = _core.PercolationCheck(geom, ba, dm, mf, 0, _core.Direction.X, 0)
+        img = _make_img(connected_channel)
+        pc = _core.PercolationCheck(img, 0, _core.Direction.X, 0)
         assert pc.percolates is True
         assert pc.active_volume_fraction > 0.0
 
-        del pc, mf, dm, ba, geom
+        del pc, img
 
     def test_disconnected_does_not_percolate(self, disconnected_phase):
-        geom, ba, dm, mf = _make_mf(disconnected_phase)
-        pc = _core.PercolationCheck(geom, ba, dm, mf, 0, _core.Direction.X, 0)
+        img = _make_img(disconnected_phase)
+        pc = _core.PercolationCheck(img, 0, _core.Direction.X, 0)
         assert pc.percolates is False
 
-        del pc, mf, dm, ba, geom
+        del pc, img
 
     def test_direction_string(self):
         assert _core.PercolationCheck.direction_string(_core.Direction.X) == "X"

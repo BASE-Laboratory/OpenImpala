@@ -1,11 +1,30 @@
 /** @file module.cpp
  *  @brief Top-level pybind11 module definition for OpenImpala Python bindings.
  *
- *  Defines the PYBIND11_MODULE entry point and delegates to per-subsystem
- *  init functions declared in the other binding translation units.
+ *  Defines the PYBIND11_MODULE entry point, AMReX lifecycle helpers,
+ *  the VoxelImage opaque handle, and delegates to per-subsystem init functions.
  */
 
+#include <cstddef>
+#include <memory>
+#include <string>
+
 #include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
+
+#include <AMReX.H>
+#include <AMReX_Box.H>
+#include <AMReX_BoxArray.H>
+#include <AMReX_CoordSys.H>
+#include <AMReX_DistributionMapping.H>
+#include <AMReX_Geometry.H>
+#include <AMReX_IntVect.H>
+#include <AMReX_MFIter.H>
+#include <AMReX_ParallelFor.H>
+#include <AMReX_RealBox.H>
+#include <AMReX_iMultiFab.H>
+
+#include "VoxelImage.H"
 
 namespace py = pybind11;
 
@@ -16,12 +35,119 @@ void init_props(py::module_& m);
 void init_solvers(py::module_& m);
 void init_config(py::module_& m);
 
-PYBIND11_MODULE(_core, m) {
-    // Import pyAMReX's exact C++ extension to merge the pybind11 type registries.
-    py::module_::import("amrex.space3d.amrex_3d_pybind");
+// =========================================================================
+// AMReX lifecycle — replaces amrex.initialize() / amrex.finalize()
+// =========================================================================
+static void init_amrex() {
+    if (!amrex::Initialized()) {
+        // Initialise with an empty argument list (no ParmParse input)
+        int argc = 0;
+        char** argv = nullptr;
+        amrex::Initialize(argc, argv);
+    }
+}
 
+static void finalize_amrex() {
+    if (amrex::Initialized()) {
+        amrex::Finalize();
+    }
+}
+
+static bool amrex_initialized() { return amrex::Initialized(); }
+
+// =========================================================================
+// NumPy → VoxelImage factory
+// =========================================================================
+static std::shared_ptr<OpenImpala::VoxelImage>
+voxelimage_from_numpy(py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr,
+                      int max_grid_size) {
+    py::buffer_info buf = arr.request();
+
+    if (buf.ndim != 3) {
+        throw std::runtime_error("Input must be a 3-D NumPy array, got ndim=" +
+                                 std::to_string(buf.ndim));
+    }
+
+    // NumPy C-contiguous arrays are shaped (Z, Y, X)
+    int nz = static_cast<int>(buf.shape[0]);
+    int ny = static_cast<int>(buf.shape[1]);
+    int nx = static_cast<int>(buf.shape[2]);
+
+    amrex::Box domain(amrex::IntVect(0, 0, 0), amrex::IntVect(nx - 1, ny - 1, nz - 1));
+    amrex::RealBox rb({0.0, 0.0, 0.0}, {static_cast<double>(nx), static_cast<double>(ny),
+                                          static_cast<double>(nz)});
+    amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
+
+    auto img = std::make_shared<OpenImpala::VoxelImage>();
+    img->geom.define(domain, rb, amrex::CoordSys::cartesian, is_periodic.data());
+    img->ba.define(domain);
+    img->ba.maxSize(max_grid_size);
+    img->dm.define(img->ba);
+    img->mf = std::make_shared<amrex::iMultiFab>(img->ba, img->dm, 1, 1);
+
+    const auto* ptr = static_cast<const int32_t*>(buf.ptr);
+
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+    for (amrex::MFIter mfi(*(img->mf), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.tilebox();
+        auto fab = img->mf->array(mfi);
+        const auto lo = amrex::lbound(bx);
+        const auto hi = amrex::ubound(bx);
+
+        for (int k = lo.z; k <= hi.z; ++k) {
+            for (int j = lo.y; j <= hi.y; ++j) {
+                for (int i = lo.x; i <= hi.x; ++i) {
+                    std::size_t idx =
+                        static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) *
+                            static_cast<std::size_t>(nx) +
+                        static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
+                        static_cast<std::size_t>(i);
+                    fab(i, j, k) = ptr[idx];
+                }
+            }
+        }
+    }
+
+    img->mf->FillBoundary(img->geom.periodicity());
+    return img;
+}
+
+// =========================================================================
+// PYBIND11_MODULE
+// =========================================================================
+PYBIND11_MODULE(_core, m) {
     m.doc() = "OpenImpala C++ backend — low-level bindings for transport property "
               "computation on 3-D voxel images of porous microstructures.";
+
+    // --- AMReX lifecycle ---
+    m.def("init_amrex", &init_amrex,
+          "Initialise the AMReX runtime (no-op if already initialised).");
+    m.def("finalize_amrex", &finalize_amrex,
+          "Shut down the AMReX runtime (no-op if not initialised).");
+    m.def("amrex_initialized", &amrex_initialized,
+          "Return True if the AMReX runtime is currently active.");
+
+    // --- VoxelImage opaque handle ---
+    py::class_<OpenImpala::VoxelImage, std::shared_ptr<OpenImpala::VoxelImage>>(
+        m, "VoxelImage",
+        "Opaque container for a 3-D voxel image stored natively in AMReX memory.\n\n"
+        "Create from a NumPy array via ``VoxelImage.from_numpy(arr)`` or receive\n"
+        "one from ``read_image()``.  Pass to solver functions directly.")
+
+        .def_static("from_numpy", &voxelimage_from_numpy, py::arg("arr"),
+                     py::arg("max_grid_size") = 32,
+                     "Construct a VoxelImage from a 3-D int32 NumPy array (Z, Y, X order).")
+
+        .def("__repr__",
+             [](const OpenImpala::VoxelImage& v) {
+                 if (!v.mf)
+                     return std::string("<VoxelImage (empty)>");
+                 const auto& bx = v.ba.minimalBox();
+                 return "<VoxelImage " + std::to_string(bx.length(0)) + "x" +
+                        std::to_string(bx.length(1)) + "x" + std::to_string(bx.length(2)) + ">";
+             });
 
     // Register enums first (used by everything else)
     init_enums(m);
