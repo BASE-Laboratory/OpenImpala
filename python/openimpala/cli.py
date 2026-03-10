@@ -78,12 +78,12 @@ def main(argv: list[str] | None = None) -> int:
 def _cmd_vf(args: argparse.Namespace) -> int:
     import openimpala as oi
 
-    _, _, _, _, mf = oi.read_image(
+    _, img = oi.read_image(
         args.image,
         threshold=args.threshold,
         max_grid_size=args.max_grid_size,
     )
-    vf = oi.core.VolumeFraction(mf, args.phase, 0)
+    vf = oi.core.VolumeFraction(img, args.phase, 0)
     pc, tc = vf.value()
     frac = pc / tc if tc > 0 else 0.0
     result = {"phase": args.phase, "phase_count": pc, "total_count": tc, "volume_fraction": frac}
@@ -94,13 +94,13 @@ def _cmd_vf(args: argparse.Namespace) -> int:
 def _cmd_percolation(args: argparse.Namespace) -> int:
     import openimpala as oi
 
-    _, geom, ba, dm, mf = oi.read_image(
+    _, img = oi.read_image(
         args.image,
         threshold=args.threshold,
         max_grid_size=args.max_grid_size,
     )
     d = oi.facade._parse_direction(args.direction)
-    pc = oi.core.PercolationCheck(geom, ba, dm, mf, args.phase, d, args.verbose)
+    pc = oi.core.PercolationCheck(img, args.phase, d, args.verbose)
     result = {
         "phase": args.phase,
         "direction": args.direction.upper(),
@@ -114,7 +114,7 @@ def _cmd_percolation(args: argparse.Namespace) -> int:
 def _cmd_analyze(args: argparse.Namespace) -> int:
     import openimpala as oi
 
-    _, geom, ba, dm, mf = oi.read_image(
+    _, img = oi.read_image(
         args.image,
         threshold=args.threshold,
         max_grid_size=args.max_grid_size,
@@ -123,11 +123,11 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     d = oi.facade._parse_direction(args.direction)
 
     # Volume fraction
-    vf_calc = oi.core.VolumeFraction(mf, args.phase, 0)
+    vf_calc = oi.core.VolumeFraction(img, args.phase, 0)
     vf_val = vf_calc.value_vf()
 
     # Percolation
-    pc = oi.core.PercolationCheck(geom, ba, dm, mf, args.phase, d, args.verbose)
+    pc = oi.core.PercolationCheck(img, args.phase, d, args.verbose)
 
     result: dict = {
         "input_file": args.image,
@@ -141,8 +141,7 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     if pc.percolates:
         st = oi.facade._parse_solver(args.solver)
         solver = oi.core.TortuosityHypre(
-            geom, ba, dm, mf,
-            vf_val, args.phase, d, st, ".",
+            img, vf_val, args.phase, d, st, ".",
             0.0, 1.0, args.verbose, False,
         )
         try:

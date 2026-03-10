@@ -1,8 +1,11 @@
 /** @file solvers.cpp
  *  @brief pybind11 bindings for OpenImpala transport-property solvers.
+ *
+ *  Accepts VoxelImage handles — no pyamrex dependency.
  */
 
 #include <cmath>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -12,6 +15,7 @@
 #include "TortuosityHypre.H"
 #include "TortuosityDirect.H"
 #include "EffectiveDiffusivityHypre.H"
+#include "VoxelImage.H"
 
 namespace py = pybind11;
 using namespace OpenImpala;
@@ -25,26 +29,20 @@ void init_solvers(py::module_& m) {
                                 "equation on a masked phase and computes tortuosity from the "
                                 "resulting flux.")
 
-        .def(py::init([](py::object geom_obj, py::object ba_obj, py::object dm_obj,
-                         py::object mf_obj, amrex::Real vf, int phase, OpenImpala::Direction dir,
-                         TortuosityHypre::SolverType solver_type, const std::string& results_path,
-                         amrex::Real vlo, amrex::Real vhi, int verbose, bool write_plotfile) {
-                 auto& geom = py::cast<const amrex::Geometry&>(geom_obj);
-                 auto& ba = py::cast<const amrex::BoxArray&>(ba_obj);
-                 auto& dm = py::cast<const amrex::DistributionMapping&>(dm_obj);
-                 auto& mf = py::cast<const amrex::iMultiFab&>(mf_obj);
-                 return new TortuosityHypre(geom, ba, dm, mf, vf, phase, dir, solver_type,
-                                            results_path, vlo, vhi, verbose, write_plotfile);
+        .def(py::init([](std::shared_ptr<VoxelImage> img, amrex::Real vf, int phase,
+                         OpenImpala::Direction dir, TortuosityHypre::SolverType solver_type,
+                         const std::string& results_path, amrex::Real vlo, amrex::Real vhi,
+                         int verbose, bool write_plotfile) {
+                 return new TortuosityHypre(img->geom, img->ba, img->dm, *(img->mf), vf, phase,
+                                            dir, solver_type, results_path, vlo, vhi, verbose,
+                                            write_plotfile);
              }),
-             py::arg("geom"), py::arg("ba"), py::arg("dm"), py::arg("mf_phase"), py::arg("vf"),
-             py::arg("phase"), py::arg("dir"), py::arg("solver_type"), py::arg("results_path"),
+             py::arg("img"), py::arg("vf"), py::arg("phase"), py::arg("dir"),
+             py::arg("solver_type"), py::arg("results_path"),
              py::arg("vlo") = 0.0, py::arg("vhi") = 1.0, py::arg("verbose") = 0,
              py::arg("write_plotfile") = false,
-             // prevent GC of referenced AMReX objects
-             py::keep_alive<1, 2>(), // geom
-             py::keep_alive<1, 3>(), // ba
-             py::keep_alive<1, 4>(), // dm
-             py::keep_alive<1, 5>()) // mf_phase
+             // keep VoxelImage alive while this object lives
+             py::keep_alive<1, 2>())
 
         // value() — translate NaN-on-failure into a Python exception
         .def(
@@ -89,24 +87,17 @@ void init_solvers(py::module_& m) {
         m, "TortuosityDirect",
         "Legacy iterative tortuosity solver using Forward-Euler time-stepping.")
 
-        .def(py::init([](py::object geom_obj, py::object ba_obj, py::object dm_obj,
-                         py::object mf_obj, int phase, OpenImpala::Direction dir, amrex::Real eps,
-                         int n_steps, int plot_interval, const std::string& plot_basename,
-                         amrex::Real vlo, amrex::Real vhi) {
-                 auto& geom = py::cast<const amrex::Geometry&>(geom_obj);
-                 auto& ba = py::cast<const amrex::BoxArray&>(ba_obj);
-                 auto& dm = py::cast<const amrex::DistributionMapping&>(dm_obj);
-                 auto& mf = py::cast<const amrex::iMultiFab&>(mf_obj);
-                 return new TortuosityDirect(geom, ba, dm, mf, phase, dir, eps, n_steps,
-                                             plot_interval, plot_basename, vlo, vhi);
+        .def(py::init([](std::shared_ptr<VoxelImage> img, int phase, OpenImpala::Direction dir,
+                         amrex::Real eps, int n_steps, int plot_interval,
+                         const std::string& plot_basename, amrex::Real vlo, amrex::Real vhi) {
+                 return new TortuosityDirect(img->geom, img->ba, img->dm, *(img->mf), phase, dir,
+                                             eps, n_steps, plot_interval, plot_basename, vlo, vhi);
              }),
-             py::arg("geom"), py::arg("ba"), py::arg("dm"), py::arg("mf_phase"), py::arg("phase"),
-             py::arg("dir"), py::arg("eps"), py::arg("n_steps"), py::arg("plot_interval"),
-             py::arg("plot_basename"), py::arg("vlo"), py::arg("vhi"),
-             py::keep_alive<1, 2>(), // geom
-             py::keep_alive<1, 3>(), // ba
-             py::keep_alive<1, 4>(), // dm
-             py::keep_alive<1, 5>()) // mf_phase
+             py::arg("img"), py::arg("phase"), py::arg("dir"), py::arg("eps"),
+             py::arg("n_steps"), py::arg("plot_interval"), py::arg("plot_basename"),
+             py::arg("vlo"), py::arg("vhi"),
+             // keep VoxelImage alive while this object lives
+             py::keep_alive<1, 2>())
 
         .def(
             "value",
@@ -135,24 +126,17 @@ void init_solvers(py::module_& m) {
         m, "EffectiveDiffusivityHypre",
         "Solves the cell problem for effective diffusivity via HYPRE.")
 
-        .def(py::init([](py::object geom_obj, py::object ba_obj, py::object dm_obj,
-                         py::object mf_obj, int phase_id, OpenImpala::Direction dir,
+        .def(py::init([](std::shared_ptr<VoxelImage> img, int phase_id, OpenImpala::Direction dir,
                          EffectiveDiffusivityHypre::SolverType solver_type,
                          const std::string& results_path, int verbose, bool write_plotfile) {
-                 auto& geom = py::cast<const amrex::Geometry&>(geom_obj);
-                 auto& ba = py::cast<const amrex::BoxArray&>(ba_obj);
-                 auto& dm = py::cast<const amrex::DistributionMapping&>(dm_obj);
-                 auto& mf = py::cast<const amrex::iMultiFab&>(mf_obj);
-                 return new EffectiveDiffusivityHypre(geom, ba, dm, mf, phase_id, dir, solver_type,
-                                                      results_path, verbose, write_plotfile);
+                 return new EffectiveDiffusivityHypre(img->geom, img->ba, img->dm, *(img->mf),
+                                                      phase_id, dir, solver_type, results_path,
+                                                      verbose, write_plotfile);
              }),
-             py::arg("geom"), py::arg("ba"), py::arg("dm"), py::arg("mf_phase"),
-             py::arg("phase_id"), py::arg("dir"), py::arg("solver_type"), py::arg("results_path"),
-             py::arg("verbose") = 1, py::arg("write_plotfile") = false,
-             py::keep_alive<1, 2>(), // geom
-             py::keep_alive<1, 3>(), // ba
-             py::keep_alive<1, 4>(), // dm
-             py::keep_alive<1, 5>()) // mf_phase
+             py::arg("img"), py::arg("phase_id"), py::arg("dir"), py::arg("solver_type"),
+             py::arg("results_path"), py::arg("verbose") = 1, py::arg("write_plotfile") = false,
+             // keep VoxelImage alive while this object lives
+             py::keep_alive<1, 2>())
 
         .def("solve", &EffectiveDiffusivityHypre::solve,
              "Solve the cell problem.  Returns True if the solver converged.")
