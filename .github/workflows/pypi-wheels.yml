@@ -135,7 +135,7 @@ jobs:
             CMAKE_CXX_COMPILER="mpicxx"
             CMAKE_Fortran_COMPILER="mpif90"
             CMAKE_PREFIX_PATH="/usr/local"
-            SKBUILD_CMAKE_ARGS="-DOPENIMPALA_PYTHON=ON;-DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON"
+            SKBUILD_CMAKE_ARGS="-DOPENIMPALA_PYTHON=ON;-DBUILD_TESTING=OFF;-DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON"
 
           # Vendor libraries into the wheel, but exclude host-specific MPI and
           # runtime libraries that users must provide on their system.
