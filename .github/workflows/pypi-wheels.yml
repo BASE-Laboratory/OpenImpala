@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v2
+          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v3
 
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -72,17 +72,15 @@ jobs:
             wget -q https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.6/hdf5-1.14.6.tar.gz &&
             tar xzf hdf5-1.14.6.tar.gz &&
             cd hdf5-1.14.6 &&
-            cmake -S . -B build
-            -DCMAKE_INSTALL_PREFIX=/usr/local
-            -DCMAKE_BUILD_TYPE=Release
-            -DBUILD_SHARED_LIBS=OFF
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-            -DHDF5_BUILD_CXX=ON
-            -DHDF5_ENABLE_PARALLEL=ON
-            -DCMAKE_C_COMPILER=mpicc
-            -DCMAKE_CXX_COMPILER=mpicxx &&
-            cmake --build build -j$(nproc) &&
-            cmake --install build &&
+            CC=mpicc CXX=mpicxx ./configure
+            --prefix=/usr/local
+            --enable-parallel
+            --enable-cxx
+            --enable-unsupported
+            --disable-shared
+            --with-pic &&
+            make -j$(nproc) &&
+            make install &&
             cd .. &&
             wget -q https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz &&
             tar xzf tiff-4.6.0.tar.gz &&
@@ -125,10 +123,6 @@ jobs:
           CIBW_BEFORE_BUILD: pip install "cmake>=3.28,<4"
 
           # Point scikit-build-core to our newly compiled dependencies and MPI compilers.
-          # CMAKE_FIND_PACKAGE_PREFER_CONFIG is passed via SKBUILD_CMAKE_ARGS so it
-          # reaches CMake as a -D flag. This makes find_package() use HDF5Config.cmake
-          # (installed by our CMake-built HDF5) instead of the FindHDF5.cmake module,
-          # which fails its compiler-wrapper test inside the manylinux container.
           CIBW_ENVIRONMENT_LINUX: >
             PATH="/usr/lib64/openmpi/bin:$PATH"
             CMAKE_C_COMPILER="mpicc"
@@ -136,7 +130,6 @@ jobs:
             CMAKE_Fortran_COMPILER="mpif90"
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
-            SKBUILD_CMAKE_ARGS="-DOPENIMPALA_PYTHON=ON;-DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON;-DBUILD_TESTING=OFF"
 
           # Vendor libraries into the wheel, but exclude host-specific MPI and
           # runtime libraries that users must provide on their system.
