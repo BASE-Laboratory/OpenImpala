@@ -74,6 +74,23 @@ find_package(HYPRE REQUIRED)
 # We need the C++ bindings (hdf5_cpp).
 find_package(HDF5 REQUIRED COMPONENTS C CXX)
 
+# Patch for HDF5Config.cmake (used in wheel builds) which uses different 
+# variable names than the standard CMake FindHDF5 module.
+if(NOT HDF5_INCLUDE_DIRS AND HDF5_INCLUDE_DIR)
+    set(HDF5_INCLUDE_DIRS ${HDF5_INCLUDE_DIR})
+endif()
+if(NOT HDF5_C_LIBRARIES AND HDF5_LIBRARIES)
+    set(HDF5_C_LIBRARIES ${HDF5_LIBRARIES})
+endif()
+if(NOT HDF5_CXX_LIBRARIES AND HDF5_LIBRARIES)
+    set(HDF5_CXX_LIBRARIES ${HDF5_LIBRARIES})
+endif()
+
+# Fallback for the isolated wheel container just in case
+if(NOT HDF5_INCLUDE_DIRS)
+    set(HDF5_INCLUDE_DIRS "/usr/local/include")
+endif()
+
 # --- Transitive dependencies for static TIFF ---
 find_package(ZLIB REQUIRED)
 find_package(JPEG REQUIRED)
