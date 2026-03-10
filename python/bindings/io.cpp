@@ -28,9 +28,8 @@ using namespace OpenImpala;
 
 /** @brief Build a VoxelImage from a reader's Box, then run threshold to fill it. */
 template <typename ReaderT, typename ThreshT>
-static std::shared_ptr<VoxelImage> reader_to_voxelimage(const ReaderT& reader,
-                                                         ThreshT threshold_value,
-                                                         int max_grid_size) {
+static std::shared_ptr<VoxelImage>
+reader_to_voxelimage(const ReaderT& reader, ThreshT threshold_value, int max_grid_size) {
     auto img = std::make_shared<VoxelImage>();
 
     const amrex::Box& box = reader.box();
@@ -53,11 +52,9 @@ static std::shared_ptr<VoxelImage> reader_to_voxelimage(const ReaderT& reader,
 
 /** @brief Build a VoxelImage with custom threshold output values. */
 template <typename ReaderT, typename ThreshT>
-static std::shared_ptr<VoxelImage> reader_to_voxelimage_custom(const ReaderT& reader,
-                                                                ThreshT threshold_value,
-                                                                int value_if_true,
-                                                                int value_if_false,
-                                                                int max_grid_size) {
+static std::shared_ptr<VoxelImage>
+reader_to_voxelimage_custom(const ReaderT& reader, ThreshT threshold_value, int value_if_true,
+                            int value_if_false, int max_grid_size) {
     auto img = std::make_shared<VoxelImage>();
 
     const amrex::Box& box = reader.box();

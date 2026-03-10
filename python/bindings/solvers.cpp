@@ -33,14 +33,13 @@ void init_solvers(py::module_& m) {
                          OpenImpala::Direction dir, TortuosityHypre::SolverType solver_type,
                          const std::string& results_path, amrex::Real vlo, amrex::Real vhi,
                          int verbose, bool write_plotfile) {
-                 return new TortuosityHypre(img->geom, img->ba, img->dm, *(img->mf), vf, phase,
-                                            dir, solver_type, results_path, vlo, vhi, verbose,
+                 return new TortuosityHypre(img->geom, img->ba, img->dm, *(img->mf), vf, phase, dir,
+                                            solver_type, results_path, vlo, vhi, verbose,
                                             write_plotfile);
              }),
              py::arg("img"), py::arg("vf"), py::arg("phase"), py::arg("dir"),
-             py::arg("solver_type"), py::arg("results_path"),
-             py::arg("vlo") = 0.0, py::arg("vhi") = 1.0, py::arg("verbose") = 0,
-             py::arg("write_plotfile") = false,
+             py::arg("solver_type"), py::arg("results_path"), py::arg("vlo") = 0.0,
+             py::arg("vhi") = 1.0, py::arg("verbose") = 0, py::arg("write_plotfile") = false,
              // keep VoxelImage alive while this object lives
              py::keep_alive<1, 2>())
 
@@ -93,9 +92,8 @@ void init_solvers(py::module_& m) {
                  return new TortuosityDirect(img->geom, img->ba, img->dm, *(img->mf), phase, dir,
                                              eps, n_steps, plot_interval, plot_basename, vlo, vhi);
              }),
-             py::arg("img"), py::arg("phase"), py::arg("dir"), py::arg("eps"),
-             py::arg("n_steps"), py::arg("plot_interval"), py::arg("plot_basename"),
-             py::arg("vlo"), py::arg("vhi"),
+             py::arg("img"), py::arg("phase"), py::arg("dir"), py::arg("eps"), py::arg("n_steps"),
+             py::arg("plot_interval"), py::arg("plot_basename"), py::arg("vlo"), py::arg("vhi"),
              // keep VoxelImage alive while this object lives
              py::keep_alive<1, 2>())
 
