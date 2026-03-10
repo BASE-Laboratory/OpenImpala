@@ -45,7 +45,7 @@ static std::shared_ptr<VoxelImage> reader_to_voxelimage(const ReaderT& reader,
     amrex::RealBox rb({0.0, 0.0, 0.0},
                       {static_cast<double>(nx), static_cast<double>(ny), static_cast<double>(nz)});
     amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
-    img->geom.define(box, rb, amrex::CoordSys::cartesian, is_periodic.data());
+    img->geom.define(box, &rb, amrex::CoordSys::cartesian, is_periodic.data());
 
     reader.threshold(threshold_value, *(img->mf));
     return img;
@@ -72,7 +72,7 @@ static std::shared_ptr<VoxelImage> reader_to_voxelimage_custom(const ReaderT& re
     amrex::RealBox rb({0.0, 0.0, 0.0},
                       {static_cast<double>(nx), static_cast<double>(ny), static_cast<double>(nz)});
     amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
-    img->geom.define(box, rb, amrex::CoordSys::cartesian, is_periodic.data());
+    img->geom.define(box, &rb, amrex::CoordSys::cartesian, is_periodic.data());
 
     reader.threshold(threshold_value, value_if_true, value_if_false, *(img->mf));
     return img;
