@@ -20,7 +20,6 @@
 #include <AMReX_Geometry.H>
 #include <AMReX_IntVect.H>
 #include <AMReX_MFIter.H>
-#include <AMReX_ParallelFor.H>
 #include <AMReX_RealBox.H>
 #include <AMReX_iMultiFab.H>
 
