@@ -115,8 +115,7 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
-            mkdir -p /project/.cibw-deps-cache &&
-            tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
+            tar czf /output/deps.tar.gz /usr/local ;
             fi
 
           # Ensure each Python version has cmake >= 3.28 (needed by AMReX)
@@ -152,6 +151,11 @@ jobs:
             --exclude libgomp.so.1
             --exclude libgfortran.so.5
             --exclude libquadmath.so.0
+
+      - name: Rescue Cache Tarball
+        run: |
+          mkdir -p .cibw-deps-cache
+          mv wheelhouse/deps.tar.gz .cibw-deps-cache/ || true
 
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v4
