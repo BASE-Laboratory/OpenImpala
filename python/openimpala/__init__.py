@@ -24,7 +24,12 @@ import importlib
 import os
 import sys
 
-__version__ = "0.1.0"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("openimpala")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
 # Session context manager (pure Python — always available)
 from .session import Session
