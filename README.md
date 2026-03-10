@@ -3,8 +3,10 @@
   <img src="https://github.com/user-attachments/assets/7a1902a0-a000-4111-b76b-226147ec6e30" alt="Logo" width="300">
 </p>
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/01_hello_openimpala.ipynb)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![DOI](https://img.shields.io/badge/DOI-10.1016/j.softx.2021.100729-blue)](https://doi.org/10.1016/j.softx.2021.100729)
+[![PyPI](https://img.shields.io/pypi/v/openimpala)](https://pypi.org/project/openimpala/)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/BASE-Laboratory/OpenImpala)](https://github.com/BASE-Laboratory/OpenImpala/releases/latest)
 [![GitHub contributors](https://img.shields.io/github/contributors/BASE-Laboratory/OpenImpala)](https://github.com/BASE-Laboratory/OpenImpala/graphs/contributors)
 [![Build and Test Status](https://github.com/BASE-Laboratory/OpenImpala/actions/workflows/build-test.yml/badge.svg?branch=master)](https://github.com/BASE-Laboratory/OpenImpala/actions/workflows/build-test.yml)
@@ -25,6 +27,7 @@ These calculated coefficients can directly parameterize continuum-scale models, 
 * [Getting Started (Recommended: Apptainer/Singularity)](#getting-started-recommended-apptainersingularity)
     * [1. Download the Container](#1-download-the-container)
     * [2. Run the Application](#2-run-the-application)
+* [Python Installation (pip)](#python-installation-pip)
 * [Building from Source (for Developers)](#building-from-source-for-developers)
 * [Native Installation (Advanced)](#native-installation-advanced)
     * [Dependencies](#dependencies)
@@ -91,6 +94,81 @@ apptainer exec -B "$(pwd):/data" ${SIF_FILE} /usr/local/bin/Diffusion /data/inpu
 # Ensure OMP_NUM_THREADS=1 if using multiple MPI ranks
 export OMP_NUM_THREADS=1
 mpirun -np 4 apptainer exec -B "$(pwd):/data" ${SIF_FILE} /usr/local/bin/Diffusion /data/inputs
+```
+
+---
+
+## Python Installation (pip)
+
+OpenImpala provides Python bindings that can be installed directly from PyPI. This gives you a high-level, NumPy-native API for computing transport properties on 3D voxel images without needing to write C++ code or manage input files.
+
+### Prerequisites
+
+OpenImpala uses MPI for parallel computation. You **must** have a working MPI installation before installing:
+
+```bash
+# Ubuntu / Debian
+sudo apt install libopenmpi-dev
+
+# Fedora / RHEL / Rocky
+sudo dnf install openmpi-devel
+# then add to PATH: export PATH=/usr/lib64/openmpi/bin:$PATH
+
+# macOS (Homebrew)
+brew install open-mpi
+
+# Conda (any platform)
+conda install -c conda-forge openmpi
+```
+
+> **Note:** The pre-built wheels are built against OpenMPI. Other MPI implementations (MPICH, Intel MPI) may work but are not tested. If you encounter MPI-related errors at runtime, ensure your MPI installation is ABI-compatible with OpenMPI.
+
+### Install
+
+```bash
+pip install openimpala
+```
+
+To install with optional dependencies:
+
+```bash
+# MPI-aware Python (recommended)
+pip install openimpala[mpi]
+
+# All optional dependencies
+pip install openimpala[all]
+```
+
+### Quick Start
+
+```python
+import numpy as np
+from openimpala import Session, volume_fraction, tortuosity
+
+# All computation must happen inside a Session context manager,
+# which initialises MPI and AMReX.
+with Session():
+    # Create a simple 3D test image (32x32x32, phase 0 = pore, phase 1 = solid)
+    image = np.zeros((32, 32, 32), dtype=np.int32)
+    image[:, :, 16:] = 1  # half pore, half solid
+
+    vf = volume_fraction(image, phase=0)
+    print(f"Volume fraction: {vf.value:.4f}")
+
+    tau = tortuosity(image, phase=0, direction="x")
+    print(f"Tortuosity: {tau.value:.4f}")
+```
+
+### CLI
+
+OpenImpala also provides a command-line interface:
+
+```bash
+# Analyse a TIFF image stack
+openimpala analyze my_sample.tif --phase 0 --direction x
+
+# Volume fraction only
+openimpala vf my_sample.tif --phase 0
 ```
 
 ---
