@@ -54,13 +54,12 @@ void init_props(py::module_& m) {
         m, "PercolationCheck",
         "Parallel flood-fill connectivity check for a phase in a given direction.")
 
-        .def(py::init([](std::shared_ptr<VoxelImage> img, int phase_id,
-                         OpenImpala::Direction dir, int verbose) {
-                 return new PercolationCheck(img->geom, img->ba, img->dm, *(img->mf),
-                                            phase_id, dir, verbose);
+        .def(py::init([](std::shared_ptr<VoxelImage> img, int phase_id, OpenImpala::Direction dir,
+                         int verbose) {
+                 return new PercolationCheck(img->geom, img->ba, img->dm, *(img->mf), phase_id, dir,
+                                             verbose);
              }),
-             py::arg("img"), py::arg("phase_id"), py::arg("dir"),
-             py::arg("verbose") = 0,
+             py::arg("img"), py::arg("phase_id"), py::arg("dir"), py::arg("verbose") = 0,
              // keep VoxelImage alive while this object lives
              py::keep_alive<1, 2>(),
              "Run a percolation check on construction.  Query results via properties.")

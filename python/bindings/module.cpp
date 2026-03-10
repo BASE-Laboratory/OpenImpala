@@ -52,7 +52,9 @@ static void finalize_amrex() {
     }
 }
 
-static bool amrex_initialized() { return amrex::Initialized(); }
+static bool amrex_initialized() {
+    return amrex::Initialized();
+}
 
 // =========================================================================
 // NumPy → VoxelImage factory
@@ -73,8 +75,8 @@ voxelimage_from_numpy(py::array_t<int32_t, py::array::c_style | py::array::force
     int nx = static_cast<int>(buf.shape[2]);
 
     amrex::Box domain(amrex::IntVect(0, 0, 0), amrex::IntVect(nx - 1, ny - 1, nz - 1));
-    amrex::RealBox rb({0.0, 0.0, 0.0}, {static_cast<double>(nx), static_cast<double>(ny),
-                                          static_cast<double>(nz)});
+    amrex::RealBox rb({0.0, 0.0, 0.0},
+                      {static_cast<double>(nx), static_cast<double>(ny), static_cast<double>(nz)});
     amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
 
     auto img = std::make_shared<OpenImpala::VoxelImage>();
@@ -98,11 +100,10 @@ voxelimage_from_numpy(py::array_t<int32_t, py::array::c_style | py::array::force
         for (int k = lo.z; k <= hi.z; ++k) {
             for (int j = lo.y; j <= hi.y; ++j) {
                 for (int i = lo.x; i <= hi.x; ++i) {
-                    std::size_t idx =
-                        static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) *
-                            static_cast<std::size_t>(nx) +
-                        static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
-                        static_cast<std::size_t>(i);
+                    std::size_t idx = static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) *
+                                          static_cast<std::size_t>(nx) +
+                                      static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
+                                      static_cast<std::size_t>(i);
                     fab(i, j, k) = ptr[idx];
                 }
             }
@@ -136,17 +137,16 @@ PYBIND11_MODULE(_core, m) {
         "one from ``read_image()``.  Pass to solver functions directly.")
 
         .def_static("from_numpy", &voxelimage_from_numpy, py::arg("arr"),
-                     py::arg("max_grid_size") = 32,
-                     "Construct a VoxelImage from a 3-D int32 NumPy array (Z, Y, X order).")
+                    py::arg("max_grid_size") = 32,
+                    "Construct a VoxelImage from a 3-D int32 NumPy array (Z, Y, X order).")
 
-        .def("__repr__",
-             [](const OpenImpala::VoxelImage& v) {
-                 if (!v.mf)
-                     return std::string("<VoxelImage (empty)>");
-                 const auto& bx = v.ba.minimalBox();
-                 return "<VoxelImage " + std::to_string(bx.length(0)) + "x" +
-                        std::to_string(bx.length(1)) + "x" + std::to_string(bx.length(2)) + ">";
-             });
+        .def("__repr__", [](const OpenImpala::VoxelImage& v) {
+            if (!v.mf)
+                return std::string("<VoxelImage (empty)>");
+            const auto& bx = v.ba.minimalBox();
+            return "<VoxelImage " + std::to_string(bx.length(0)) + "x" +
+                   std::to_string(bx.length(1)) + "x" + std::to_string(bx.length(2)) + ">";
+        });
 
     // Register enums first (used by everything else)
     init_enums(m);
