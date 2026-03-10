@@ -78,7 +78,7 @@ voxelimage_from_numpy(py::array_t<int32_t, py::array::c_style | py::array::force
     amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
 
     auto img = std::make_shared<OpenImpala::VoxelImage>();
-    img->geom.define(domain, rb, amrex::CoordSys::cartesian, is_periodic.data());
+    img->geom.define(domain, &rb, amrex::CoordSys::cartesian, is_periodic.data());
     img->ba.define(domain);
     img->ba.maxSize(max_grid_size);
     img->dm.define(img->ba);
