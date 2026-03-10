@@ -1,12 +1,17 @@
 /** @file props.cpp
  *  @brief pybind11 bindings for lightweight property calculators.
+ *
+ *  Accepts VoxelImage handles — no pyamrex dependency.
  */
+
+#include <memory>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
 #include "VolumeFraction.H"
 #include "PercolationCheck.H"
+#include "VoxelImage.H"
 
 namespace py = pybind11;
 using namespace OpenImpala;
@@ -16,16 +21,15 @@ void init_props(py::module_& m) {
     // VolumeFraction
     // =========================================================================
     py::class_<VolumeFraction>(m, "VolumeFraction",
-                               "Computes volume fraction of a phase within an iMultiFab.")
+                               "Computes volume fraction of a phase within a VoxelImage.")
 
-        .def(py::init([](py::object mf_obj, int phase, int comp) {
-                 auto& mf = py::cast<const amrex::iMultiFab&>(mf_obj);
-                 return new VolumeFraction(mf, phase, comp);
+        .def(py::init([](std::shared_ptr<VoxelImage> img, int phase, int comp) {
+                 return new VolumeFraction(*(img->mf), phase, comp);
              }),
-             py::arg("mf"), py::arg("phase") = 0, py::arg("comp") = 0,
-             // keep mf alive while this object lives
+             py::arg("img"), py::arg("phase") = 0, py::arg("comp") = 0,
+             // keep VoxelImage alive while this object lives
              py::keep_alive<1, 2>(),
-             "Create a volume-fraction calculator for *phase* in component *comp* of *mf*.")
+             "Create a volume-fraction calculator for *phase* in component *comp* of *img*.")
 
         // C++ signature: void value(long long&, long long&, bool) const
         // Python: returns (phase_count, total_count) tuple
@@ -50,21 +54,14 @@ void init_props(py::module_& m) {
         m, "PercolationCheck",
         "Parallel flood-fill connectivity check for a phase in a given direction.")
 
-        .def(py::init([](py::object geom_obj, py::object ba_obj, py::object dm_obj,
-                         py::object mf_obj, int phase_id, OpenImpala::Direction dir, int verbose) {
-                 auto& geom = py::cast<const amrex::Geometry&>(geom_obj);
-                 auto& ba = py::cast<const amrex::BoxArray&>(ba_obj);
-                 auto& dm = py::cast<const amrex::DistributionMapping&>(dm_obj);
-                 auto& mf = py::cast<const amrex::iMultiFab&>(mf_obj);
-                 return new PercolationCheck(geom, ba, dm, mf, phase_id, dir, verbose);
+        .def(py::init([](std::shared_ptr<VoxelImage> img, int phase_id, OpenImpala::Direction dir,
+                         int verbose) {
+                 return new PercolationCheck(img->geom, img->ba, img->dm, *(img->mf), phase_id, dir,
+                                             verbose);
              }),
-             py::arg("geom"), py::arg("ba"), py::arg("dm"), py::arg("mf_phase"),
-             py::arg("phase_id"), py::arg("dir"), py::arg("verbose") = 0,
-             // prevent GC of referenced AMReX objects
-             py::keep_alive<1, 2>(), // geom
-             py::keep_alive<1, 3>(), // ba
-             py::keep_alive<1, 4>(), // dm
-             py::keep_alive<1, 5>(), // mf_phase
+             py::arg("img"), py::arg("phase_id"), py::arg("dir"), py::arg("verbose") = 0,
+             // keep VoxelImage alive while this object lives
+             py::keep_alive<1, 2>(),
              "Run a percolation check on construction.  Query results via properties.")
 
         .def_property_readonly(

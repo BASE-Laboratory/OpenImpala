@@ -1,17 +1,79 @@
 /** @file io.cpp
  *  @brief pybind11 bindings for OpenImpala I/O readers.
+ *
+ *  Readers produce VoxelImage handles natively — no pyamrex dependency.
  */
+
+#include <memory>
+#include <string>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+
+#include <AMReX_BoxArray.H>
+#include <AMReX_CoordSys.H>
+#include <AMReX_DistributionMapping.H>
+#include <AMReX_Geometry.H>
+#include <AMReX_RealBox.H>
+#include <AMReX_iMultiFab.H>
 
 #include "TiffReader.H"
 #include "HDF5Reader.H"
 #include "RawReader.H"
 #include "DatReader.H"
+#include "VoxelImage.H"
 
 namespace py = pybind11;
 using namespace OpenImpala;
+
+/** @brief Build a VoxelImage from a reader's Box, then run threshold to fill it. */
+template <typename ReaderT, typename ThreshT>
+static std::shared_ptr<VoxelImage>
+reader_to_voxelimage(const ReaderT& reader, ThreshT threshold_value, int max_grid_size) {
+    auto img = std::make_shared<VoxelImage>();
+
+    const amrex::Box& box = reader.box();
+    img->ba.define(box);
+    img->ba.maxSize(max_grid_size);
+    img->dm.define(img->ba);
+    img->mf = std::make_shared<amrex::iMultiFab>(img->ba, img->dm, 1, 1);
+
+    int nx = box.length(0);
+    int ny = box.length(1);
+    int nz = box.length(2);
+    amrex::RealBox rb({0.0, 0.0, 0.0},
+                      {static_cast<double>(nx), static_cast<double>(ny), static_cast<double>(nz)});
+    amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
+    img->geom.define(box, &rb, amrex::CoordSys::cartesian, is_periodic.data());
+
+    reader.threshold(threshold_value, *(img->mf));
+    return img;
+}
+
+/** @brief Build a VoxelImage with custom threshold output values. */
+template <typename ReaderT, typename ThreshT>
+static std::shared_ptr<VoxelImage>
+reader_to_voxelimage_custom(const ReaderT& reader, ThreshT threshold_value, int value_if_true,
+                            int value_if_false, int max_grid_size) {
+    auto img = std::make_shared<VoxelImage>();
+
+    const amrex::Box& box = reader.box();
+    img->ba.define(box);
+    img->ba.maxSize(max_grid_size);
+    img->dm.define(img->ba);
+    img->mf = std::make_shared<amrex::iMultiFab>(img->ba, img->dm, 1, 1);
+
+    int nx = box.length(0);
+    int ny = box.length(1);
+    int nz = box.length(2);
+    amrex::RealBox rb({0.0, 0.0, 0.0},
+                      {static_cast<double>(nx), static_cast<double>(ny), static_cast<double>(nz)});
+    amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
+    img->geom.define(box, &rb, amrex::CoordSys::cartesian, is_periodic.data());
+
+    reader.threshold(threshold_value, value_if_true, value_if_false, *(img->mf));
+    return img;
+}
 
 void init_io(py::module_& m) {
     // =========================================================================
@@ -40,26 +102,26 @@ void init_io(py::module_& m) {
              py::arg("suffix") = ".tif",
              "Read metadata from a TIFF sequence (clears previous state).")
 
-        // Two-arg threshold (binary 0/1 output)
+        // Two-arg threshold → VoxelImage
         .def(
             "threshold",
-            [](const TiffReader& self, double raw_threshold, py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, mf);
+            [](const TiffReader& self, double raw_threshold, int max_grid_size) {
+                return reader_to_voxelimage(self, raw_threshold, max_grid_size);
             },
-            py::arg("raw_threshold"), py::arg("mf"),
-            "Fill *mf* with 1 where pixel > threshold, else 0.")
+            py::arg("raw_threshold"), py::arg("max_grid_size") = 32,
+            "Threshold the image and return a VoxelImage (1 where pixel > threshold, else 0).")
 
-        // Four-arg threshold (custom output values)
+        // Four-arg threshold → VoxelImage
         .def(
             "threshold",
             [](const TiffReader& self, double raw_threshold, int value_if_true, int value_if_false,
-               py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, value_if_true, value_if_false, mf);
+               int max_grid_size) {
+                return reader_to_voxelimage_custom(self, raw_threshold, value_if_true,
+                                                   value_if_false, max_grid_size);
             },
             py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
-            py::arg("mf"), "Fill *mf* with custom values based on threshold comparison.")
+            py::arg("max_grid_size") = 32,
+            "Threshold the image with custom output values and return a VoxelImage.")
 
         // Metadata properties
         .def_property_readonly("box", &TiffReader::box)
@@ -95,21 +157,20 @@ void init_io(py::module_& m) {
 
         .def(
             "threshold",
-            [](const HDF5Reader& self, double raw_threshold, py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, mf);
+            [](const HDF5Reader& self, double raw_threshold, int max_grid_size) {
+                return reader_to_voxelimage(self, raw_threshold, max_grid_size);
             },
-            py::arg("raw_threshold"), py::arg("mf"))
+            py::arg("raw_threshold"), py::arg("max_grid_size") = 32)
 
         .def(
             "threshold",
             [](const HDF5Reader& self, double raw_threshold, int value_if_true, int value_if_false,
-               py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, value_if_true, value_if_false, mf);
+               int max_grid_size) {
+                return reader_to_voxelimage_custom(self, raw_threshold, value_if_true,
+                                                   value_if_false, max_grid_size);
             },
             py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
-            py::arg("mf"))
+            py::arg("max_grid_size") = 32)
 
         .def_property_readonly("box", &HDF5Reader::box)
         .def_property_readonly("width", &HDF5Reader::width)
@@ -146,21 +207,20 @@ void init_io(py::module_& m) {
 
         .def(
             "threshold",
-            [](const RawReader& self, double threshold_value, py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(threshold_value, mf);
+            [](const RawReader& self, double threshold_value, int max_grid_size) {
+                return reader_to_voxelimage(self, threshold_value, max_grid_size);
             },
-            py::arg("threshold_value"), py::arg("mf"))
+            py::arg("threshold_value"), py::arg("max_grid_size") = 32)
 
         .def(
             "threshold",
             [](const RawReader& self, double threshold_value, int value_if_true, int value_if_false,
-               py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(threshold_value, value_if_true, value_if_false, mf);
+               int max_grid_size) {
+                return reader_to_voxelimage_custom(self, threshold_value, value_if_true,
+                                                   value_if_false, max_grid_size);
             },
             py::arg("threshold_value"), py::arg("value_if_true"), py::arg("value_if_false"),
-            py::arg("mf"))
+            py::arg("max_grid_size") = 32)
 
         .def_property_readonly("box", &RawReader::box)
         .def_property_readonly("width", &RawReader::width)
@@ -192,21 +252,20 @@ void init_io(py::module_& m) {
 
         .def(
             "threshold",
-            [](const DatReader& self, DatReader::DataType raw_threshold, py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, mf);
+            [](const DatReader& self, DatReader::DataType raw_threshold, int max_grid_size) {
+                return reader_to_voxelimage(self, raw_threshold, max_grid_size);
             },
-            py::arg("raw_threshold"), py::arg("mf"))
+            py::arg("raw_threshold"), py::arg("max_grid_size") = 32)
 
         .def(
             "threshold",
             [](const DatReader& self, DatReader::DataType raw_threshold, int value_if_true,
-               int value_if_false, py::object mf_obj) {
-                auto& mf = py::cast<amrex::iMultiFab&>(mf_obj);
-                self.threshold(raw_threshold, value_if_true, value_if_false, mf);
+               int value_if_false, int max_grid_size) {
+                return reader_to_voxelimage_custom(self, raw_threshold, value_if_true,
+                                                   value_if_false, max_grid_size);
             },
             py::arg("raw_threshold"), py::arg("value_if_true"), py::arg("value_if_false"),
-            py::arg("mf"))
+            py::arg("max_grid_size") = 32)
 
         .def_property_readonly("box", &DatReader::box)
         .def_property_readonly("width", &DatReader::width)

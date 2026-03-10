@@ -10,10 +10,8 @@ from openimpala import _core
 from openimpala.exceptions import ConvergenceError, PercolationError
 
 
-def _make_mf(data: np.ndarray, max_grid_size: int = 32):
-    from openimpala.facade import _numpy_to_imultifab
-
-    return _numpy_to_imultifab(data, max_grid_size)
+def _make_img(data: np.ndarray, max_grid_size: int = 32):
+    return _core.VoxelImage.from_numpy(np.ascontiguousarray(data, dtype=np.int32), max_grid_size)
 
 
 class TestTortuosityHypreCore:
@@ -23,12 +21,11 @@ class TestTortuosityHypreCore:
         """tau = (N-1)/N for a uniform N-cell domain."""
         N = 16
         data = np.zeros((N, N, N), dtype=np.int32)
-        geom, ba, dm, mf = _make_mf(data, max_grid_size=N)
+        img = _make_img(data, max_grid_size=N)
 
         vf = 1.0  # all phase 0
         solver = _core.TortuosityHypre(
-            geom, ba, dm, mf,
-            vf, 0, _core.Direction.X, _core.SolverType.FlexGMRES, ".",
+            img, vf, 0, _core.Direction.X, _core.SolverType.FlexGMRES, ".",
             0.0, 1.0, 0, False,
         )
         tau = solver.value()
@@ -36,16 +33,15 @@ class TestTortuosityHypreCore:
         assert tau == pytest.approx(expected, rel=1e-6)
 
         # Explicitly clean up C++ objects before pytest caches the frame
-        del solver, mf, dm, ba, geom
+        del solver, img
 
     def test_solver_diagnostics(self):
         N = 8
         data = np.zeros((N, N, N), dtype=np.int32)
-        geom, ba, dm, mf = _make_mf(data, max_grid_size=N)
+        img = _make_img(data, max_grid_size=N)
 
         solver = _core.TortuosityHypre(
-            geom, ba, dm, mf,
-            1.0, 0, _core.Direction.X, _core.SolverType.FlexGMRES, ".",
+            img, 1.0, 0, _core.Direction.X, _core.SolverType.FlexGMRES, ".",
         )
         solver.value()
         assert solver.solver_converged is True
@@ -54,7 +50,7 @@ class TestTortuosityHypreCore:
         assert abs(solver.flux_in) > 0.0
 
         # Explicitly clean up C++ objects before pytest caches the frame
-        del solver, mf, dm, ba, geom
+        del solver, img
 
 
 class TestTortuosityFacade:

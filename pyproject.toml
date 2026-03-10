@@ -19,7 +19,6 @@ dependencies = [
 
 [project.optional-dependencies]
 mpi = ["mpi4py"]
-amrex = ["pyamrex"]
 progress = ["tqdm"]
 jupyter = ["matplotlib", "ipywidgets"]
 test = [
@@ -28,7 +27,6 @@ test = [
 ]
 all = [
     "mpi4py",
-    "pyamrex",
     "tqdm",
     "matplotlib",
     "ipywidgets",

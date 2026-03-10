@@ -98,8 +98,8 @@ def _parse_direction(d):
 
 
 def _ensure_initialized():
-    import amrex.space3d as amrex
-    if not amrex.initialized():
+    _core = _get_core()
+    if not _core.amrex_initialized():
         raise RuntimeError(
             "OpenImpala is not initialized! Please wrap your code in a session block:\n\n"
             "with openimpala.Session():\n"
@@ -128,46 +128,21 @@ def _parse_solver(s):
     return solver_map[key]
 
 
-def _numpy_to_imultifab(
+def _numpy_to_voxelimage(
     data: np.ndarray,
     max_grid_size: int = 32,
 ):
-    """Convert a 3-D int32 NumPy array to an AMReX iMultiFab + supporting objects.
+    """Convert a 3-D int32 NumPy array to a VoxelImage (native C++ ingestion).
 
-    Returns (geom, ba, dm, mf).
+    Returns a VoxelImage handle that encapsulates all AMReX objects.
     """
-    import amrex.space3d as amrex
+    _core = _get_core()
 
     if data.ndim != 3:
         raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
 
     data = np.ascontiguousarray(data, dtype=np.int32)
-    nz, ny, nx = data.shape  # numpy is (z, y, x) order
-
-    # Build AMReX domain
-    domain = amrex.Box(amrex.IntVect(0, 0, 0), amrex.IntVect(nx - 1, ny - 1, nz - 1))
-    real_box = amrex.RealBox(0.0, 0.0, 0.0, float(nx), float(ny), float(nz))
-    geom = amrex.Geometry(domain, real_box, 0, [0, 0, 0])  # non-periodic
-
-    ba = amrex.BoxArray(domain)
-    ba.max_size(max_grid_size)
-    dm = amrex.DistributionMapping(ba)
-
-    mf = amrex.iMultiFab(ba, dm, 1, 1)  # 1 component, 1 ghost cell
-
-    # Fill the iMultiFab from the numpy array
-    for mfi in mf:
-        bx = mfi.validbox()
-        lo = bx.small_end
-        hi = bx.big_end
-        arr = mf.array(mfi)
-        for k in range(lo[2], hi[2] + 1):
-            for j in range(lo[1], hi[1] + 1):
-                for i in range(lo[0], hi[0] + 1):
-                    arr[i, j, k, 0] = int(data[k, j, i])
-
-    mf.fill_boundary(geom.periodicity())
-    return geom, ba, dm, mf
+    return _core.VoxelImage.from_numpy(data, max_grid_size)
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +172,15 @@ def volume_fraction(
     """
     _ensure_initialized()
     _core = _get_core()
-    _, _, _, mf = _numpy_to_imultifab(data, max_grid_size)
-    vf = _core.VolumeFraction(mf, phase, 0)
+
+    if isinstance(data, np.ndarray):
+        img = _numpy_to_voxelimage(data, max_grid_size)
+    elif isinstance(data, _core.VoxelImage):
+        img = data
+    else:
+        raise TypeError("data must be a NumPy array or a VoxelImage")
+
+    vf = _core.VolumeFraction(img, phase, 0)
     pc, tc = vf.value()
     frac = pc / tc if tc > 0 else 0.0
     return VolumeFractionResult(phase_count=pc, total_count=tc, fraction=frac)
@@ -230,8 +212,15 @@ def percolation_check(
     _ensure_initialized()
     _core = _get_core()
     d = _parse_direction(direction)
-    geom, ba, dm, mf = _numpy_to_imultifab(data, max_grid_size)
-    pc = _core.PercolationCheck(geom, ba, dm, mf, phase, d, verbose)
+
+    if isinstance(data, np.ndarray):
+        img = _numpy_to_voxelimage(data, max_grid_size)
+    elif isinstance(data, _core.VoxelImage):
+        img = data
+    else:
+        raise TypeError("data must be a NumPy array or a VoxelImage")
+
+    pc = _core.PercolationCheck(img, phase, d, verbose)
     return PercolationResult(
         percolates=pc.percolates,
         active_volume_fraction=pc.active_volume_fraction,
@@ -277,10 +266,16 @@ def tortuosity(
     _core = _get_core()
     d = _parse_direction(direction)
     st = _parse_solver(solver)
-    geom, ba, dm, mf = _numpy_to_imultifab(data, max_grid_size)
+
+    if isinstance(data, np.ndarray):
+        img = _numpy_to_voxelimage(data, max_grid_size)
+    elif isinstance(data, _core.VoxelImage):
+        img = data
+    else:
+        raise TypeError("data must be a NumPy array or a VoxelImage")
 
     # Percolation check first
-    pc = _core.PercolationCheck(geom, ba, dm, mf, phase, d, verbose)
+    pc = _core.PercolationCheck(img, phase, d, verbose)
     if not pc.percolates:
         raise PercolationError(
             f"Phase {phase} does not percolate in direction "
@@ -288,13 +283,12 @@ def tortuosity(
         )
 
     # Volume fraction
-    vf_calc = _core.VolumeFraction(mf, phase, 0)
+    vf_calc = _core.VolumeFraction(img, phase, 0)
     vf_val = vf_calc.value_vf()
 
     # Solve
     solver_obj = _core.TortuosityHypre(
-        geom, ba, dm, mf,
-        vf_val, phase, d, st, results_path,
+        img, vf_val, phase, d, st, results_path,
         0.0, 1.0, verbose, False,
     )
 
@@ -323,10 +317,10 @@ def read_image(
     raw_width: int = 0,
     raw_height: int = 0,
     raw_depth: int = 0,
-    raw_data_type = None,
+    raw_data_type=None,
     max_grid_size: int = 32,
 ) -> tuple:
-    """Read a 3-D image file and threshold it into an iMultiFab.
+    """Read a 3-D image file and threshold it into a VoxelImage.
 
     Automatically detects format from the file extension unless *file_format*
     is explicitly set.
@@ -344,12 +338,11 @@ def read_image(
 
     Returns
     -------
-    (reader, geom, ba, dm, mf)
-        The reader object and the AMReX infrastructure objects.
+    (reader, VoxelImage)
+        The reader object and the VoxelImage handle.
     """
     _ensure_initialized()
     _core = _get_core()
-    import amrex.space3d as amrex
 
     if raw_data_type is None:
         raw_data_type = _core.RawDataType.UINT8
@@ -380,22 +373,7 @@ def read_image(
     else:
         raise ValueError(f"Unknown file_format '{file_format}'")
 
-    # Build AMReX objects
-    box = reader.box
-    ba = amrex.BoxArray(box)
-    ba.max_size(max_grid_size)
-    dm = amrex.DistributionMapping(ba)
-    mf = amrex.iMultiFab(ba, dm, 1, 1)
+    # Threshold directly into a VoxelImage (all AMReX setup happens in C++)
+    img = reader.threshold(threshold, max_grid_size)
 
-    reader.threshold(threshold, mf)
-
-    # Build Geometry
-    lo = box.small_end
-    hi = box.big_end
-    nx = hi[0] - lo[0] + 1
-    ny = hi[1] - lo[1] + 1
-    nz = hi[2] - lo[2] + 1
-    real_box = amrex.RealBox(0.0, 0.0, 0.0, float(nx), float(ny), float(nz))
-    geom = amrex.Geometry(box, real_box, 0, [0, 0, 0])
-
-    return reader, geom, ba, dm, mf
+    return reader, img

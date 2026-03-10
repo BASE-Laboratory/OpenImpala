@@ -3,7 +3,7 @@
 Two layers are provided:
 
 * **Low-level (power-user) API** — ``openimpala.core``
-  Direct pybind11 wrappers around C++ classes; interoperates with pyAMReX types.
+  Direct pybind11 wrappers around C++ classes; operates via ``VoxelImage`` handles.
 
 * **High-level (general) API** — module-level functions
   NumPy-native helpers that set up AMReX objects automatically.
@@ -21,8 +21,6 @@ Quick-start::
 """
 
 import importlib
-import os
-import sys
 
 from importlib.metadata import version, PackageNotFoundError
 
@@ -43,19 +41,11 @@ from .exceptions import (
 
 
 def _load_core():
-    """Load the _core C extension with the correct dlopen flags.
+    """Load the _core C extension.
 
-    Must be called after amrex.space3d is loaded (e.g. inside a Session).
     Repeated calls are cheap — Python caches the import.
     """
-    old_flags = sys.getdlopenflags()
-    sys.setdlopenflags(os.RTLD_GLOBAL | os.RTLD_NOW)
-    try:
-        import amrex.space3d  # noqa: F401 — load pyAMReX globally first
-        _core = importlib.import_module("openimpala._core")
-    finally:
-        sys.setdlopenflags(old_flags)
-    return _core
+    return importlib.import_module("openimpala._core")
 
 
 def __getattr__(name):
@@ -66,7 +56,7 @@ def __getattr__(name):
     """
     # Symbols that live in the _core C extension
     _CORE_ATTRS = {
-        "core", "_core", "Direction", "CellType", "RawDataType",
+        "core", "_core", "VoxelImage", "Direction", "CellType", "RawDataType",
         "SolverType", "EffDiffSolverType", "PhysicsType",
     }
     # Symbols that live in the facade module
@@ -91,6 +81,7 @@ def __getattr__(name):
 __all__ = [
     "__version__",
     "core",
+    "VoxelImage",
     "Direction",
     "CellType",
     "RawDataType",
