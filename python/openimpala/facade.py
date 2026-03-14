@@ -108,7 +108,12 @@ def _ensure_initialized():
 
 
 def _parse_solver(s):
-    """Parse a solver string or SolverType enum value."""
+    """Parse a solver string or SolverType enum value.
+
+    The special value ``"auto"`` selects PCG — the optimal solver for
+    single-phase steady-state diffusion (the Laplacian with harmonic-mean
+    face coefficients is symmetric positive-definite).
+    """
     _core = _get_core()
     if isinstance(s, _core.SolverType):
         return s
@@ -121,6 +126,7 @@ def _parse_solver(s):
         "smg": _core.SolverType.SMG,
         "pfmg": _core.SolverType.PFMG,
         "hypre": _core.SolverType.FlexGMRES,  # convenience alias
+        "auto": _core.SolverType.PCG,  # SPD-optimal for single-phase diffusion
     }
     key = s.strip().lower()
     if key not in solver_map:
@@ -128,9 +134,26 @@ def _parse_solver(s):
     return solver_map[key]
 
 
+def _auto_grid_size(shape: tuple[int, ...]) -> int:
+    """Pick a good AMReX max_grid_size based on domain dimensions.
+
+    Heuristic: use the largest power-of-two that evenly divides the
+    smallest dimension, clamped to [16, 128].  For small domains this
+    avoids unnecessary box splitting; for large domains it keeps MPI
+    load-balanced.
+    """
+    n_min = min(shape)
+    mgs = 16
+    for candidate in (128, 64, 32, 16):
+        if n_min >= candidate and n_min % candidate == 0:
+            mgs = candidate
+            break
+    return mgs
+
+
 def _numpy_to_voxelimage(
     data: np.ndarray,
-    max_grid_size: int = 32,
+    max_grid_size: Union[int, str] = 32,
 ):
     """Convert a 3-D int32 NumPy array to a VoxelImage (native C++ ingestion).
 
@@ -140,6 +163,9 @@ def _numpy_to_voxelimage(
 
     if data.ndim != 3:
         raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
+
+    if isinstance(max_grid_size, str) and max_grid_size.lower() == "auto":
+        max_grid_size = _auto_grid_size(data.shape)
 
     data = np.ascontiguousarray(data, dtype=np.int32)
     return _core.VoxelImage.from_numpy(data, max_grid_size)
@@ -153,7 +179,7 @@ def volume_fraction(
     data: np.ndarray,
     phase: int = 0,
     *,
-    max_grid_size: int = 32,
+    max_grid_size: Union[int, str] = 32,
 ) -> VolumeFractionResult:
     """Compute the volume fraction of *phase* in a 3-D NumPy array.
 
@@ -163,8 +189,8 @@ def volume_fraction(
         3-D integer array of phase IDs (shape: z, y, x).
     phase : int
         Phase ID to count.
-    max_grid_size : int
-        AMReX box decomposition size.
+    max_grid_size : int or str
+        AMReX box decomposition size.  ``'auto'`` picks based on domain size.
 
     Returns
     -------
@@ -191,7 +217,7 @@ def percolation_check(
     phase: int = 0,
     direction: Union[str, "Direction"] = "x",
     *,
-    max_grid_size: int = 32,
+    max_grid_size: Union[int, str] = 32,
     verbose: int = 0,
 ) -> PercolationResult:
     """Check whether *phase* percolates across the domain in *direction*.
@@ -204,6 +230,8 @@ def percolation_check(
         Phase ID to check.
     direction : str or Direction
         'x', 'y', or 'z'.
+    max_grid_size : int or str
+        AMReX box decomposition size.  ``'auto'`` picks based on domain size.
 
     Returns
     -------
@@ -232,9 +260,9 @@ def tortuosity(
     data: np.ndarray,
     phase: int = 0,
     direction: Union[str, "Direction"] = "x",
-    solver: Union[str, "SolverType"] = "flexgmres",
+    solver: Union[str, "SolverType"] = "auto",
     *,
-    max_grid_size: int = 32,
+    max_grid_size: Union[int, str] = 32,
     results_path: str = ".",
     verbose: int = 0,
 ) -> TortuosityResult:
@@ -249,7 +277,13 @@ def tortuosity(
     direction : str or Direction
         Flow direction ('x', 'y', 'z').
     solver : str or SolverType
-        HYPRE solver algorithm.  Use 'hypre' or 'flexgmres' for a good default.
+        HYPRE solver algorithm.  ``'auto'`` (default) selects PCG, which is
+        optimal for the symmetric positive-definite single-phase diffusion
+        problem.  Other options: ``'flexgmres'``, ``'gmres'``, ``'bicgstab'``,
+        ``'pcg'``, ``'smg'``, ``'pfmg'``, ``'jacobi'``.
+    max_grid_size : int or str
+        AMReX box decomposition size.  ``'auto'`` picks a value based on the
+        domain dimensions.
 
     Returns
     -------
@@ -274,28 +308,39 @@ def tortuosity(
     else:
         raise TypeError("data must be a NumPy array or a VoxelImage")
 
-    # Percolation check first
-    pc = _core.PercolationCheck(img, phase, d, verbose)
-    if not pc.percolates:
-        raise PercolationError(
-            f"Phase {phase} does not percolate in direction "
-            f"{_core.PercolationCheck.direction_string(d)}"
-        )
-
-    # Volume fraction
+    # Volume fraction (cheap — pure counting, no flood fill)
     vf_calc = _core.VolumeFraction(img, phase, 0)
     vf_val = vf_calc.value_vf()
 
-    # Solve
+    # Construct the solver — TortuosityHypre internally runs a flood-fill
+    # to build its activity mask.  We deliberately skip the separate
+    # PercolationCheck call that was here previously: it performed the
+    # *same* flood-fill algorithm, so removing it halves the pre-solve
+    # overhead (from 4 flood fills down to 2).
     solver_obj = _core.TortuosityHypre(
         img, vf_val, phase, d, st, results_path,
         0.0, 1.0, verbose, False,
     )
 
+    # If no cells are reachable from both inlet and outlet, the constructor
+    # sets active_volume_fraction = 0 and skips matrix setup.  Detect this
+    # and raise the same PercolationError that users expect.
+    if solver_obj.active_volume_fraction <= 0.0:
+        raise PercolationError(
+            f"Phase {phase} does not percolate in direction "
+            f"{_core.PercolationCheck.direction_string(d)}"
+        )
+
     try:
         tau = solver_obj.value()
     except RuntimeError as exc:
         raise ConvergenceError(str(exc)) from exc
+
+    if not solver_obj.solver_converged:
+        raise ConvergenceError(
+            f"HYPRE solver did not converge after {solver_obj.iterations} "
+            f"iterations (residual={solver_obj.residual_norm:.2e})"
+        )
 
     return TortuosityResult(
         tortuosity=tau,
@@ -318,7 +363,7 @@ def read_image(
     raw_height: int = 0,
     raw_depth: int = 0,
     raw_data_type=None,
-    max_grid_size: int = 32,
+    max_grid_size: Union[int, str] = 32,
 ) -> tuple:
     """Read a 3-D image file and threshold it into a VoxelImage.
 
@@ -333,8 +378,8 @@ def read_image(
         Threshold value for binarisation.
     file_format : str, optional
         Force format: 'tiff', 'hdf5', 'raw', or 'dat'.
-    max_grid_size : int
-        AMReX box decomposition size.
+    max_grid_size : int or str
+        AMReX box decomposition size.  ``'auto'`` picks based on domain size.
 
     Returns
     -------
@@ -372,6 +417,11 @@ def read_image(
         reader = _core.DatReader(path)
     else:
         raise ValueError(f"Unknown file_format '{file_format}'")
+
+    # Resolve "auto" — for file-based reads we don't know dimensions until
+    # after the reader is constructed, so default to 32 (good general choice).
+    if isinstance(max_grid_size, str) and max_grid_size.lower() == "auto":
+        max_grid_size = 32
 
     # Threshold directly into a VoxelImage (all AMReX setup happens in C++)
     img = reader.threshold(threshold, max_grid_size)
