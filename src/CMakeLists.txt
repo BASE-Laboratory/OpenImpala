@@ -11,6 +11,7 @@ add_library(openimpala_io OBJECT
     io/CathodeWrite.cpp
     io/DatReader.cpp
     io/HDF5Reader.cpp
+    io/ImageLoader.cpp
     io/RawReader.cpp
     io/TiffReader.cpp
 )
@@ -37,8 +38,10 @@ target_include_directories(openimpala_io PUBLIC
 # ==============================================================================
 add_library(openimpala_props OBJECT
     # C++ sources
+    props/DeffTensor.cpp
     props/EffectiveDiffusivityHypre.cpp
     props/PercolationCheck.cpp
+    props/REVStudy.cpp
     props/TortuosityDirect.cpp
     props/TortuosityHypre.cpp
     props/VolumeFraction.cpp
