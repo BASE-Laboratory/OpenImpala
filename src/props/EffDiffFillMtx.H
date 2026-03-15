@@ -11,6 +11,9 @@
 #ifndef OPENIMPALA_EFFDIFF_FILL_MTX_H_
 #define OPENIMPALA_EFFDIFF_FILL_MTX_H_
 
+#include "TortuosityHypreFill.H" // Shared constants: StencilIdx, CELL_ACTIVE/INACTIVE, SMALL_REAL
+
+#include <AMReX_BLassert.H>
 #include <AMReX_REAL.H>
 #include <AMReX_Print.H>
 
@@ -147,6 +150,7 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     if (dir_k == 1) flux_bc_rhs -= D_c / dy;
                 }
 
+#if (AMREX_SPACEDIM == 3)
                 // -Z face
                 if (mask(i, j, k - 1) == CELL_ACTIVE) {
                     amrex::Real D_nbr = dc(i, j, k - 1);
@@ -168,6 +172,7 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     diag_val += D_c * inv_dz2;
                     if (dir_k == 2) flux_bc_rhs -= D_c / dz;
                 }
+#endif
 
                 a_out[stn + STN_C] = diag_val;
 
@@ -177,9 +182,12 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     rhs_div_De = -(dc(i + 1, j, k) - dc(i - 1, j, k)) * inv_2dx;
                 } else if (dir_k == 1) {
                     rhs_div_De = -(dc(i, j + 1, k) - dc(i, j - 1, k)) * inv_2dy;
-                } else if (dir_k == 2) {
+                }
+#if (AMREX_SPACEDIM == 3)
+                else if (dir_k == 2) {
                     rhs_div_De = -(dc(i, j, k + 1) - dc(i, j, k - 1)) * inv_2dz;
                 }
+#endif
 
                 rhs_out[m_idx] = rhs_div_De + flux_bc_rhs;
 
@@ -210,6 +218,8 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
             }
         }
     }
+
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_idx == npts, "effDiffFillMatrix: m_idx != npts.");
 }
 
 } // namespace OpenImpala

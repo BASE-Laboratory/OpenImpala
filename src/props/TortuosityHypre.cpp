@@ -756,10 +756,6 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
         rhs_values.resize(npts);
         initial_guess.resize(npts);
 
-        const amrex::IArrayBox& phase_iab = m_mf_phase[mfi];
-        const int* p_ptr = phase_iab.dataPtr(0);
-        const auto& pbox = phase_iab.box();
-
         const amrex::IArrayBox& mask_iab = m_mf_active_mask[mfi];
         const int* mask_ptr = mask_iab.dataPtr(MaskComp);
         const auto& mask_box = mask_iab.box();
