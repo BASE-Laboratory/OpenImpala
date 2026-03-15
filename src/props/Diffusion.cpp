@@ -18,6 +18,7 @@
 
 #include "DeffTensor.H"
 #include "REVStudy.H"
+#include "SolverConfig.H"
 #include "EffectiveDiffusivityHypre.H"
 #include "TortuosityHypre.H"
 #include "VolumeFraction.H"
@@ -54,28 +55,6 @@
 
 // Anonymous namespace for helpers local to this translation unit
 namespace {
-
-OpenImpala::EffectiveDiffusivityHypre::SolverType
-stringToSolverType(const std::string& solver_str) {
-    std::string s = solver_str;
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
-    if (s == "jacobi")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::Jacobi;
-    if (s == "gmres")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::GMRES;
-    if (s == "flexgmres")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::FlexGMRES;
-    if (s == "pcg")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::PCG;
-    if (s == "bicgstab")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::BiCGSTAB;
-    if (s == "smg")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::SMG;
-    if (s == "pfmg")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::PFMG;
-    amrex::Abort("Invalid solver string: '" + solver_str + "'.");
-    return OpenImpala::EffectiveDiffusivityHypre::SolverType::GMRES;
-}
 
 // ---------------------------------------------------------------------------
 // Dry-run mode: domain summary, volume fractions, and percolation checks.
@@ -385,8 +364,7 @@ void runFlowThrough(const amrex::Geometry& geom, const amrex::BoxArray& ba,
                            << " ---\n";
         }
 
-        auto solver_type_enum = static_cast<OpenImpala::TortuosityHypre::SolverType>(
-            stringToSolverType(solver_str));
+        auto solver_type_enum = OpenImpala::tortuositySolverType(solver_str);
 
         OpenImpala::TortuosityHypre tort_solver(geom_tort, ba, dm, mf_phase, volume_fraction,
                                                 phase_id, dir, solver_type_enum,
@@ -608,7 +586,7 @@ int main(int argc, char* argv[]) {
             rev_config.box_size = main_box_size;
             rev_config.verbose = rev_verbose;
             rev_config.write_plotfiles = (rev_write_plotfiles != 0);
-            rev_config.solver_type = stringToSolverType(rev_solver_str);
+            rev_config.solver_type = OpenImpala::effDiffSolverType(rev_solver_str);
             rev_config.results_path = main_results_path;
             rev_config.csv_filename = rev_results_filename;
 
@@ -624,7 +602,7 @@ int main(int argc, char* argv[]) {
 
             if (main_calc_method == "homogenization") {
                 runHomogenization(img.geom, img.ba, img.dm, img.mf_phase, main_phase_id,
-                                  stringToSolverType(main_solver_str), main_results_path,
+                                  OpenImpala::effDiffSolverType(main_solver_str), main_results_path,
                                   physics_config, main_verbose, (main_write_plotfile != 0));
             } else if (main_calc_method == "flow_through") {
                 runFlowThrough(img.geom, img.ba, img.dm, img.mf_phase, img.domain_box,

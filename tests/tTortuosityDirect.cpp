@@ -16,6 +16,7 @@
 
 #include "TortuosityDirect.H"
 #include "Tortuosity.H"
+#include "SolverConfig.H"
 
 #include <AMReX.H>
 #include <AMReX_ParmParse.H>
@@ -32,21 +33,6 @@
 #include <string>
 #include <cmath>
 #include <limits>
-
-namespace {
-
-OpenImpala::Direction stringToDirection(const std::string& dir_str) {
-    if (dir_str == "x" || dir_str == "X")
-        return OpenImpala::Direction::X;
-    if (dir_str == "y" || dir_str == "Y")
-        return OpenImpala::Direction::Y;
-    if (dir_str == "z" || dir_str == "Z")
-        return OpenImpala::Direction::Z;
-    amrex::Abort("Invalid direction: " + dir_str);
-    return OpenImpala::Direction::X;
-}
-
-} // anonymous namespace
 
 
 int main(int argc, char* argv[]) {
@@ -81,7 +67,7 @@ int main(int argc, char* argv[]) {
             pp.query("resultsdir", resultsdir);
         }
 
-        OpenImpala::Direction direction = stringToDirection(direction_str);
+        OpenImpala::Direction direction = OpenImpala::parseDirection(direction_str);
 
         // Default expected_tau = (N+1)/N for uniform medium with cell-centered ghost BCs
         if (expected_tau < 0.0) {
