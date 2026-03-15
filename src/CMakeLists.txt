@@ -39,6 +39,7 @@ target_include_directories(openimpala_io PUBLIC
 add_library(openimpala_props OBJECT
     props/DeffTensor.cpp
     props/EffectiveDiffusivityHypre.cpp
+    props/HypreStructSolver.cpp
     props/PercolationCheck.cpp
     props/REVStudy.cpp
     props/TortuosityDirect.cpp
