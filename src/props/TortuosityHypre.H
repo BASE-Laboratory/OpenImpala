@@ -37,16 +37,8 @@ namespace OpenImpala {
 class TortuosityHypre : public OpenImpala::Tortuosity {
 
 public:
-    /** @brief Specifies the HYPRE structured solver algorithm to use. */
-    enum class SolverType {
-        Jacobi,    /**< HYPRE_StructJacobi */
-        GMRES,     /**< HYPRE_StructGMRES */
-        FlexGMRES, /**< HYPRE_StructFlexGMRES */
-        PCG,       /**< HYPRE_StructPCG */
-        BiCGSTAB,  /**< HYPRE_StructBiCGSTAB */
-        SMG,       /**< HYPRE_StructSMG */
-        PFMG       /**< HYPRE_StructPFMG */
-    };
+    /** @brief Alias for the shared HYPRE solver type enum (defined in Tortuosity.H). */
+    using SolverType = OpenImpala::SolverType;
 
     /** Construct new Tortuosity solver using HYPRE.
      *

@@ -9,9 +9,7 @@
 #ifndef SOLVER_CONFIG_H
 #define SOLVER_CONFIG_H
 
-#include "EffectiveDiffusivityHypre.H"
 #include "Tortuosity.H"
-#include "TortuosityHypre.H"
 
 #include <AMReX_Print.H>
 
@@ -20,56 +18,44 @@
 
 namespace OpenImpala {
 
-/** @brief Convert a case-insensitive solver name to TortuosityHypre::SolverType.
+/** @brief Convert a case-insensitive solver name to SolverType.
  *  @param solver_str  Solver name (e.g. "FlexGMRES", "pcg", "BiCGSTAB").
  *  @return Corresponding SolverType enum value.
  *  @note Calls amrex::Abort if solver_str is unrecognised.
  */
-inline TortuosityHypre::SolverType tortuositySolverType(const std::string& solver_str) {
+inline SolverType parseSolverType(const std::string& solver_str) {
     std::string s = solver_str;
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
     if (s == "jacobi")
-        return TortuosityHypre::SolverType::Jacobi;
+        return SolverType::Jacobi;
     if (s == "gmres")
-        return TortuosityHypre::SolverType::GMRES;
+        return SolverType::GMRES;
     if (s == "flexgmres")
-        return TortuosityHypre::SolverType::FlexGMRES;
+        return SolverType::FlexGMRES;
     if (s == "pcg")
-        return TortuosityHypre::SolverType::PCG;
+        return SolverType::PCG;
     if (s == "bicgstab")
-        return TortuosityHypre::SolverType::BiCGSTAB;
+        return SolverType::BiCGSTAB;
     if (s == "smg")
-        return TortuosityHypre::SolverType::SMG;
+        return SolverType::SMG;
     if (s == "pfmg")
-        return TortuosityHypre::SolverType::PFMG;
+        return SolverType::PFMG;
     amrex::Abort("Invalid solver string: '" + solver_str + "'.");
-    return TortuosityHypre::SolverType::FlexGMRES;
+    return SolverType::FlexGMRES;
 }
 
-/** @brief Convert a case-insensitive solver name to EffectiveDiffusivityHypre::SolverType.
- *  @param solver_str  Solver name (e.g. "FlexGMRES", "pcg", "BiCGSTAB").
- *  @return Corresponding SolverType enum value.
- *  @note Calls amrex::Abort if solver_str is unrecognised.
+/** @brief Backward-compatible alias for parseSolverType().
+ *  @deprecated Use parseSolverType() instead.
  */
-inline EffectiveDiffusivityHypre::SolverType effDiffSolverType(const std::string& solver_str) {
-    std::string s = solver_str;
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
-    if (s == "jacobi")
-        return EffectiveDiffusivityHypre::SolverType::Jacobi;
-    if (s == "gmres")
-        return EffectiveDiffusivityHypre::SolverType::GMRES;
-    if (s == "flexgmres")
-        return EffectiveDiffusivityHypre::SolverType::FlexGMRES;
-    if (s == "pcg")
-        return EffectiveDiffusivityHypre::SolverType::PCG;
-    if (s == "bicgstab")
-        return EffectiveDiffusivityHypre::SolverType::BiCGSTAB;
-    if (s == "smg")
-        return EffectiveDiffusivityHypre::SolverType::SMG;
-    if (s == "pfmg")
-        return EffectiveDiffusivityHypre::SolverType::PFMG;
-    amrex::Abort("Invalid solver string: '" + solver_str + "'.");
-    return EffectiveDiffusivityHypre::SolverType::FlexGMRES;
+inline SolverType tortuositySolverType(const std::string& solver_str) {
+    return parseSolverType(solver_str);
+}
+
+/** @brief Backward-compatible alias for parseSolverType().
+ *  @deprecated Use parseSolverType() instead.
+ */
+inline SolverType effDiffSolverType(const std::string& solver_str) {
+    return parseSolverType(solver_str);
 }
 
 /** @brief Convert a case-insensitive direction string to Direction enum.

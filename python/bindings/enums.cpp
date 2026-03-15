@@ -5,8 +5,6 @@
 #include <pybind11/pybind11.h>
 
 #include "Tortuosity.H"
-#include "TortuosityHypre.H"
-#include "EffectiveDiffusivityHypre.H"
 #include "RawReader.H"
 #include "PhysicsConfig.H"
 
@@ -51,27 +49,18 @@ void init_enums(py::module_& m) {
         .value("FLOAT64_BE", OpenImpala::RawDataType::FLOAT64_BE);
 
     // --- SolverType (HYPRE structured solvers — shared by Tortuosity and EffDiff) ---
-    py::enum_<OpenImpala::TortuosityHypre::SolverType>(m, "SolverType",
-                                                       "HYPRE structured-grid solver algorithm.")
-        .value("Jacobi", OpenImpala::TortuosityHypre::SolverType::Jacobi)
-        .value("GMRES", OpenImpala::TortuosityHypre::SolverType::GMRES)
-        .value("FlexGMRES", OpenImpala::TortuosityHypre::SolverType::FlexGMRES)
-        .value("PCG", OpenImpala::TortuosityHypre::SolverType::PCG)
-        .value("BiCGSTAB", OpenImpala::TortuosityHypre::SolverType::BiCGSTAB)
-        .value("SMG", OpenImpala::TortuosityHypre::SolverType::SMG)
-        .value("PFMG", OpenImpala::TortuosityHypre::SolverType::PFMG);
+    py::enum_<OpenImpala::SolverType>(m, "SolverType",
+                                      "HYPRE structured-grid solver algorithm.")
+        .value("Jacobi", OpenImpala::SolverType::Jacobi)
+        .value("GMRES", OpenImpala::SolverType::GMRES)
+        .value("FlexGMRES", OpenImpala::SolverType::FlexGMRES)
+        .value("PCG", OpenImpala::SolverType::PCG)
+        .value("BiCGSTAB", OpenImpala::SolverType::BiCGSTAB)
+        .value("SMG", OpenImpala::SolverType::SMG)
+        .value("PFMG", OpenImpala::SolverType::PFMG);
 
-    // --- EffDiffSolverType (separate enum in EffectiveDiffusivityHypre) ---
-    py::enum_<OpenImpala::EffectiveDiffusivityHypre::SolverType>(
-        m, "EffDiffSolverType",
-        "HYPRE solver algorithm for the effective-diffusivity cell problem.")
-        .value("Jacobi", OpenImpala::EffectiveDiffusivityHypre::SolverType::Jacobi)
-        .value("GMRES", OpenImpala::EffectiveDiffusivityHypre::SolverType::GMRES)
-        .value("FlexGMRES", OpenImpala::EffectiveDiffusivityHypre::SolverType::FlexGMRES)
-        .value("PCG", OpenImpala::EffectiveDiffusivityHypre::SolverType::PCG)
-        .value("BiCGSTAB", OpenImpala::EffectiveDiffusivityHypre::SolverType::BiCGSTAB)
-        .value("SMG", OpenImpala::EffectiveDiffusivityHypre::SolverType::SMG)
-        .value("PFMG", OpenImpala::EffectiveDiffusivityHypre::SolverType::PFMG);
+    // --- EffDiffSolverType: backward-compatible alias for SolverType ---
+    m.attr("EffDiffSolverType") = m.attr("SolverType");
 
     // --- PhysicsType ---
     py::enum_<OpenImpala::PhysicsType>(m, "PhysicsType", "Physical quantity being computed.")

@@ -156,7 +156,7 @@ void runDryRunChecks(const amrex::Geometry& geom, const amrex::BoxArray& ba,
 void runHomogenization(const amrex::Geometry& geom, const amrex::BoxArray& ba,
                        const amrex::DistributionMapping& dm, const amrex::iMultiFab& mf_phase,
                        int phase_id,
-                       OpenImpala::EffectiveDiffusivityHypre::SolverType solver_type,
+                       OpenImpala::SolverType solver_type,
                        const std::filesystem::path& results_path,
                        const OpenImpala::PhysicsConfig& physics_config, int verbose,
                        bool write_plotfiles) {
@@ -364,7 +364,7 @@ void runFlowThrough(const amrex::Geometry& geom, const amrex::BoxArray& ba,
                            << " ---\n";
         }
 
-        auto solver_type_enum = OpenImpala::tortuositySolverType(solver_str);
+        auto solver_type_enum = OpenImpala::parseSolverType(solver_str);
 
         OpenImpala::TortuosityHypre tort_solver(geom_tort, ba, dm, mf_phase, volume_fraction,
                                                 phase_id, dir, solver_type_enum,
@@ -586,7 +586,7 @@ int main(int argc, char* argv[]) {
             rev_config.box_size = main_box_size;
             rev_config.verbose = rev_verbose;
             rev_config.write_plotfiles = (rev_write_plotfiles != 0);
-            rev_config.solver_type = OpenImpala::effDiffSolverType(rev_solver_str);
+            rev_config.solver_type = OpenImpala::parseSolverType(rev_solver_str);
             rev_config.results_path = main_results_path;
             rev_config.csv_filename = rev_results_filename;
 
@@ -602,7 +602,7 @@ int main(int argc, char* argv[]) {
 
             if (main_calc_method == "homogenization") {
                 runHomogenization(img.geom, img.ba, img.dm, img.mf_phase, main_phase_id,
-                                  OpenImpala::effDiffSolverType(main_solver_str), main_results_path,
+                                  OpenImpala::parseSolverType(main_solver_str), main_results_path,
                                   physics_config, main_verbose, (main_write_plotfile != 0));
             } else if (main_calc_method == "flow_through") {
                 runFlowThrough(img.geom, img.ba, img.dm, img.mf_phase, img.domain_box,

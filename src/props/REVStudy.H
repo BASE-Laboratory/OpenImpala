@@ -31,8 +31,7 @@ struct REVConfig {
     int box_size = 32;                  ///< Max AMReX box size
     int verbose = 1;                    ///< Verbosity level
     bool write_plotfiles = false;       ///< Write plotfiles for each chi_k solve
-    EffectiveDiffusivityHypre::SolverType solver_type =
-        EffectiveDiffusivityHypre::SolverType::FlexGMRES;
+    SolverType solver_type = SolverType::FlexGMRES;
     std::filesystem::path results_path; ///< Directory for output files
     std::string csv_filename = "rev_study_Deff.csv"; ///< CSV output filename
 };

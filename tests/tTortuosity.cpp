@@ -160,7 +160,7 @@ int main(int argc, char* argv[]) {
         }
 
         OpenImpala::Direction direction = OpenImpala::parseDirection(direction_str);
-        OpenImpala::TortuosityHypre::SolverType solver_type = OpenImpala::tortuositySolverType(solver_str);
+        OpenImpala::SolverType solver_type = OpenImpala::parseSolverType(solver_str);
 
         // Print configuration (Keep as before)
         if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
