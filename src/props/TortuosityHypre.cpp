@@ -79,28 +79,10 @@ constexpr int istn_pz = 6;
 // Helper Functions and Class Implementation
 namespace OpenImpala {
 
-// loV and hiV helpers remain the same...
-amrex::Array<HYPRE_Int, AMREX_SPACEDIM> TortuosityHypre::loV(const amrex::Box& b) {
-    const int* lo_ptr = b.loVect();
-    amrex::Array<HYPRE_Int, AMREX_SPACEDIM> hypre_lo;
-    for (int i = 0; i < AMREX_SPACEDIM; ++i)
-        hypre_lo[i] = static_cast<HYPRE_Int>(lo_ptr[i]);
-    return hypre_lo;
-}
-amrex::Array<HYPRE_Int, AMREX_SPACEDIM> TortuosityHypre::hiV(const amrex::Box& b) {
-    const int* hi_ptr = b.hiVect();
-    amrex::Array<HYPRE_Int, AMREX_SPACEDIM> hypre_hi;
-    for (int i = 0; i < AMREX_SPACEDIM; ++i)
-        hypre_hi[i] = static_cast<HYPRE_Int>(hi_ptr[i]);
-    return hypre_hi;
-}
+// loV/hiV are now inline delegates to HypreStructSolver::loV/hiV (defined in header).
 
 
 // --- Constructor ---
-// NOTE: Assumes TortuosityHypre.H has been modified to include:
-// private:
-//     amrex::Real m_active_vf = 0.0; // Volume fraction of the percolating phase
-//
 OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const amrex::BoxArray& ba,
                                              const amrex::DistributionMapping& dm,
                                              const amrex::iMultiFab& mf_phase_input,
@@ -109,15 +91,12 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
                                              const SolverType st, const std::string& resultspath,
                                              const amrex::Real vlo, const amrex::Real vhi,
                                              int verbose, bool write_plotfile)
-    : m_geom(geom), m_ba(ba), m_dm(dm),
+    : HypreStructSolver(geom, ba, dm, st, 1e-9, 200, verbose),
       m_mf_phase(ba, dm, mf_phase_input.nComp(), mf_phase_input.nGrow()), m_phase(phase),
-      m_vf(vf), // Store original total VF
-      m_dir(dir), m_solvertype(st), m_vlo(vlo), m_vhi(vhi), m_resultspath(resultspath),
-      m_verbose(verbose), m_write_plotfile(write_plotfile), m_mf_phi(ba, dm, numComponentsPhi, 1),
+      m_vf(vf), m_dir(dir), m_vlo(vlo), m_vhi(vhi), m_resultspath(resultspath),
+      m_write_plotfile(write_plotfile), m_mf_phi(ba, dm, numComponentsPhi, 1),
       m_mf_active_mask(ba, dm, 1, 1), m_mf_diff_coeff(ba, dm, 1, 1), m_active_vf(0.0),
-      m_first_call(true), m_value(std::numeric_limits<amrex::Real>::quiet_NaN()), m_grid(nullptr),
-      m_stencil(nullptr), m_A(nullptr), m_b(nullptr), m_x(nullptr), m_num_iterations(-1),
-      m_final_res_norm(std::numeric_limits<amrex::Real>::quiet_NaN()), m_converged(false),
+      m_first_call(true), m_value(std::numeric_limits<amrex::Real>::quiet_NaN()),
       m_flux_in(0.0), m_flux_out(0.0) {
     // Ensure HYPRE is initialised exactly once (thread-safe via std::call_once).
     // C++ tests call HYPRE_Init() in main(), but Python bindings have no main().
@@ -263,11 +242,11 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
 
     // Setup HYPRE structures only if there's an active phase
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
-        amrex::Print() << "TortuosityHypre: Running setupGrids..." << std::endl;
-    setupGrids();
+        amrex::Print() << "TortuosityHypre: Running setupGrid..." << std::endl;
+    setupGrid(false); // Non-periodic (Dirichlet BCs)
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "TortuosityHypre: Running setupStencil..." << std::endl;
-    setupStencil();
+    HypreStructSolver::setupStencil();
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "TortuosityHypre: Running setupMatrixEquation..." << std::endl;
     setupMatrixEquation();
@@ -277,90 +256,10 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
     }
 }
 
-// --- Destructor ---
-// Remains the same...
-OpenImpala::TortuosityHypre::~TortuosityHypre() {
-    // Guard HYPRE cleanup: these functions use MPI internally, so they must
-    // not be called after MPI_Finalize (e.g. during Python interpreter
-    // shutdown when AMReX has already been finalised).
-    int mpi_finalized = 0;
-    MPI_Finalized(&mpi_finalized);
-    if (!mpi_finalized) {
-        if (m_x)
-            HYPRE_StructVectorDestroy(m_x);
-        if (m_b)
-            HYPRE_StructVectorDestroy(m_b);
-        if (m_A)
-            HYPRE_StructMatrixDestroy(m_A);
-        if (m_stencil)
-            HYPRE_StructStencilDestroy(m_stencil);
-        if (m_grid)
-            HYPRE_StructGridDestroy(m_grid);
-    }
-    m_x = m_b = nullptr;
-    m_A = nullptr;
-    m_stencil = nullptr;
-    m_grid = nullptr;
-}
+// Destructor is defaulted — HypreStructSolver base class handles HYPRE cleanup.
 
 
-// --- setupGrids ---
-// Remains the same...
-void OpenImpala::TortuosityHypre::setupGrids() {
-    HYPRE_Int ierr = 0;
-    ierr = HYPRE_StructGridCreate(MPI_COMM_WORLD, AMREX_SPACEDIM, &m_grid);
-    HYPRE_CHECK(ierr);
-    for (int i = 0; i < m_ba.size(); ++i) {
-        if (m_dm[i] == amrex::ParallelDescriptor::MyProc()) { // Process only local boxes
-            amrex::Box bx = m_ba[i];
-            auto lo = OpenImpala::TortuosityHypre::loV(bx);
-            auto hi = OpenImpala::TortuosityHypre::hiV(bx);
-            if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor()) {
-                amrex::Print() << "  setupGrids: Rank " << amrex::ParallelDescriptor::MyProc()
-                               << " adding box " << bx << std::endl;
-            }
-            ierr = HYPRE_StructGridSetExtents(m_grid, lo.data(), hi.data());
-            HYPRE_CHECK(ierr);
-        }
-    }
-    if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupGrids: Calling Assemble..." << std::endl;
-    }
-    ierr = HYPRE_StructGridAssemble(m_grid);
-    HYPRE_CHECK(ierr);
-    if (!m_grid) {
-        amrex::Abort("FATAL: m_grid handle is NULL after HYPRE_StructGridAssemble!");
-    }
-    if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupGrids: Assemble complete." << std::endl;
-    }
-}
-
-// --- setupStencil ---
-// Remains the same...
-void OpenImpala::TortuosityHypre::setupStencil() {
-    HYPRE_Int ierr = 0;
-    HYPRE_Int offsets[stencil_size][AMREX_SPACEDIM] = {{0, 0, 0}, {-1, 0, 0}, {1, 0, 0}, {0, -1, 0},
-                                                       {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
-    if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupStencil: Creating..." << std::endl;
-    }
-    ierr = HYPRE_StructStencilCreate(AMREX_SPACEDIM, stencil_size, &m_stencil);
-    HYPRE_CHECK(ierr);
-    for (int i = 0; i < stencil_size; i++) {
-        if (m_verbose > 3 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "    Setting stencil element " << i << std::endl;
-        }
-        ierr = HYPRE_StructStencilSetElement(m_stencil, i, offsets[i]);
-        HYPRE_CHECK(ierr);
-    }
-    if (!m_stencil) {
-        amrex::Abort("FATAL: m_stencil handle is NULL after HYPRE_StructStencilCreate/SetElement!");
-    }
-    if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupStencil: Complete." << std::endl;
-    }
-}
+// setupGrid() and setupStencil() are now provided by HypreStructSolver base class.
 
 // --- preconditionPhaseFab ---
 // Remains the same...
@@ -697,25 +596,8 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
     BL_PROFILE("TortuosityHypre::setupMatrixEquation");
     HYPRE_Int ierr = 0;
 
-    if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupMatrixEq: Creating HYPRE Matrix/Vectors..." << std::endl;
-    }
-    ierr = HYPRE_StructMatrixCreate(MPI_COMM_WORLD, m_grid, m_stencil, &m_A);
-    HYPRE_CHECK(ierr);
-    ierr = HYPRE_StructMatrixInitialize(m_A);
-    HYPRE_CHECK(ierr);
-    ierr = HYPRE_StructVectorCreate(MPI_COMM_WORLD, m_grid, &m_b);
-    HYPRE_CHECK(ierr);
-    ierr = HYPRE_StructVectorInitialize(m_b);
-    HYPRE_CHECK(ierr);
-    ierr = HYPRE_StructVectorSetConstantValues(m_b, 0.0);
-    HYPRE_CHECK(ierr);
-    ierr = HYPRE_StructVectorCreate(MPI_COMM_WORLD, m_grid, &m_x);
-    HYPRE_CHECK(ierr);
-    ierr = HYPRE_StructVectorInitialize(m_x);
-    HYPRE_CHECK(ierr);
-    ierr = HYPRE_StructVectorSetConstantValues(m_x, 0.0);
-    HYPRE_CHECK(ierr);
+    // Create HYPRE matrix and vectors via base class
+    createMatrixAndVectors();
 
     const amrex::Box& domain = m_geom.Domain();
     int stencil_indices[stencil_size] = {istn_c,  istn_mx, istn_px, istn_my,
@@ -802,151 +684,17 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
         amrex::Print() << "  setupMatrixEq: Finished MFIter loop." << std::endl;
     }
 
-    if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupMatrixEq: Assembling HYPRE Matrix/Vectors..." << std::endl;
-    }
-    ierr = HYPRE_StructMatrixAssemble(m_A);
-    HYPRE_CHECK(ierr);
-    ierr = HYPRE_StructVectorAssemble(m_b);
-    HYPRE_CHECK(ierr);
-    ierr = HYPRE_StructVectorAssemble(m_x);
-    HYPRE_CHECK(ierr);
-    if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupMatrixEq: Assembly complete." << std::endl;
-    }
+    // Assemble via base class
+    assembleSystem();
 }
 
 
 // --- solve ---
-// Remains the same...
 bool OpenImpala::TortuosityHypre::solve() {
     BL_PROFILE("TortuosityHypre::solve");
-    HYPRE_Int ierr = 0;
-    HYPRE_StructSolver solver;
-    HYPRE_StructSolver precond = nullptr;
-    m_num_iterations = -1;
-    m_final_res_norm = std::numeric_limits<amrex::Real>::quiet_NaN();
-    m_converged = false;
 
-    // --- Solver setup logic ---
-    if (m_solvertype == SolverType::FlexGMRES) {
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
-            amrex::Print() << "  Setting up HYPRE FlexGMRES Solver with SMG Preconditioner..."
-                           << std::endl;
-        ierr = HYPRE_StructFlexGMRESCreate(MPI_COMM_WORLD, &solver);
-        HYPRE_CHECK(ierr);
-        HYPRE_StructFlexGMRESSetTol(solver, m_eps);
-        HYPRE_StructFlexGMRESSetMaxIter(solver, m_maxiter);
-        HYPRE_StructFlexGMRESSetPrintLevel(solver, m_verbose > 1 ? 3 : 0);
-        precond = nullptr;
-        ierr = HYPRE_StructSMGCreate(MPI_COMM_WORLD, &precond);
-        HYPRE_CHECK(ierr);
-        HYPRE_StructSMGSetTol(precond, 0.0);
-        HYPRE_StructSMGSetMaxIter(precond, 1);
-        HYPRE_StructSMGSetNumPreRelax(precond, 1);
-        HYPRE_StructSMGSetNumPostRelax(precond, 1);
-        HYPRE_StructSMGSetPrintLevel(precond, 0);
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "    SMG Preconditioner created." << std::endl;
-        }
-        HYPRE_StructFlexGMRESSetPrecond(solver, HYPRE_StructSMGSolve, HYPRE_StructSMGSetup,
-                                        precond);
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "    FlexGMRES Preconditioner set." << std::endl;
-        }
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "  Running HYPRE_StructFlexGMRESSetup..." << std::endl;
-        }
-        ierr = HYPRE_StructFlexGMRESSetup(solver, m_A, m_b, m_x);
-        HYPRE_CHECK(ierr);
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "  Running HYPRE_StructFlexGMRESSolve..." << std::endl;
-        }
-        ierr = HYPRE_StructFlexGMRESSolve(solver, m_A, m_b, m_x);
-        if (ierr != 0 && ierr != HYPRE_ERROR_CONV) {
-            HYPRE_CHECK(ierr);
-        }
-        HYPRE_StructFlexGMRESGetNumIterations(solver, &m_num_iterations);
-        HYPRE_StructFlexGMRESGetFinalRelativeResidualNorm(solver, &m_final_res_norm);
-        m_converged = !(std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm));
-        m_converged = m_converged && (m_final_res_norm >= 0.0) && (m_final_res_norm <= m_eps);
-        if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
-            amrex::Warning("HYPRE FlexGMRES solver did not converge within tolerance!");
-        } else if (ierr != 0 && m_verbose >= 0) {
-            amrex::Warning("HYPRE FlexGMRES solver returned error code: " + std::to_string(ierr));
-        }
-        HYPRE_StructFlexGMRESDestroy(solver);
-        if (precond)
-            HYPRE_StructSMGDestroy(precond);
-    }
-    else if (m_solvertype == SolverType::PCG) {
-        // PCG is the optimal Krylov method for SPD systems.  The single-phase
-        // diffusion Laplacian with harmonic-mean face coefficients is SPD, so
-        // PCG typically converges in fewer iterations than FlexGMRES.
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
-            amrex::Print() << "  Setting up HYPRE PCG Solver with SMG Preconditioner..."
-                           << std::endl;
-        ierr = HYPRE_StructPCGCreate(MPI_COMM_WORLD, &solver);
-        HYPRE_CHECK(ierr);
-        HYPRE_StructPCGSetTol(solver, m_eps);
-        HYPRE_StructPCGSetMaxIter(solver, m_maxiter);
-        HYPRE_StructPCGSetPrintLevel(solver, m_verbose > 1 ? 2 : 0);
-        HYPRE_StructPCGSetTwoNorm(solver, 1);
-        precond = nullptr;
-        ierr = HYPRE_StructSMGCreate(MPI_COMM_WORLD, &precond);
-        HYPRE_CHECK(ierr);
-        HYPRE_StructSMGSetTol(precond, 0.0);
-        HYPRE_StructSMGSetMaxIter(precond, 1);
-        HYPRE_StructSMGSetNumPreRelax(precond, 1);
-        HYPRE_StructSMGSetNumPostRelax(precond, 1);
-        HYPRE_StructSMGSetPrintLevel(precond, 0);
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "    SMG Preconditioner created." << std::endl;
-        }
-        HYPRE_StructPCGSetPrecond(solver, HYPRE_StructSMGSolve, HYPRE_StructSMGSetup, precond);
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "  Running HYPRE_StructPCGSetup..." << std::endl;
-        }
-        ierr = HYPRE_StructPCGSetup(solver, m_A, m_b, m_x);
-        HYPRE_CHECK(ierr);
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "  Running HYPRE_StructPCGSolve..." << std::endl;
-        }
-        ierr = HYPRE_StructPCGSolve(solver, m_A, m_b, m_x);
-        if (ierr != 0 && ierr != HYPRE_ERROR_CONV) {
-            HYPRE_CHECK(ierr);
-        }
-        HYPRE_StructPCGGetNumIterations(solver, &m_num_iterations);
-        HYPRE_StructPCGGetFinalRelativeResidualNorm(solver, &m_final_res_norm);
-        m_converged = !(std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm));
-        m_converged = m_converged && (m_final_res_norm >= 0.0) && (m_final_res_norm <= m_eps);
-        if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
-            amrex::Warning("HYPRE PCG solver did not converge within tolerance!");
-        } else if (ierr != 0 && m_verbose >= 0) {
-            amrex::Warning("HYPRE PCG solver returned error code: " + std::to_string(ierr));
-        }
-        HYPRE_StructPCGDestroy(solver);
-        if (precond)
-            HYPRE_StructSMGDestroy(precond);
-    }
-    // --- Add other solver cases if needed ---
-    else {
-        amrex::Abort("Unsupported solver type requested in TortuosityHypre::solve: " +
-                     std::to_string(static_cast<int>(m_solvertype)));
-    }
-
-    // --- Post-solve checks and plotfile writing ---
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  HYPRE Solver iterations: " << m_num_iterations << std::endl;
-        amrex::Print() << "  HYPRE Final Relative Residual Norm: " << std::scientific
-                       << m_final_res_norm << std::defaultfloat << std::endl;
-        amrex::Print() << "  Solver Converged Status: " << (m_converged ? "Yes" : "No")
-                       << std::endl;
-    }
-    if (std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm)) {
-        amrex::Warning("HYPRE solve resulted in NaN or Inf residual norm!");
-        m_converged = false;
-    }
+    // Delegate solver dispatch to base class (SMG preconditioner for Dirichlet problems)
+    runSolver(PrecondType::SMG);
     // Plotfile writing remains the same...
     if (m_write_plotfile && m_converged) {
         if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {

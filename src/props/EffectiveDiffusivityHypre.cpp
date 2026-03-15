@@ -91,34 +91,17 @@ long ManualSumActiveCells(const amrex::iMultiFab& imf, int component, int active
 
 namespace OpenImpala {
 
-amrex::Array<HYPRE_Int, AMREX_SPACEDIM> EffectiveDiffusivityHypre::loV(const amrex::Box& b) {
-    const int* lo_ptr = b.loVect();
-    amrex::Array<HYPRE_Int, AMREX_SPACEDIM> hypre_lo;
-    for (int i = 0; i < AMREX_SPACEDIM; ++i)
-        hypre_lo[i] = static_cast<HYPRE_Int>(lo_ptr[i]);
-    return hypre_lo;
-}
-amrex::Array<HYPRE_Int, AMREX_SPACEDIM> EffectiveDiffusivityHypre::hiV(const amrex::Box& b) {
-    const int* hi_ptr = b.hiVect();
-    amrex::Array<HYPRE_Int, AMREX_SPACEDIM> hypre_hi;
-    for (int i = 0; i < AMREX_SPACEDIM; ++i)
-        hypre_hi[i] = static_cast<HYPRE_Int>(hi_ptr[i]);
-    return hypre_hi;
-}
-
 EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
     const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm,
     const amrex::iMultiFab& mf_phase_input, const int phase_id_arg,
     const OpenImpala::Direction dir_of_chi_k, const SolverType solver_type,
     const std::string& resultspath, int verbose_level, bool write_plotfile_flag)
-    : m_geom(geom), m_ba(ba), m_dm(dm),
+    : HypreStructSolver(geom, ba, dm, solver_type, 1e-9, 1000, verbose_level),
       m_mf_phase_original(ba, dm, mf_phase_input.nComp(), mf_phase_input.nGrow()),
-      m_phase_id(phase_id_arg), m_dir_solve(dir_of_chi_k), m_solvertype(solver_type), m_eps(1e-9),
-      m_maxiter(1000), m_resultspath(resultspath), m_verbose(verbose_level),
+      m_phase_id(phase_id_arg), m_dir_solve(dir_of_chi_k),
+      m_resultspath(resultspath),
       m_write_plotfile(write_plotfile_flag), m_mf_chi(ba, dm, numComponentsChi, 1),
-      m_mf_active_mask(ba, dm, 1, 1), m_mf_diff_coeff(ba, dm, 1, 1), m_grid(nullptr),
-      m_stencil(nullptr), m_A(nullptr), m_b(nullptr), m_x(nullptr), m_num_iterations(-1),
-      m_final_res_norm(std::numeric_limits<amrex::Real>::quiet_NaN()), m_converged(false) {
+      m_mf_active_mask(ba, dm, 1, 1), m_mf_diff_coeff(ba, dm, 1, 1) {
     // Ensure HYPRE is initialised exactly once (thread-safe via std::call_once).
     static std::once_flag hypre_once;
     std::call_once(hypre_once, []() { HYPRE_Init(); });
@@ -238,8 +221,8 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "EffectiveDiffusivityHypre: Setting up HYPRE structures..." << std::endl;
     }
-    setupGrids();
-    setupStencil();
+    setupGrid(true); // Periodic BCs for the cell problem
+    HypreStructSolver::setupStencil();
     setupMatrixEquation();
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
@@ -247,29 +230,7 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
     }
 }
 
-EffectiveDiffusivityHypre::~EffectiveDiffusivityHypre() {
-    // Guard HYPRE cleanup: these functions use MPI internally, so they must
-    // not be called after MPI_Finalize (e.g. during Python interpreter
-    // shutdown when AMReX has already been finalised).
-    int mpi_finalized = 0;
-    MPI_Finalized(&mpi_finalized);
-    if (!mpi_finalized) {
-        if (m_x)
-            HYPRE_StructVectorDestroy(m_x);
-        if (m_b)
-            HYPRE_StructVectorDestroy(m_b);
-        if (m_A)
-            HYPRE_StructMatrixDestroy(m_A);
-        if (m_stencil)
-            HYPRE_StructStencilDestroy(m_stencil);
-        if (m_grid)
-            HYPRE_StructGridDestroy(m_grid);
-    }
-    m_x = m_b = nullptr;
-    m_A = nullptr;
-    m_stencil = nullptr;
-    m_grid = nullptr;
-}
+// Destructor is defaulted in the header — base class handles HYPRE cleanup.
 
 void EffectiveDiffusivityHypre::generateActiveMask() {
     BL_PROFILE("EffectiveDiffusivityHypre::generateActiveMask");
@@ -406,113 +367,8 @@ void EffectiveDiffusivityHypre::generateActiveMask() {
     }
 }
 
-// ... (setupGrids, setupStencil, setupMatrixEquation are unchanged from your last correct version)
-void EffectiveDiffusivityHypre::setupGrids() {
-    BL_PROFILE("EffectiveDiffusivityHypre::setupGrids");
-    HYPRE_Int ierr = 0;
-    ierr = HYPRE_StructGridCreate(MPI_COMM_WORLD, AMREX_SPACEDIM, &m_grid);
-    HYPRE_CHECK(ierr);
+// setupGrids() and setupStencil() are now provided by the HypreStructSolver base class.
 
-    bool any_dim_periodic = false;
-    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-        if (m_geom.isPeriodic(d)) {
-            any_dim_periodic = true;
-            break;
-        }
-    }
-
-    if (any_dim_periodic) {
-        const amrex::Box& domain_geom_box = m_geom.Domain();
-        HYPRE_Int periodic_hyp[AMREX_SPACEDIM];
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-            if (m_geom.isPeriodic(d)) {
-                periodic_hyp[d] = static_cast<HYPRE_Int>(domain_geom_box.length(d));
-                if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-                    amrex::Print() << "  setupGrids: Dim " << d << " is periodic with length "
-                                   << periodic_hyp[d] << std::endl;
-                }
-            } else {
-                periodic_hyp[d] = 0;
-                if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-                    amrex::Print() << "  setupGrids: Dim " << d
-                                   << " is NOT periodic (in AMReX geom)." << std::endl;
-                }
-            }
-        }
-        for (int i_ba = 0; i_ba < m_ba.size(); ++i_ba) {
-            if (m_dm[i_ba] == amrex::ParallelDescriptor::MyProc()) {
-                amrex::Box bx = m_ba[i_ba];
-                auto lo = EffectiveDiffusivityHypre::loV(bx);
-                auto hi = EffectiveDiffusivityHypre::hiV(bx);
-                if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor()) {
-                    amrex::Print() << "  setupGrids: Rank " << amrex::ParallelDescriptor::MyProc()
-                                   << " adding box " << bx << std::endl;
-                }
-                ierr = HYPRE_StructGridSetExtents(m_grid, lo.data(), hi.data());
-                HYPRE_CHECK(ierr);
-            }
-        }
-        ierr = HYPRE_StructGridSetPeriodic(m_grid, periodic_hyp);
-        HYPRE_CHECK(ierr);
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "  setupGrids: HYPRE_StructGridSetPeriodic called." << std::endl;
-        }
-    } else {
-        for (int i_ba = 0; i_ba < m_ba.size(); ++i_ba) {
-            if (m_dm[i_ba] == amrex::ParallelDescriptor::MyProc()) {
-                amrex::Box bx = m_ba[i_ba];
-                auto lo = EffectiveDiffusivityHypre::loV(bx);
-                auto hi = EffectiveDiffusivityHypre::hiV(bx);
-                if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor()) {
-                    amrex::Print()
-                        << "  setupGrids (Non-Periodic AMReX Geom): Rank "
-                        << amrex::ParallelDescriptor::MyProc() << " adding box " << bx << std::endl;
-                }
-                ierr = HYPRE_StructGridSetExtents(m_grid, lo.data(), hi.data());
-                HYPRE_CHECK(ierr);
-            }
-        }
-        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "  setupGrids: SKIPPING HYPRE_StructGridSetPeriodic (AMReX geom is "
-                              "non-periodic)."
-                           << std::endl;
-        }
-    }
-
-    if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupGrids: Calling HYPRE_StructGridAssemble..." << std::endl;
-    }
-    ierr = HYPRE_StructGridAssemble(m_grid);
-    HYPRE_CHECK(ierr);
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_grid != nullptr,
-                                     "m_grid is NULL after HYPRE_StructGridAssemble!");
-
-    if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupGrids: Assemble complete." << std::endl;
-    }
-}
-
-void EffectiveDiffusivityHypre::setupStencil() {
-    BL_PROFILE("EffectiveDiffusivityHypre::setupStencil");
-    HYPRE_Int ierr = 0;
-    HYPRE_Int offsets[stencil_size][AMREX_SPACEDIM] = {{0, 0, 0}, {-1, 0, 0}, {1, 0, 0}, {0, -1, 0},
-                                                       {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
-    if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupStencil: Creating " << stencil_size << "-point stencil..."
-                       << std::endl;
-    }
-    ierr = HYPRE_StructStencilCreate(AMREX_SPACEDIM, stencil_size, &m_stencil);
-    HYPRE_CHECK(ierr);
-    for (int i_stn = 0; i_stn < stencil_size; ++i_stn) {
-        ierr = HYPRE_StructStencilSetElement(m_stencil, i_stn, offsets[i_stn]);
-        HYPRE_CHECK(ierr);
-    }
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_stencil != nullptr, "m_stencil is NULL after HYPRE_StructStencilCreate/SetElement!");
-    if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupStencil: Complete." << std::endl;
-    }
-}
 
 void EffectiveDiffusivityHypre::setupMatrixEquation() {
     BL_PROFILE("EffectiveDiffusivityHypre::setupMatrixEquation");
@@ -522,40 +378,9 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
         amrex::Print() << "  setupMatrixEquation: Creating HYPRE Matrix and Vectors..."
                        << std::endl;
     }
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_grid != nullptr, "m_grid is NULL in setupMatrixEquation. Call setupGrids first.");
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_stencil != nullptr, "m_stencil is NULL in setupMatrixEquation. Call setupStencil first.");
 
-    ierr = HYPRE_StructMatrixCreate(MPI_COMM_WORLD, m_grid, m_stencil, &m_A);
-    HYPRE_CHECK(ierr);
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor())
-        amrex::Print() << "    HYPRE_StructMatrixCreate: OK" << std::endl;
-
-    ierr = HYPRE_StructMatrixInitialize(m_A);
-    HYPRE_CHECK(ierr);
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor())
-        amrex::Print() << "    HYPRE_StructMatrixInitialize: OK" << std::endl;
-
-    ierr = HYPRE_StructVectorCreate(MPI_COMM_WORLD, m_grid, &m_b);
-    HYPRE_CHECK(ierr);
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor())
-        amrex::Print() << "    HYPRE_StructVectorCreate (b): OK" << std::endl;
-
-    ierr = HYPRE_StructVectorInitialize(m_b);
-    HYPRE_CHECK(ierr);
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor())
-        amrex::Print() << "    HYPRE_StructVectorInitialize (b): OK" << std::endl;
-
-    ierr = HYPRE_StructVectorCreate(MPI_COMM_WORLD, m_grid, &m_x);
-    HYPRE_CHECK(ierr);
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor())
-        amrex::Print() << "    HYPRE_StructVectorCreate (x): OK" << std::endl;
-
-    ierr = HYPRE_StructVectorInitialize(m_x);
-    HYPRE_CHECK(ierr);
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor())
-        amrex::Print() << "    HYPRE_StructVectorInitialize (x): OK" << std::endl;
+    // Create and initialize HYPRE matrix and vectors via base class
+    createMatrixAndVectors();
 
     const amrex::Box& domain_for_kernel = m_geom.Domain();
     int stencil_indices_hypre[stencil_size];
@@ -637,31 +462,11 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
         HYPRE_CHECK(ierr);
     }
 
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupMatrixEquation: Attempting HYPRE_StructMatrixAssemble(m_A)..."
-                       << std::endl;
-    }
-    ierr = HYPRE_StructMatrixAssemble(m_A);
-    HYPRE_CHECK(ierr);
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "    HYPRE_StructMatrixAssemble(m_A): OK" << std::endl;
-    }
+    // Assemble via base class
+    assembleSystem();
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupMatrixEquation: Attempting Vector Assembles..." << std::endl;
-    }
-    ierr = HYPRE_StructVectorAssemble(m_b);
-    HYPRE_CHECK(ierr);
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor())
-        amrex::Print() << "    HYPRE_StructVectorAssemble(m_b): OK" << std::endl;
-    ierr = HYPRE_StructVectorAssemble(m_x);
-    HYPRE_CHECK(ierr);
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor())
-        amrex::Print() << "    HYPRE_StructVectorAssemble(m_x): OK" << std::endl;
-
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  setupMatrixEquation: Setup complete (All Assembles Done)."
-                       << std::endl;
+        amrex::Print() << "  setupMatrixEquation: Setup complete." << std::endl;
     }
 }
 
@@ -697,84 +502,8 @@ bool EffectiveDiffusivityHypre::solve() {
         return m_converged;
     }
 
-    HYPRE_Int ierr = 0;
-    HYPRE_StructSolver solver_hypre;
-    HYPRE_StructSolver precond = nullptr;
-
-    m_num_iterations = -1;
-    m_final_res_norm = std::numeric_limits<amrex::Real>::quiet_NaN();
-    m_converged = false;
-
-    if (m_solvertype == SolverType::FlexGMRES) {
-        if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print()
-                << "  solve: Setting up HYPRE FlexGMRES Solver with PFMG Preconditioner..."
-                << std::endl;
-        }
-        ierr = HYPRE_StructFlexGMRESCreate(MPI_COMM_WORLD, &solver_hypre);
-        HYPRE_CHECK(ierr);
-        HYPRE_StructFlexGMRESSetTol(solver_hypre, m_eps);
-        HYPRE_StructFlexGMRESSetMaxIter(solver_hypre, m_maxiter);
-        HYPRE_StructFlexGMRESSetPrintLevel(solver_hypre, (m_verbose > 2) ? 3 : 0);
-
-        ierr = HYPRE_StructPFMGCreate(MPI_COMM_WORLD, &precond);
-        HYPRE_CHECK(ierr);
-        HYPRE_StructPFMGSetTol(precond, 0.0);
-        HYPRE_StructPFMGSetMaxIter(precond, 1);
-        HYPRE_StructPFMGSetNumPreRelax(precond, 1);
-        HYPRE_StructPFMGSetNumPostRelax(precond, 1);
-        HYPRE_StructPFMGSetPrintLevel(precond, (m_verbose > 3) ? 1 : 0);
-        HYPRE_StructFlexGMRESSetPrecond(solver_hypre, HYPRE_StructPFMGSolve, HYPRE_StructPFMGSetup,
-                                        precond);
-
-        if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "  solve: Running HYPRE_StructFlexGMRESSetup (with PFMG precond)..."
-                           << std::endl;
-        }
-        ierr = HYPRE_StructFlexGMRESSetup(solver_hypre, m_A, m_b, m_x);
-        HYPRE_CHECK(ierr);
-
-        if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "  solve: Running HYPRE_StructFlexGMRESSolve..." << std::endl;
-        }
-        ierr = HYPRE_StructFlexGMRESSolve(solver_hypre, m_A, m_b, m_x);
-        if (ierr != 0 && ierr != HYPRE_ERROR_CONV) {
-            HYPRE_CHECK(ierr);
-        }
-
-        HYPRE_StructFlexGMRESGetNumIterations(solver_hypre, &m_num_iterations);
-        HYPRE_StructFlexGMRESGetFinalRelativeResidualNorm(solver_hypre, &m_final_res_norm);
-
-        m_converged = !(std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm));
-        m_converged = m_converged && (m_final_res_norm >= 0.0) && (m_final_res_norm <= m_eps);
-
-        if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
-            amrex::Warning(
-                "HYPRE FlexGMRES solver (with PFMG precond) did not converge within tolerance!");
-        } else if (ierr != 0 && ierr != HYPRE_ERROR_CONV && m_verbose >= 0) {
-            amrex::Warning("HYPRE FlexGMRES solver (with PFMG precond) returned error code: " +
-                           std::to_string(ierr));
-        }
-        HYPRE_StructFlexGMRESDestroy(solver_hypre);
-        if (precond)
-            HYPRE_StructPFMGDestroy(precond);
-    } else {
-        amrex::Abort("Unsupported solver type requested in EffectiveDiffusivityHypre::solve: " +
-                     std::to_string(static_cast<int>(m_solvertype)));
-    }
-
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  HYPRE Solver Iterations: " << m_num_iterations << std::endl;
-        amrex::Print() << "  HYPRE Final Relative Residual Norm: " << std::scientific
-                       << m_final_res_norm << std::defaultfloat << std::endl;
-        amrex::Print() << "  Solver Converged Status: " << (m_converged ? "Yes" : "No")
-                       << std::endl;
-    }
-
-    if (std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm)) {
-        amrex::Warning("HYPRE solve resulted in NaN or Inf residual norm!");
-        m_converged = false;
-    }
+    // Delegate solver dispatch to base class (PFMG preconditioner for periodic problems)
+    runSolver(PrecondType::PFMG);
 
     if (m_converged) {
         getChiSolution(m_mf_chi);
