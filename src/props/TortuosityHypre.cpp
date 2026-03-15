@@ -883,6 +883,56 @@ bool OpenImpala::TortuosityHypre::solve() {
         if (precond)
             HYPRE_StructSMGDestroy(precond);
     }
+    else if (m_solvertype == SolverType::PCG) {
+        // PCG is the optimal Krylov method for SPD systems.  The single-phase
+        // diffusion Laplacian with harmonic-mean face coefficients is SPD, so
+        // PCG typically converges in fewer iterations than FlexGMRES.
+        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
+            amrex::Print() << "  Setting up HYPRE PCG Solver with SMG Preconditioner..."
+                           << std::endl;
+        ierr = HYPRE_StructPCGCreate(MPI_COMM_WORLD, &solver);
+        HYPRE_CHECK(ierr);
+        HYPRE_StructPCGSetTol(solver, m_eps);
+        HYPRE_StructPCGSetMaxIter(solver, m_maxiter);
+        HYPRE_StructPCGSetPrintLevel(solver, m_verbose > 1 ? 2 : 0);
+        HYPRE_StructPCGSetTwoNorm(solver, 1);
+        precond = nullptr;
+        ierr = HYPRE_StructSMGCreate(MPI_COMM_WORLD, &precond);
+        HYPRE_CHECK(ierr);
+        HYPRE_StructSMGSetTol(precond, 0.0);
+        HYPRE_StructSMGSetMaxIter(precond, 1);
+        HYPRE_StructSMGSetNumPreRelax(precond, 1);
+        HYPRE_StructSMGSetNumPostRelax(precond, 1);
+        HYPRE_StructSMGSetPrintLevel(precond, 0);
+        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "    SMG Preconditioner created." << std::endl;
+        }
+        HYPRE_StructPCGSetPrecond(solver, HYPRE_StructSMGSolve, HYPRE_StructSMGSetup, precond);
+        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "  Running HYPRE_StructPCGSetup..." << std::endl;
+        }
+        ierr = HYPRE_StructPCGSetup(solver, m_A, m_b, m_x);
+        HYPRE_CHECK(ierr);
+        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "  Running HYPRE_StructPCGSolve..." << std::endl;
+        }
+        ierr = HYPRE_StructPCGSolve(solver, m_A, m_b, m_x);
+        if (ierr != 0 && ierr != HYPRE_ERROR_CONV) {
+            HYPRE_CHECK(ierr);
+        }
+        HYPRE_StructPCGGetNumIterations(solver, &m_num_iterations);
+        HYPRE_StructPCGGetFinalRelativeResidualNorm(solver, &m_final_res_norm);
+        m_converged = !(std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm));
+        m_converged = m_converged && (m_final_res_norm >= 0.0) && (m_final_res_norm <= m_eps);
+        if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
+            amrex::Warning("HYPRE PCG solver did not converge within tolerance!");
+        } else if (ierr != 0 && m_verbose >= 0) {
+            amrex::Warning("HYPRE PCG solver returned error code: " + std::to_string(ierr));
+        }
+        HYPRE_StructPCGDestroy(solver);
+        if (precond)
+            HYPRE_StructSMGDestroy(precond);
+    }
     // --- Add other solver cases if needed ---
     else {
         amrex::Abort("Unsupported solver type requested in TortuosityHypre::solve: " +
