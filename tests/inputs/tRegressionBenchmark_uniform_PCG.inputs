@@ -1,0 +1,30 @@
+# Regression Benchmark: Uniform Dense Block (PCG Solver)
+#
+# Identical to tRegressionBenchmark_uniform but uses PCG instead of FlexGMRES.
+# PCG is the optimal Krylov solver for SPD systems — the single-phase diffusion
+# Laplacian with harmonic-mean face coefficients is symmetric positive-definite.
+#
+# Geometry:  32^3 domain, all voxels = single conducting phase (D=1.0)
+# Analytical: tau = (N-1)/N = 31/32 = 0.96875
+
+domain_size = 32
+box_size = 16
+verbose = 2
+num_phases_fill = 1
+direction = X
+solver = PCG
+
+# Expected: tau = (N-1)/N = 31/32 = 0.96875
+expected_tau = 0.96875
+tau_tolerance = 0.001
+
+resultsdir = ./tRegressionBenchmark_uniform_PCG_results
+
+# --- Solver Controls ---
+hypre.maxiter = 500
+hypre.eps = 1e-9
+
+# --- Multi-phase configuration ---
+tortuosity.active_phases = 0
+tortuosity.phase_diffusivities = 1.0
+tortuosity.remspot_passes = 0
