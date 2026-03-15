@@ -1,6 +1,7 @@
 #ifndef TortuosityHypre_H
 #define TortuosityHypre_H
 
+#include <memory> // Needed for std::unique_ptr
 #include <string> // Needed for std::string
 #include <vector> // Needed for Vector<IntVect> in helper functions
 #include <limits> // Needed for std::numeric_limits
@@ -18,6 +19,7 @@
 #include <HYPRE.h>           // Main HYPRE header
 #include <HYPRE_struct_ls.h> // Struct interface header (should provide HYPRE_Int)
 
+#include "BoundaryCondition.H"
 #include "HypreStructSolver.H"
 #include "Tortuosity.H" // Defines OpenImpala::Tortuosity and OpenImpala::Direction
 
@@ -132,6 +134,15 @@ public:
         return m_phase_coeff_map;
     }
 
+    /** @brief Returns the inlet/outlet BC type. */
+    BCType getInletOutletBCType() const {
+        return m_bc_inlet_outlet_type;
+    }
+    /** @brief Returns the lateral (sides) BC type. */
+    BCType getSidesBCType() const {
+        return m_bc_sides_type;
+    }
+
     // Static Helper Functions (delegate to base class)
     static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> loV(const amrex::Box& b) {
         return HypreStructSolver::loV(b);
@@ -160,10 +171,16 @@ private:
     std::string m_resultspath;
     const int m_phase;
     const OpenImpala::Direction m_dir;
-    const amrex::Real m_vlo;
-    const amrex::Real m_vhi;
+    amrex::Real m_vlo;
+    amrex::Real m_vhi;
     const amrex::Real m_vf; // Original total VF (kept for reference if needed)
     bool m_write_plotfile;
+
+    // Boundary condition configuration
+    BCType m_bc_inlet_outlet_type = BCType::DirichletExternal;
+    BCType m_bc_sides_type = BCType::Neumann;
+    std::unique_ptr<BoundaryCondition> m_bc_inlet_outlet;
+    std::unique_ptr<BoundaryCondition> m_bc_sides;
 
     // AMReX Data (m_geom/m_ba/m_dm are in base class)
     amrex::iMultiFab m_mf_phase;
@@ -190,7 +207,6 @@ private:
 
     // HYPRE Data Structures are in base class (m_grid, m_stencil, m_A, m_b, m_x)
 };
-
 
 
 } // namespace OpenImpala

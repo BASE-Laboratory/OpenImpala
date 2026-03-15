@@ -77,7 +77,9 @@ void init_solvers(py::module_& m) {
         .def_property_readonly("plane_fluxes", &TortuosityHypre::getPlaneFluxes)
         .def_property_readonly("plane_flux_max_deviation",
                                &TortuosityHypre::getPlaneFluxMaxDeviation)
-        .def_property_readonly("is_multi_phase", &TortuosityHypre::isMultiPhase);
+        .def_property_readonly("is_multi_phase", &TortuosityHypre::isMultiPhase)
+        .def_property_readonly("inlet_outlet_bc_type", &TortuosityHypre::getInletOutletBCType)
+        .def_property_readonly("sides_bc_type", &TortuosityHypre::getSidesBCType);
 
     // =========================================================================
     // TortuosityDirect

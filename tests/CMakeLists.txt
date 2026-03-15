@@ -236,6 +236,44 @@ set_tests_properties(tMultiPhaseTransport_thermal PROPERTIES
 )
 
 # ==============================================================================
+# Boundary Condition Tests (Issue #16)
+#
+# Verify that the BC abstraction layer produces correct results:
+#   dirichlet_external_bc — explicit DirichletExternal matches default
+#   periodic_sides        — Periodic lateral BCs on uniform block
+# ==============================================================================
+
+# Explicit DirichletExternal BC: same result as default
+add_test(
+    NAME tMultiPhaseTransport_dirichlet_external_bc
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_dirichlet_external_bc.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tMultiPhaseTransport_dirichlet_external_bc PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# Periodic lateral BCs on uniform block
+add_test(
+    NAME tMultiPhaseTransport_periodic_sides
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_periodic_sides.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tMultiPhaseTransport_periodic_sides PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# ==============================================================================
 # Regression Benchmarks (Issue #80)
 #
 # Lightweight synthetic geometries with known analytical solutions.

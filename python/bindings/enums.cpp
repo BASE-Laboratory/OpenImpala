@@ -4,6 +4,7 @@
 
 #include <pybind11/pybind11.h>
 
+#include "BoundaryCondition.H"
 #include "Tortuosity.H"
 #include "RawReader.H"
 #include "PhysicsConfig.H"
@@ -49,8 +50,7 @@ void init_enums(py::module_& m) {
         .value("FLOAT64_BE", OpenImpala::RawDataType::FLOAT64_BE);
 
     // --- SolverType (HYPRE structured solvers — shared by Tortuosity and EffDiff) ---
-    py::enum_<OpenImpala::SolverType>(m, "SolverType",
-                                      "HYPRE structured-grid solver algorithm.")
+    py::enum_<OpenImpala::SolverType>(m, "SolverType", "HYPRE structured-grid solver algorithm.")
         .value("Jacobi", OpenImpala::SolverType::Jacobi)
         .value("GMRES", OpenImpala::SolverType::GMRES)
         .value("FlexGMRES", OpenImpala::SolverType::FlexGMRES)
@@ -61,6 +61,16 @@ void init_enums(py::module_& m) {
 
     // --- EffDiffSolverType: backward-compatible alias for SolverType ---
     m.attr("EffDiffSolverType") = m.attr("SolverType");
+
+    // --- BCType (boundary condition strategy for transport solvers) ---
+    py::enum_<OpenImpala::BCType>(m, "BCType", "Boundary condition type for transport solvers.")
+        .value("DirichletExternal", OpenImpala::BCType::DirichletExternal,
+               "Dirichlet at domain faces (standard default)")
+        .value("DirichletPhaseBoundary", OpenImpala::BCType::DirichletPhaseBoundary,
+               "Dirichlet at active cells adjacent to inactive cells near boundary")
+        .value("Neumann", OpenImpala::BCType::Neumann, "Zero-flux Neumann (implicit)")
+        .value("Periodic", OpenImpala::BCType::Periodic,
+               "Periodic wrapping (requires periodic grid)");
 
     // --- PhysicsType ---
     py::enum_<OpenImpala::PhysicsType>(m, "PhysicsType", "Physical quantity being computed.")
