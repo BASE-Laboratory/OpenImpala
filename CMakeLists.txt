@@ -17,7 +17,7 @@ cmake_minimum_required(VERSION 3.18)
 
 project(OpenImpala
     VERSION 0.1.0
-    LANGUAGES C CXX Fortran
+    LANGUAGES C CXX
     DESCRIPTION "Image-based simulation of transport properties in porous media"
 )
 
@@ -55,10 +55,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json)
 
 # --- MPI ---
-find_package(MPI REQUIRED COMPONENTS CXX Fortran)
+find_package(MPI REQUIRED COMPONENTS CXX)
 
 # --- OpenMP ---
-find_package(OpenMP REQUIRED COMPONENTS CXX Fortran)
+find_package(OpenMP REQUIRED COMPONENTS CXX)
 
 # --- AMReX ---
 # AMReX ships AMReXConfig.cmake when installed via CMake.

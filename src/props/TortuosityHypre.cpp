@@ -1,8 +1,8 @@
 // --- TortuosityHypre.cpp ---
 
 #include "TortuosityHypre.H"
-#include "Tortuosity_filcc_F.H"    // For tortuosity_remspot
-#include "TortuosityHypreFill_F.H" // For tortuosity_fillmtx
+#include "TortuosityKernels.H"    // For removeIsolatedCells (replaces tortuosity_remspot)
+#include "TortuosityHypreFill.H"  // For tortuosityFillMatrix (replaces tortuosity_fillmtx)
 
 // Includes remain the same...
 #include <cstdlib>
@@ -396,9 +396,9 @@ void OpenImpala::TortuosityHypre::preconditionPhaseFab() {
             const amrex::Box& tile_box = mfi.tilebox();
             amrex::IArrayBox& fab = m_mf_phase[mfi];
             int ncomp = fab.nComp();
-            tortuosity_remspot(fab.dataPtr(0), fab.loVect(), fab.hiVect(), &ncomp,
-                               tile_box.loVect(), tile_box.hiVect(), domain_box.loVect(),
-                               domain_box.hiVect());
+            OpenImpala::removeIsolatedCells(fab.dataPtr(0), fab.loVect(), fab.hiVect(), ncomp,
+                                            tile_box.loVect(), tile_box.hiVect(),
+                                            domain_box.loVect(), domain_box.hiVect());
         }
         if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "    DEBUG [preconditionPhaseFab]: Finished remspot pass " << pass + 1
@@ -733,7 +733,7 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print()
-            << "  setupMatrixEq: Calling tortuosity_fillmtx Fortran routine (using mask + "
+            << "  setupMatrixEq: Calling tortuosityFillMatrix C++ kernel (using mask + "
                "diff_coeff)..."
             << std::endl;
     }
@@ -768,11 +768,11 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
         const amrex::Real* dc_ptr = dc_fab.dataPtr(0);
         const auto& dc_box = dc_fab.box();
 
-        tortuosity_fillmtx(matrix_values.data(), rhs_values.data(), initial_guess.data(), &npts,
-                           p_ptr, pbox.loVect(), pbox.hiVect(), mask_ptr, mask_box.loVect(),
-                           mask_box.hiVect(), dc_ptr, dc_box.loVect(), dc_box.hiVect(), bx.loVect(),
-                           bx.hiVect(), domain.loVect(), domain.hiVect(), dxinv_sq.data(), &m_vlo,
-                           &m_vhi, &m_phase, &dir_int, &m_verbose);
+        OpenImpala::tortuosityFillMatrix(
+            matrix_values.data(), rhs_values.data(), initial_guess.data(), npts, mask_ptr,
+            mask_box.loVect(), mask_box.hiVect(), dc_ptr, dc_box.loVect(), dc_box.hiVect(),
+            bx.loVect(), bx.hiVect(), domain.loVect(), domain.hiVect(), dxinv_sq.data(), m_vlo,
+            m_vhi, dir_int, m_verbose);
 
         // NaN/Inf check remains the same...
         bool data_ok = true;
@@ -785,7 +785,7 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
                 data_ok = false;
         }
         if (!data_ok) {
-            amrex::Warning("NaN/Inf detected in Fortran output before HYPRE SetBoxValues!");
+            amrex::Warning("NaN/Inf detected in kernel output before HYPRE SetBoxValues!");
         }
 
 
