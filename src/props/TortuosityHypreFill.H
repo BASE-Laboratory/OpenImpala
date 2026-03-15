@@ -4,7 +4,7 @@
  *
  *  Replaces the legacy Fortran kernel TortuosityHypreFill.F90.
  *  Uses a 7-point stencil with harmonic-mean face coefficients and
- *  supports Dirichlet BCs perpendicular to the flow direction.
+ *  supports configurable BCs via the BoundaryCondition abstraction.
  */
 #ifndef OPENIMPALA_TORTUOSITY_HYPRE_FILL_H_
 #define OPENIMPALA_TORTUOSITY_HYPRE_FILL_H_
@@ -12,6 +12,8 @@
 #include <AMReX_BLassert.H>
 #include <AMReX_REAL.H>
 #include <AMReX_Print.H>
+
+#include "BoundaryCondition.H"
 
 #include <cmath>
 #include <cstdio>
@@ -38,11 +40,15 @@ constexpr int CELL_ACTIVE = 1;
 constexpr amrex::Real SMALL_REAL = 1.0e-15;
 
 /**
- * @brief Fill HYPRE matrix coefficients for the tortuosity solve.
+ * @brief Fill HYPRE matrix coefficients for the tortuosity solve (interior stencil only).
  *
  * Discretises div(D grad(phi)) = 0 on a 7-point stencil with harmonic-mean
  * face coefficients.  Inactive cells are decoupled (A_ii=1, A_ij=0, b=0).
- * Dirichlet BCs are applied on domain faces perpendicular to the flow direction.
+ * Sets a linear initial guess along the flow direction.
+ *
+ * @note This function builds the interior stencil only. Boundary conditions
+ * are NOT applied here — call the BC-aware overload or apply BoundaryCondition
+ * objects separately after this function returns.
  *
  * @param[out] a          Flattened stencil array, size nval*7 (C,W,E,S,N,B,T).
  * @param[out] rhs        Right-hand side, size nval.
@@ -71,7 +77,8 @@ inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* 
                                  const int* domhi, const amrex::Real* dxinv, amrex::Real vlo,
                                  amrex::Real vhi, int dir, int verbose) {
 
-    if (nval <= 0) return;
+    if (nval <= 0)
+        return;
 
     // Consistency check: nval must match box dimensions
     {
@@ -97,8 +104,7 @@ inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* 
     const int dc_nx = dc_hi[0] - dc_lo[0] + 1;
     const int dc_ny = dc_hi[1] - dc_lo[1] + 1;
     auto dc = [&](int i, int j, int k) -> amrex::Real {
-        return diff_coeff[(i - dc_lo[0]) + (j - dc_lo[1]) * dc_nx +
-                          (k - dc_lo[2]) * dc_nx * dc_ny];
+        return diff_coeff[(i - dc_lo[0]) + (j - dc_lo[1]) * dc_nx + (k - dc_lo[2]) * dc_nx * dc_ny];
     };
 
     int m_idx = 0;
@@ -110,7 +116,8 @@ inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* 
 
                 // --- Inactive cell: decouple ---
                 if (mask(i, j, k) == CELL_INACTIVE) {
-                    for (int s = 0; s < NSTENCIL; ++s) a[stn_start + s] = 0.0;
+                    for (int s = 0; s < NSTENCIL; ++s)
+                        a[stn_start + s] = 0.0;
                     a[stn_start + STN_C] = 1.0;
                     rhs[m_idx] = 0.0;
                     xinit[m_idx] = 0.0;
@@ -121,7 +128,8 @@ inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* 
                 // --- Active cell ---
                 const amrex::Real D_c = dc(i, j, k);
                 amrex::Real diag_val = 0.0;
-                for (int s = 0; s < NSTENCIL; ++s) a[stn_start + s] = 0.0;
+                for (int s = 0; s < NSTENCIL; ++s)
+                    a[stn_start + s] = 0.0;
                 bool has_inactive_neighbor = false;
 
                 // -X face
@@ -188,9 +196,10 @@ inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* 
 
                 // Check for zero diagonal in an active cell
                 if (std::abs(diag_val) < SMALL_REAL) {
-                    std::printf("WARNING: Zero diagonal in ACTIVE cell at (i,j,k)=%d %d %d\n",
-                                i, j, k);
-                    for (int s = 0; s < NSTENCIL; ++s) a[stn_start + s] = 0.0;
+                    std::printf("WARNING: Zero diagonal in ACTIVE cell at (i,j,k)=%d %d %d\n", i, j,
+                                k);
+                    for (int s = 0; s < NSTENCIL; ++s)
+                        a[stn_start + s] = 0.0;
                     a[stn_start + STN_C] = 1.0;
                     rhs[m_idx] = 0.0;
                     xinit[m_idx] = 0.0;
@@ -200,48 +209,8 @@ inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* 
 
                 rhs[m_idx] = 0.0;
 
-                // --- Overwrite for Dirichlet BCs perpendicular to flow ---
-                bool on_dirichlet_boundary = false;
-                if (dir == 0) {
-                    if (i == domlo[0]) {
-                        for (int s = 0; s < NSTENCIL; ++s) a[stn_start + s] = 0.0;
-                        a[stn_start + STN_C] = 1.0;
-                        rhs[m_idx] = vlo;
-                        on_dirichlet_boundary = true;
-                    } else if (i == domhi[0]) {
-                        for (int s = 0; s < NSTENCIL; ++s) a[stn_start + s] = 0.0;
-                        a[stn_start + STN_C] = 1.0;
-                        rhs[m_idx] = vhi;
-                        on_dirichlet_boundary = true;
-                    }
-                } else if (dir == 1) {
-                    if (j == domlo[1]) {
-                        for (int s = 0; s < NSTENCIL; ++s) a[stn_start + s] = 0.0;
-                        a[stn_start + STN_C] = 1.0;
-                        rhs[m_idx] = vlo;
-                        on_dirichlet_boundary = true;
-                    } else if (j == domhi[1]) {
-                        for (int s = 0; s < NSTENCIL; ++s) a[stn_start + s] = 0.0;
-                        a[stn_start + STN_C] = 1.0;
-                        rhs[m_idx] = vhi;
-                        on_dirichlet_boundary = true;
-                    }
-                } else if (dir == 2) {
-                    if (k == domlo[2]) {
-                        for (int s = 0; s < NSTENCIL; ++s) a[stn_start + s] = 0.0;
-                        a[stn_start + STN_C] = 1.0;
-                        rhs[m_idx] = vlo;
-                        on_dirichlet_boundary = true;
-                    } else if (k == domhi[2]) {
-                        for (int s = 0; s < NSTENCIL; ++s) a[stn_start + s] = 0.0;
-                        a[stn_start + STN_C] = 1.0;
-                        rhs[m_idx] = vhi;
-                        on_dirichlet_boundary = true;
-                    }
-                }
-
                 // --- Initial guess: linear interpolation along flow direction ---
-                if (std::abs(a[stn_start + STN_C] - 1.0) > SMALL_REAL || on_dirichlet_boundary) {
+                {
                     amrex::Real domain_extent = 0.0;
                     amrex::Real coord = 0.0;
                     if (dir == 0) {
@@ -276,10 +245,9 @@ inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* 
                         else
                             diag_ratio = std::abs(dv) / off_diag_sum;
 
-                        std::printf("DEBUG Stencil at (%d,%d,%d) Active=1 Dirichlet=%d "
+                        std::printf("DEBUG Stencil at (%d,%d,%d) Active=1 "
                                     "Interface=%d D_c=%.4e\n",
-                                    i, j, k, static_cast<int>(on_dirichlet_boundary),
-                                    static_cast<int>(has_inactive_neighbor), D_c);
+                                    i, j, k, static_cast<int>(has_inactive_neighbor), D_c);
                         std::printf("  RHS =%.4e\n", rhs[m_idx]);
                         std::printf("  Stencil (C, -X,+X, -Y,+Y, -Z,+Z) = %.4e %.4e %.4e %.4e "
                                     "%.4e %.4e %.4e\n",
@@ -295,6 +263,43 @@ inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* 
                 ++m_idx;
             }
         }
+    }
+}
+
+/**
+ * @brief Fill HYPRE matrix coefficients with configurable boundary conditions.
+ *
+ * Builds the interior stencil via tortuosityFillMatrix(), then applies
+ * inlet/outlet and lateral boundary conditions via BoundaryCondition objects.
+ *
+ * @param bc_inlet_outlet  BC strategy for domain faces perpendicular to flow direction.
+ * @param bc_sides         BC strategy for domain faces parallel to flow direction (lateral).
+ *
+ * All other parameters are identical to the interior-only overload.
+ */
+inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, int nval,
+                                 const int* active_mask, const int* mask_lo, const int* mask_hi,
+                                 const amrex::Real* diff_coeff, const int* dc_lo, const int* dc_hi,
+                                 const int* bxlo, const int* bxhi, const int* domlo,
+                                 const int* domhi, const amrex::Real* dxinv, amrex::Real vlo,
+                                 amrex::Real vhi, int dir, int verbose,
+                                 const BoundaryCondition* bc_inlet_outlet,
+                                 const BoundaryCondition* bc_sides) {
+
+    // Build interior stencil (no BCs applied)
+    tortuosityFillMatrix(a, rhs, xinit, nval, active_mask, mask_lo, mask_hi, diff_coeff, dc_lo,
+                         dc_hi, bxlo, bxhi, domlo, domhi, dxinv, vlo, vhi, dir, verbose);
+
+    // Apply inlet/outlet BCs (perpendicular to flow direction)
+    if (bc_inlet_outlet != nullptr) {
+        bc_inlet_outlet->applyBC(a, rhs, xinit, nval, active_mask, mask_lo, mask_hi, diff_coeff,
+                                 dc_lo, dc_hi, bxlo, bxhi, domlo, domhi, dxinv, vlo, vhi, dir);
+    }
+
+    // Apply lateral BCs (parallel to flow direction)
+    if (bc_sides != nullptr) {
+        bc_sides->applyBC(a, rhs, xinit, nval, active_mask, mask_lo, mask_hi, diff_coeff, dc_lo,
+                          dc_hi, bxlo, bxhi, domlo, domhi, dxinv, vlo, vhi, dir);
     }
 }
 

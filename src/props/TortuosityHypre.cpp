@@ -1,8 +1,8 @@
 // --- TortuosityHypre.cpp ---
 
 #include "TortuosityHypre.H"
-#include "TortuosityKernels.H"    // For removeIsolatedCells (replaces tortuosity_remspot)
-#include "TortuosityHypreFill.H"  // For tortuosityFillMatrix (replaces tortuosity_fillmtx)
+#include "TortuosityKernels.H"   // For removeIsolatedCells (replaces tortuosity_remspot)
+#include "TortuosityHypreFill.H" // For tortuosityFillMatrix (replaces tortuosity_fillmtx)
 
 // Includes remain the same...
 #include <cstdlib>
@@ -92,12 +92,12 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
                                              const amrex::Real vlo, const amrex::Real vhi,
                                              int verbose, bool write_plotfile)
     : HypreStructSolver(geom, ba, dm, st, 1e-9, 200, verbose),
-      m_mf_phase(ba, dm, mf_phase_input.nComp(), mf_phase_input.nGrow()), m_phase(phase),
-      m_vf(vf), m_dir(dir), m_vlo(vlo), m_vhi(vhi), m_resultspath(resultspath),
+      m_mf_phase(ba, dm, mf_phase_input.nComp(), mf_phase_input.nGrow()), m_phase(phase), m_vf(vf),
+      m_dir(dir), m_vlo(vlo), m_vhi(vhi), m_resultspath(resultspath),
       m_write_plotfile(write_plotfile), m_mf_phi(ba, dm, numComponentsPhi, 1),
       m_mf_active_mask(ba, dm, 1, 1), m_mf_diff_coeff(ba, dm, 1, 1), m_active_vf(0.0),
-      m_first_call(true), m_value(std::numeric_limits<amrex::Real>::quiet_NaN()),
-      m_flux_in(0.0), m_flux_out(0.0) {
+      m_first_call(true), m_value(std::numeric_limits<amrex::Real>::quiet_NaN()), m_flux_in(0.0),
+      m_flux_out(0.0) {
     // Ensure HYPRE is initialised exactly once (thread-safe via std::call_once).
     // C++ tests call HYPRE_Init() in main(), but Python bindings have no main().
     static std::once_flag hypre_once;
@@ -124,6 +124,45 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
     pp.query("maxiter", m_maxiter);
     amrex::ParmParse pp_tort("tortuosity");
     pp_tort.query("verbose", m_verbose);
+
+    // --- Boundary condition parsing ---
+    {
+        amrex::ParmParse pp_bc("bc");
+        std::string bc_inlet_outlet_str;
+        std::string bc_sides_str;
+        if (pp_bc.query("inlet_outlet", bc_inlet_outlet_str)) {
+            m_bc_inlet_outlet_type = parseBCType(bc_inlet_outlet_str);
+        }
+        if (pp_bc.query("sides", bc_sides_str)) {
+            m_bc_sides_type = parseBCType(bc_sides_str);
+        }
+        // Allow bc.value_lo / bc.value_hi to override constructor defaults
+        pp_bc.query("value_lo", m_vlo);
+        pp_bc.query("value_hi", m_vhi);
+
+        m_bc_inlet_outlet = createBC(m_bc_inlet_outlet_type);
+        m_bc_sides = createBC(m_bc_sides_type);
+
+        if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
+            auto bcTypeStr = [](BCType t) -> std::string {
+                switch (t) {
+                case BCType::DirichletExternal:
+                    return "DirichletExternal";
+                case BCType::DirichletPhaseBoundary:
+                    return "DirichletPhaseBoundary";
+                case BCType::Neumann:
+                    return "Neumann";
+                case BCType::Periodic:
+                    return "Periodic";
+                default:
+                    return "Unknown";
+                }
+            };
+            amrex::Print() << "  BC Config: inlet_outlet=" << bcTypeStr(m_bc_inlet_outlet_type)
+                           << ", sides=" << bcTypeStr(m_bc_sides_type) << std::endl;
+            amrex::Print() << "  BC Values: vlo=" << m_vlo << ", vhi=" << m_vhi << std::endl;
+        }
+    }
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "  HYPRE Params: eps=" << m_eps << ", maxiter=" << m_maxiter << std::endl;
@@ -243,7 +282,8 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
     // Setup HYPRE structures only if there's an active phase
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "TortuosityHypre: Running setupGrid..." << std::endl;
-    setupGrid(false); // Non-periodic (Dirichlet BCs)
+    bool needs_periodic = (m_bc_sides && m_bc_sides->needsPeriodicGrid());
+    setupGrid(needs_periodic);
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "TortuosityHypre: Running setupStencil..." << std::endl;
     HypreStructSolver::setupStencil();
@@ -614,10 +654,9 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print()
-            << "  setupMatrixEq: Calling tortuosityFillMatrix C++ kernel (using mask + "
-               "diff_coeff)..."
-            << std::endl;
+        amrex::Print() << "  setupMatrixEq: Calling tortuosityFillMatrix C++ kernel (using mask + "
+                          "diff_coeff)..."
+                       << std::endl;
     }
 
     std::vector<amrex::Real> matrix_values;
@@ -650,7 +689,7 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
             matrix_values.data(), rhs_values.data(), initial_guess.data(), npts, mask_ptr,
             mask_box.loVect(), mask_box.hiVect(), dc_ptr, dc_box.loVect(), dc_box.hiVect(),
             bx.loVect(), bx.hiVect(), domain.loVect(), domain.hiVect(), dxinv_sq.data(), m_vlo,
-            m_vhi, dir_int, m_verbose);
+            m_vhi, dir_int, m_verbose, m_bc_inlet_outlet.get(), m_bc_sides.get());
 
         // NaN/Inf check remains the same...
         bool data_ok = true;
@@ -748,9 +787,52 @@ bool OpenImpala::TortuosityHypre::solve() {
         if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  Plotfile written to " << plotfilename << std::endl;
         }
-    } else if (m_write_plotfile && !m_converged) {
+    } else if (!m_converged) {
+        // Write a "failed" plotfile for debugging non-convergent solves
         if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Warning("Skipping plotfile write because solver did not converge.");
+            amrex::Print() << "  Solver did not converge. Writing failed plotfile for debugging..."
+                           << std::endl;
+        }
+        amrex::MultiFab mf_plot_fail(m_ba, m_dm, numComponentsPhi, 0);
+        amrex::MultiFab mf_soln_fail(m_ba, m_dm, 1, 0);
+        mf_soln_fail.setVal(0.0);
+        std::vector<double> soln_buf_fail;
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion()) private(soln_buf_fail)
+#endif
+        for (amrex::MFIter mfi(mf_soln_fail, false); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.validbox();
+            const int npts = static_cast<int>(bx.numPts());
+            if (npts == 0)
+                continue;
+            soln_buf_fail.resize(npts);
+            auto hypre_lo_f = OpenImpala::TortuosityHypre::loV(bx);
+            auto hypre_hi_f = OpenImpala::TortuosityHypre::hiV(bx);
+            HYPRE_StructVectorGetBoxValues(m_x, hypre_lo_f.data(), hypre_hi_f.data(),
+                                           soln_buf_fail.data());
+            amrex::Array4<amrex::Real> const soln_arr = mf_soln_fail.array(mfi);
+            long long idx = 0;
+            amrex::LoopOnCpu(bx, [&](int ii, int jj, int kk) {
+                if (idx < npts) {
+                    soln_arr(ii, jj, kk, 0) = static_cast<amrex::Real>(soln_buf_fail[idx]);
+                }
+                idx++;
+            });
+        }
+        amrex::MultiFab mf_mask_fail(m_ba, m_dm, 1, 0);
+        amrex::Copy(mf_mask_fail, m_mf_active_mask, MaskComp, 0, 1, 0);
+        amrex::MultiFab mf_phase_fail(m_ba, m_dm, 1, 0);
+        amrex::Copy(mf_phase_fail, m_mf_phase, 0, 0, 1, 0);
+        amrex::Copy(mf_plot_fail, mf_soln_fail, 0, 0, 1, 0);
+        amrex::Copy(mf_plot_fail, mf_phase_fail, 0, 1, 1, 0);
+        amrex::Copy(mf_plot_fail, mf_mask_fail, 0, 2, 1, 0);
+        std::string failedname = m_resultspath + "/failed_tortuosity_solution_" +
+                                 std::to_string(static_cast<int>(m_dir));
+        amrex::Vector<std::string> varnames_fail = {"solution_potential", "phase_id",
+                                                    "active_mask"};
+        amrex::WriteSingleLevelPlotfile(failedname, mf_plot_fail, varnames_fail, m_geom, 0.0, 0);
+        if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "  Failed plotfile written to " << failedname << std::endl;
         }
     }
     return m_converged;
@@ -1027,7 +1109,8 @@ bool OpenImpala::TortuosityHypre::checkMatrixProperties() {
             }
             int cell_status = mask_arr(current_cell, MaskComp);
             bool is_dirichlet = false;
-            if (cell_status == cell_active) {
+            // Only check for Dirichlet at domain faces when using DirichletExternal BC
+            if (cell_status == cell_active && m_bc_inlet_outlet_type == BCType::DirichletExternal) {
                 if ((idir == 0 && (i == domain.smallEnd(0) || i == domain.bigEnd(0))) ||
                     (idir == 1 && (j == domain.smallEnd(1) || j == domain.bigEnd(1))) ||
                     (idir == 2 && (k == domain.smallEnd(2) || k == domain.bigEnd(2)))) {
