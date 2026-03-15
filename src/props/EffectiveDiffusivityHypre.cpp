@@ -1,7 +1,7 @@
 // --- EffectiveDiffusivityHypre.cpp ---
 
 #include "EffectiveDiffusivityHypre.H"
-#include "EffDiffFillMtx_F.H" // For effdiff_fillmtx
+#include "EffDiffFillMtx.H" // For effDiffFillMatrix (replaces Fortran effdiff_fillmtx)
 
 #include <cstdlib>
 #include <mutex>
@@ -584,7 +584,7 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print()
-            << "  setupMatrixEquation: Calling Fortran kernel 'effdiff_fillmtx' and SetBoxValues..."
+            << "  setupMatrixEquation: Calling C++ kernel 'effDiffFillMatrix' and SetBoxValues..."
             << std::endl;
     }
 
@@ -616,11 +616,11 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
         const auto* dc_fab_lo = dc_fab.loVect();
         const auto* dc_fab_hi = dc_fab.hiVect();
 
-        effdiff_fillmtx(matrix_values_buffer.data(), rhs_values_buffer.data(),
-                        initial_guess_buffer.data(), &npts_valid, mask_ptr, mask_fab_lo,
-                        mask_fab_hi, dc_ptr, dc_fab_lo, dc_fab_hi, valid_bx.loVect(),
-                        valid_bx.hiVect(), domain_for_kernel.loVect(), domain_for_kernel.hiVect(),
-                        m_dx.dataPtr(), &current_dir_int, &m_verbose);
+        OpenImpala::effDiffFillMatrix(
+            matrix_values_buffer.data(), rhs_values_buffer.data(), initial_guess_buffer.data(),
+            npts_valid, mask_ptr, mask_fab_lo, mask_fab_hi, dc_ptr, dc_fab_lo, dc_fab_hi,
+            valid_bx.loVect(), valid_bx.hiVect(), domain_for_kernel.loVect(),
+            domain_for_kernel.hiVect(), m_dx.dataPtr(), current_dir_int, m_verbose);
 
         auto hypre_lo_valid = EffectiveDiffusivityHypre::loV(valid_bx);
         auto hypre_hi_valid = EffectiveDiffusivityHypre::hiV(valid_bx);

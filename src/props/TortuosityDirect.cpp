@@ -1,5 +1,5 @@
 #include "TortuosityDirect.H"
-#include "Tortuosity_poisson_3d_F.H" // Assuming Fortran interface for poisson steps
+#include "TortuosityKernels.H" // C++ kernels replacing Fortran poisson routines
 
 #include <cstdlib> // For std::getenv
 #include <cmath>   // For std::abs
@@ -264,18 +264,16 @@ void TortuosityDirect::global_fluxes(amrex::Real& fxin, amrex::Real& fxout) cons
             const auto& fx_arr = m_flux[0].const_array(mfi);
             const auto& fy_arr = m_flux[1].const_array(mfi);
             const auto& fz_arr = m_flux[2].const_array(mfi);
-            const auto* fx_ptr = fx_arr.dataPtr();
-            const auto* fy_ptr = fy_arr.dataPtr();
-            const auto* fz_ptr = fz_arr.dataPtr();
 
-            // FIX: Use [mfi].box() for actual allocated memory bounds
             const auto& fxbox = m_flux[0][mfi].box();
             const auto& fybox = m_flux[1][mfi].box();
             const auto& fzbox = m_flux[2][mfi].box();
 
-            tortuosity_poisson_fio(cell_bx.loVect(), cell_bx.hiVect(), fx_ptr, fxbox.loVect(),
-                                   fxbox.hiVect(), fy_ptr, fybox.loVect(), fybox.hiVect(), fz_ptr,
-                                   fzbox.loVect(), fzbox.hiVect(), &dir_int, &lfxin, &lfxout);
+            amrex::Real local_in = 0.0, local_out = 0.0;
+            OpenImpala::integrateBoundaryFluxes(cell_bx, fx_arr, fy_arr, fz_arr, fxbox, fybox,
+                                                fzbox, dir_int, local_in, local_out);
+            lfxin += local_in;
+            lfxout += local_out;
         }
         // Propagate local accumulations to the OMP reduction variables
         fxin += lfxin;
@@ -303,28 +301,9 @@ void TortuosityDirect::advance(amrex::MultiFab& phi_old, amrex::MultiFab& phi_ne
             auto fx_arr = m_flux[0].array(mfi);
             auto fy_arr = m_flux[1].array(mfi);
             auto fz_arr = m_flux[2].array(mfi);
-            auto* fx_ptr = fx_arr.dataPtr();
-            auto* fy_ptr = fy_arr.dataPtr();
-            auto* fz_ptr = fz_arr.dataPtr();
-
             const auto& sol_arr = phi_old.const_array(mfi);
-            const auto* sol_ptr = sol_arr.dataPtr();
 
-            // FIX: Use [mfi].box() to get the actual allocated memory Box
-            // (including ghost cells), not .box(mfi.index()) which returns
-            // the valid box only. dataPtr() points to memory including ghosts,
-            // so Fortran needs the ghost-inclusive bounds to index correctly.
-            const auto& fxbox = m_flux[0][mfi].box();
-            const auto& fybox = m_flux[1][mfi].box();
-            const auto& fzbox = m_flux[2][mfi].box();
-            const auto& solbox = phi_old[mfi].box();
-
-            const amrex::Real* dxinv_ptr = m_dxinv.data();
-
-            tortuosity_poisson_flux(bx.loVect(), bx.hiVect(), fx_ptr, fxbox.loVect(),
-                                    fxbox.hiVect(), fy_ptr, fybox.loVect(), fybox.hiVect(), fz_ptr,
-                                    fzbox.loVect(), fzbox.hiVect(), sol_ptr, solbox.loVect(),
-                                    solbox.hiVect(), dxinv_ptr);
+            OpenImpala::computeFaceFluxes(bx, fx_arr, fy_arr, fz_arr, sol_arr, m_dxinv.data());
         }
 
 #ifdef AMREX_USE_OMP
@@ -340,33 +319,9 @@ void TortuosityDirect::advance(amrex::MultiFab& phi_old, amrex::MultiFab& phi_ne
             const auto& fy_arr = m_flux[1].const_array(mfi);
             const auto& fz_arr = m_flux[2].const_array(mfi);
 
-            const auto* p_ptr = p_arr.dataPtr();
-            auto* n_ptr = n_arr.dataPtr();
-            const auto* fx_ptr = fx_arr.dataPtr();
-            const auto* fy_ptr = fy_arr.dataPtr();
-            const auto* fz_ptr = fz_arr.dataPtr();
-
-            // FIX: Use [mfi].box() for actual allocated memory bounds
-            const auto& pbox = phi_old[mfi].box();
-            const auto& nbox = phi_new[mfi].box();
-            const auto& fxbox = m_flux[0][mfi].box();
-            const auto& fybox = m_flux[1][mfi].box();
-            const auto& fzbox = m_flux[2][mfi].box();
-
-            const amrex::Real* dxinv_ptr = m_dxinv.data();
-
             // Only diffuse comp_phi (component 0), NOT comp_ct (component 1).
-            // Passing nComp()=2 would apply the Euler stencil to cell types,
-            // corrupting them from integer 1 to fractional values like 0.99,
-            // which then cast to 0 in the residual check, hiding all updates.
-            const int ncomp_val = 1;
-
-            tortuosity_poisson_update(bx.loVect(), bx.hiVect(), p_ptr, pbox.loVect(), pbox.hiVect(),
-                                      n_ptr, nbox.loVect(), nbox.hiVect(), fx_ptr, fxbox.loVect(),
-                                      fxbox.hiVect(), fy_ptr, fybox.loVect(), fybox.hiVect(),
-                                      fz_ptr, fzbox.loVect(), fzbox.hiVect(),
-                                      &ncomp_val, // Pass address of ncomp
-                                      dxinv_ptr, &dt);
+            OpenImpala::forwardEulerUpdate(bx, p_arr, n_arr, fx_arr, fy_arr, fz_arr,
+                                           m_dxinv.data(), dt);
 
             // Ensure cell type remains unchanged in phi_new (copy from phi_old)
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {

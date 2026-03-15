@@ -8,9 +8,9 @@
 //   - value() (tortuosity computation from fluxes, caching)
 //   - Solver diagnostic getters
 //
-// Purpose: Achieve code coverage for TortuosityDirect.cpp (167 lines),
-//   Tortuosity_filcc.F90 (122 lines), and Tortuosity_poisson_3d.F90 (66 lines),
-//   all previously at 0% coverage.
+// Purpose: Achieve code coverage for TortuosityDirect.cpp and the C++ kernels
+//   in TortuosityKernels.H (previously Fortran: Tortuosity_filcc.F90 and
+//   Tortuosity_poisson_3d.F90).
 //
 // Validates tortuosity against analytical result: tau = (N-1)/N for uniform medium.
 

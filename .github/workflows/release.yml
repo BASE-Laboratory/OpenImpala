@@ -55,7 +55,6 @@ jobs:
                        -DCMAKE_BUILD_TYPE=Release \
                        -DCMAKE_C_COMPILER=$(which mpicc) \
                        -DCMAKE_CXX_COMPILER=$(which mpicxx) \
-                       -DCMAKE_Fortran_COMPILER=$(which mpif90) \
                        -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
                        -DBUILD_TESTING=OFF \
                        -DCMAKE_INSTALL_PREFIX=/src/cmake_install && \
@@ -89,8 +88,8 @@ jobs:
               "$STAGING_DIR/usr/local" /usr/
 
           %post
-              # FIX #1: Install the CORRECT package that provides the gfortran runtime,
-              # as determined by your research and diagnostic tests.
+              # Install the gfortran runtime (required by AMReX/HYPRE dependencies,
+              # not by OpenImpala itself which is pure C++).
               dnf install -y \
                   gcc-toolset-11-gcc-gfortran \
                   hwloc-libs \

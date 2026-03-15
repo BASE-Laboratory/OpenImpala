@@ -170,35 +170,6 @@ private:
 };
 
 
-// --- Fortran Interface Declaration ---
-// This will be for your new Fortran kernel for the cell problem
-extern "C" {
-/**
- * @brief Fills HYPRE matrix (A) and RHS (b) for the cell problem:
- *        ∇_ξ ⋅ (D ∇_ξ χ_k) = -∇_ξ ⋅ (D ê_k)
- * @param a Output buffer for matrix stencil coefficients.
- * @param rhs Output buffer for RHS values.
- * @param xinit Output buffer for initial guess of chi_k (typically zero).
- * @param npts_valid Number of points in the valid_bx region to fill.
- * @param active_mask_ptr Pointer to the active_mask data (1 for D=D_material, 0 otherwise).
- * @param mask_lo Lower bounds of the active_mask FAB.
- * @param mask_hi Upper bounds of the active_mask FAB.
- * @param valid_bx_lo Lower bounds of the current valid region to fill.
- * @param valid_bx_hi Upper bounds of the current valid region to fill.
- * @param domain_lo Lower bounds of the overall simulation domain.
- * @param domain_hi Upper bounds of the overall simulation domain.
- * @param cell_sizes Array of cell sizes [dx, dy, dz].
- * @param dir_k Integer representing the direction of ê_k (0 for X, 1 for Y, 2 for Z).
- * @param verbose_level Verbosity level for debugging in Fortran.
- */
-void effdiff_fillmtx(amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, const int* npts_valid,
-                     const int* active_mask_ptr, const int* mask_lo, const int* mask_hi,
-                     const amrex::Real* diff_coeff_ptr, const int* dc_lo, const int* dc_hi,
-                     const int* valid_bx_lo, const int* valid_bx_hi, const int* domain_lo,
-                     const int* domain_hi, const amrex::Real* cell_sizes, const int* dir_k,
-                     const int* verbose_level);
-}
-
 
 } // namespace OpenImpala
 

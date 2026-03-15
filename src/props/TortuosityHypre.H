@@ -231,23 +231,6 @@ private:
 };
 
 
-// --- Fortran Interface Declarations ---
-// (Remain the same as in your provided file)
-extern "C" {
-void tortuosity_fillmtx(amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, const int* nval,
-                        const int* p, const int* p_lo, const int* p_hi, const int* active_mask,
-                        const int* mask_lo, const int* mask_hi, const amrex::Real* diff_coeff,
-                        const int* dc_lo, const int* dc_hi, const int* bxlo, const int* bxhi,
-                        const int* domlo, const int* domhi, const amrex::Real* dxinv,
-                        const amrex::Real* vlo, const amrex::Real* vhi, const int* phase_unused,
-                        const int* dir, const int* debug_print_level);
-
-void tortuosity_remspot(int* q, const int* q_lo, const int* q_hi, const int* ncomp, const int* bxlo,
-                        const int* bxhi, const int* domlo, const int* domhi);
-
-// Add others if needed...
-}
-
 
 } // namespace OpenImpala
 
