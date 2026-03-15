@@ -117,7 +117,7 @@ int main(int argc, char* argv[]) {
             try {
                 solver = std::make_unique<OpenImpala::EffectiveDiffusivityHypre>(
                     geom, ba, dm, mf_phase, 0 /* phase_id */, directions[d],
-                    OpenImpala::EffectiveDiffusivityHypre::SolverType::FlexGMRES, resultsdir,
+                    OpenImpala::SolverType::FlexGMRES, resultsdir,
                     verbose, false /* write_plotfile */);
             } catch (const std::exception& e) {
                 test_passed = false;

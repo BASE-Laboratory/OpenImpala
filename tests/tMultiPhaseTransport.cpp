@@ -84,7 +84,7 @@ int main(int argc, char* argv[]) {
 
         OpenImpala::Direction direction = OpenImpala::parseDirection(direction_str);
         int layer_dir_idx = static_cast<int>(OpenImpala::parseDirection(layer_axis_str));
-        OpenImpala::TortuosityHypre::SolverType solver_type = OpenImpala::tortuositySolverType(solver_str);
+        OpenImpala::SolverType solver_type = OpenImpala::parseSolverType(solver_str);
 
         if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "\n--- Multi-Phase Transport Test ---\n";

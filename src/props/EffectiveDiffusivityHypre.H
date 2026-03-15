@@ -44,10 +44,8 @@ namespace OpenImpala {
 class EffectiveDiffusivityHypre {
 
 public:
-    /** @brief Specifies the HYPRE structured solver algorithm to use.
-     *  (Identical to TortuosityHypre::SolverType, could be a shared enum)
-     */
-    enum class SolverType { Jacobi, GMRES, FlexGMRES, PCG, BiCGSTAB, SMG, PFMG };
+    /** @brief Alias for the shared HYPRE solver type enum (defined in Tortuosity.H). */
+    using SolverType = OpenImpala::SolverType;
 
     /** @brief Construct new solver for the effective diffusivity cell problem.
      *

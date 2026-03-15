@@ -296,8 +296,7 @@ int main(int argc, char* argv[]) {
 
 
         // --- Actual Simulation Setup ---
-        OpenImpala::EffectiveDiffusivityHypre::SolverType solver_type =
-            OpenImpala::effDiffSolverType(solver_str);
+        OpenImpala::SolverType solver_type = OpenImpala::parseSolverType(solver_str);
         amrex::Geometry geom_main_sim;
         amrex::BoxArray ba_main_sim;
         amrex::DistributionMapping dm_main_sim;
