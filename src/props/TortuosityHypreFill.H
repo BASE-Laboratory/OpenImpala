@@ -9,6 +9,7 @@
 #ifndef OPENIMPALA_TORTUOSITY_HYPRE_FILL_H_
 #define OPENIMPALA_TORTUOSITY_HYPRE_FILL_H_
 
+#include <AMReX_BLassert.H>
 #include <AMReX_REAL.H>
 #include <AMReX_Print.H>
 
@@ -70,10 +71,14 @@ inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* 
                                  const int* domhi, const amrex::Real* dxinv, amrex::Real vlo,
                                  amrex::Real vhi, int dir, int verbose) {
 
-    const int len_x = bxhi[0] - bxlo[0] + 1;
-    const int len_y = bxhi[1] - bxlo[1] + 1;
-
     if (nval <= 0) return;
+
+    // Consistency check: nval must match box dimensions
+    {
+        const int expected =
+            (bxhi[0] - bxlo[0] + 1) * (bxhi[1] - bxlo[1] + 1) * (bxhi[2] - bxlo[2] + 1);
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(expected == nval, "tortuosityFillMatrix: nval mismatch.");
+    }
 
     const amrex::Real coeff_x = dxinv[0];
     const amrex::Real coeff_y = dxinv[1];
