@@ -10,10 +10,13 @@
 namespace OpenImpala {
 
 SpecificSurfaceArea::SpecificSurfaceArea(const amrex::Geometry& geom, const amrex::iMultiFab& fm,
-                                         int phase_a, int phase_b, int comp)
-    : m_geom(geom), m_mf(fm), m_phase_a(phase_a), m_phase_b(phase_b), m_comp(comp) {
+                                         int phase_a, int phase_b, int comp, int boundary_padding)
+    : m_geom(geom), m_mf(fm), m_phase_a(phase_a), m_phase_b(phase_b), m_comp(comp),
+      m_boundary_padding(boundary_padding) {
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_comp >= 0 && m_comp < m_mf.nComp(),
                                      "SpecificSurfaceArea: Component index out of bounds.");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_boundary_padding >= 0,
+                                     "SpecificSurfaceArea: boundary_padding must be non-negative.");
 }
 
 void SpecificSurfaceArea::value(long long& face_count, long long& total_count, bool local) const {
@@ -25,6 +28,11 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
     const int phase_comp = m_comp;
     const amrex::Box& domain = m_geom.Domain();
 
+    // Shrink domain by boundary_padding on all sides to exclude outermost layers
+    const amrex::Box padded_domain = domain.grow(-m_boundary_padding);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(padded_domain.ok(),
+                                     "SpecificSurfaceArea: boundary_padding too large for domain.");
+
 #ifdef AMREX_USE_OMP
 #pragma omp parallel reduction(+ : local_face_count, local_total_count)
 #endif
@@ -32,19 +40,23 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
         const amrex::Box& bx = mfi.tilebox();
         const auto& fab = m_mf.const_array(mfi, phase_comp);
 
-        // Count total cells
-        local_total_count += bx.numPts();
+        // Restrict cell counting to the padded interior
+        const amrex::Box count_bx = bx & padded_domain;
+        if (count_bx.ok()) {
+            local_total_count += count_bx.numPts();
+        }
 
         // Count interface faces in each direction.
         // For each direction d, we check the face between cell (i,j,k) and its
-        // neighbor in the +d direction. We only count faces where both cells
-        // are within the valid domain to avoid double-counting at MPI boundaries.
-        // The face is "owned" by the cell on its low side (in the tilebox).
+        // neighbor in the +d direction. Both cells must lie within the padded
+        // domain. The face is "owned" by the cell on its low side.
         for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-            // Only check +d neighbor if it exists within the domain
-            amrex::Box check_bx = bx;
-            // Shrink the high end by 1 in direction d if we're at the domain boundary
-            int hi_limit = std::min(bx.bigEnd(d), domain.bigEnd(d) - 1);
+            amrex::Box check_bx = bx & padded_domain;
+            if (!check_bx.ok()) {
+                continue;
+            }
+            // The +d neighbor must also be in padded_domain, so shrink high end by 1
+            int hi_limit = std::min(check_bx.bigEnd(d), padded_domain.bigEnd(d) - 1);
             check_bx.setBig(d, hi_limit);
 
             if (check_bx.ok()) {

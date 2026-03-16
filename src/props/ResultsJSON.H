@@ -91,10 +91,16 @@ public:
 
     // --- Microstructure parameter setters ---
 
-    /// Set specific surface area (interface faces per unit volume, voxel units).
+    /// Set corrected specific surface area (Cauchy-Crofton corrected, voxel units).
     void setSpecificSurfaceArea(Real ssa) {
         m_ssa = ssa;
         m_has_ssa = true;
+    }
+
+    /// Set raw specific surface area (uncorrected voxel face count per volume).
+    void setSpecificSurfaceAreaRaw(Real ssa_raw) {
+        m_ssa_raw = ssa_raw;
+        m_has_ssa_raw = true;
     }
 
     /// Set multi-phase volume fractions (phase_id -> VF).
@@ -245,6 +251,8 @@ private:
     // Microstructure parameters
     Real m_ssa = 0.0;
     bool m_has_ssa = false;
+    Real m_ssa_raw = 0.0;
+    bool m_has_ssa_raw = false;
     std::map<int, Real> m_phase_vfs;
     Real m_macro_thickness = 0.0;
     Real m_macro_cross_section = 0.0;
@@ -261,8 +269,8 @@ private:
 
     // --- Build microstructure parameters block ---
     void buildMicrostructureBlock(nlohmann::ordered_json& oi) const {
-        if (!m_has_ssa && m_phase_vfs.empty() && !m_has_macro && m_tt_profiles.empty() &&
-            !m_has_solid_bruggeman && !m_has_psd) {
+        if (!m_has_ssa && !m_has_ssa_raw && m_phase_vfs.empty() && !m_has_macro &&
+            m_tt_profiles.empty() && !m_has_solid_bruggeman && !m_has_psd) {
             return;
         }
 
@@ -270,6 +278,9 @@ private:
 
         if (m_has_ssa) {
             ms["specific_surface_area"] = m_ssa;
+        }
+        if (m_has_ssa_raw) {
+            ms["specific_surface_area_raw"] = m_ssa_raw;
         }
 
         if (!m_phase_vfs.empty()) {
