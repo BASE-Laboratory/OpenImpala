@@ -469,6 +469,20 @@ TEST_CASE("ResultsJSON includes SSA in microstructure block", "[ResultsJSON][mic
           Approx(0.0625));
 }
 
+TEST_CASE("ResultsJSON includes both raw and corrected SSA", "[ResultsJSON][microstructure]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setSpecificSurfaceArea(0.042);
+    writer.setSpecificSurfaceAreaRaw(0.0625);
+
+    auto j = writer.buildJSON();
+    REQUIRE(j["openimpala"].contains("microstructure"));
+    CHECK(j["openimpala"]["microstructure"]["specific_surface_area"].get<double>() ==
+          Approx(0.042));
+    CHECK(j["openimpala"]["microstructure"]["specific_surface_area_raw"].get<double>() ==
+          Approx(0.0625));
+}
+
 TEST_CASE("ResultsJSON includes multi-phase volume fractions", "[ResultsJSON][microstructure]") {
     ResultsJSON writer;
     writer.setPhysicsConfig(makeConfig("diffusion"));

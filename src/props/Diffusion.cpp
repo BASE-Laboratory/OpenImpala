@@ -122,16 +122,23 @@ void runMicrostructureParams(const amrex::Geometry& geom, const amrex::BoxArray&
     if (compute_ssa) {
         int ssa_phase_a = 0;
         int ssa_phase_b = 1;
+        int ssa_boundary_padding = 0;
         pp_ms.query("ssa_phase_a", ssa_phase_a);
         pp_ms.query("ssa_phase_b", ssa_phase_b);
+        pp_ms.query("ssa_boundary_padding", ssa_boundary_padding);
 
-        OpenImpala::SpecificSurfaceArea ssa_calc(geom, mf_phase, ssa_phase_a, ssa_phase_b);
-        amrex::Real ssa = ssa_calc.value_ssa(false);
-        json_writer.setSpecificSurfaceArea(ssa);
+        OpenImpala::SpecificSurfaceArea ssa_calc(geom, mf_phase, ssa_phase_a, ssa_phase_b, 0,
+                                                 ssa_boundary_padding);
+        amrex::Real ssa_raw = ssa_calc.value_ssa(false);
+        amrex::Real ssa_corrected = ssa_calc.value_corrected(false);
+        json_writer.setSpecificSurfaceArea(ssa_corrected);
+        json_writer.setSpecificSurfaceAreaRaw(ssa_raw);
 
         if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Print() << "  Specific Surface Area: " << std::fixed << std::setprecision(6)
-                           << ssa << " (faces/voxel)\n";
+            amrex::Print() << "  Specific Surface Area (raw): " << std::fixed
+                           << std::setprecision(6) << ssa_raw << " (faces/voxel)\n";
+            amrex::Print() << "  Specific Surface Area (corrected): " << std::fixed
+                           << std::setprecision(6) << ssa_corrected << " (Cauchy-Crofton)\n";
         }
     }
 

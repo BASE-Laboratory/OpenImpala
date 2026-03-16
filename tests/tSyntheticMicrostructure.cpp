@@ -144,6 +144,128 @@ int main(int argc, char* argv[]) {
         }
 
         // ================================================================
+        // Test 2b: SSA — Corrected SSA = (2/3) * raw for half-split
+        // ================================================================
+        if (status.passed) {
+            amrex::iMultiFab mf(ba, dm, 1, 0);
+            int half = N / 2;
+
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+            for (amrex::MFIter mfi(mf, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                const amrex::Box& bx = mfi.tilebox();
+                auto arr = mf.array(mfi);
+                amrex::LoopOnCpu(
+                    bx, [&](int i, int j, int k) { arr(i, j, k, 0) = (i < half) ? 0 : 1; });
+            }
+
+            OpenImpala::SpecificSurfaceArea ssa(geom, mf, 0, 1);
+            amrex::Real raw_ssa = ssa.value_ssa(false);
+            amrex::Real corrected_ssa = ssa.value_corrected(false);
+            amrex::Real expected_corrected = (2.0 / 3.0) * raw_ssa;
+
+            if (std::abs(corrected_ssa - expected_corrected) > tolerance) {
+                status.recordFail("Test 2b (SSA corrected): got " + std::to_string(corrected_ssa) +
+                                  ", expected " + std::to_string(expected_corrected));
+            }
+
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << " Test 2b (SSA corrected): PASS (raw=" << raw_ssa
+                               << " corrected=" << corrected_ssa << ")\n";
+            }
+        }
+
+        // ================================================================
+        // Test 2c: SSA boundary padding — cube touching domain face
+        // ================================================================
+        if (status.passed) {
+            amrex::iMultiFab mf(ba, dm, 1, 0);
+            mf.setVal(0); // all phase 0
+
+            // Place a small cube of phase 1 touching the low-X domain face
+            int cube_sz = 3;
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+            for (amrex::MFIter mfi(mf, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                const amrex::Box& bx = mfi.tilebox();
+                auto arr = mf.array(mfi);
+                amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+                    // Cube at (0, N/2-1, N/2-1) touching low-X face
+                    if (i < cube_sz && j >= N / 2 - 1 && j < N / 2 - 1 + cube_sz &&
+                        k >= N / 2 - 1 && k < N / 2 - 1 + cube_sz) {
+                        arr(i, j, k, 0) = 1;
+                    }
+                });
+            }
+
+            // With padding=0, the cube touching the boundary has interface faces
+            OpenImpala::SpecificSurfaceArea ssa_no_pad(geom, mf, 0, 1, 0, 0);
+            long long fc_no_pad = 0, tc_no_pad = 0;
+            ssa_no_pad.value(fc_no_pad, tc_no_pad, false);
+
+            // With padding=1, the outermost layer is excluded.
+            // The cube at x=0..2 loses its x=0 layer from counting.
+            OpenImpala::SpecificSurfaceArea ssa_pad(geom, mf, 0, 1, 0, 1);
+            long long fc_pad = 0, tc_pad = 0;
+            ssa_pad.value(fc_pad, tc_pad, false);
+
+            // Padding should reduce both face count and total count
+            if (fc_pad >= fc_no_pad) {
+                status.recordFail(
+                    "Test 2c (SSA padding): padded face_count=" + std::to_string(fc_pad) +
+                    " should be < unpadded=" + std::to_string(fc_no_pad));
+            }
+            if (tc_pad >= tc_no_pad) {
+                status.recordFail(
+                    "Test 2c (SSA padding): padded total_count=" + std::to_string(tc_pad) +
+                    " should be < unpadded=" + std::to_string(tc_no_pad));
+            }
+
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << " Test 2c (SSA padding):   PASS (faces: " << fc_no_pad << " -> "
+                               << fc_pad << ", cells: " << tc_no_pad << " -> " << tc_pad << ")\n";
+            }
+        }
+
+        // ================================================================
+        // Test 2d: SSA — Diagonal plane (i+j+k < N) demonstrates laddering
+        // ================================================================
+        if (status.passed) {
+            amrex::iMultiFab mf(ba, dm, 1, 0);
+
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+            for (amrex::MFIter mfi(mf, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                const amrex::Box& bx = mfi.tilebox();
+                auto arr = mf.array(mfi);
+                amrex::LoopOnCpu(
+                    bx, [&](int i, int j, int k) { arr(i, j, k, 0) = (i + j + k < N) ? 0 : 1; });
+            }
+
+            OpenImpala::SpecificSurfaceArea ssa(geom, mf, 0, 1);
+            amrex::Real raw_ssa = ssa.value_ssa(false);
+            amrex::Real corrected_ssa = ssa.value_corrected(false);
+
+            // For a diagonal plane, raw SSA overestimates. The Cauchy-Crofton
+            // correction (2/3 factor) should bring it closer to the true value.
+            // We verify: corrected < raw, and both are positive.
+            if (corrected_ssa >= raw_ssa || raw_ssa <= 0.0) {
+                status.recordFail(
+                    "Test 2d (SSA diagonal): corrected=" + std::to_string(corrected_ssa) +
+                    " should be < raw=" + std::to_string(raw_ssa));
+            }
+
+            if (status.passed && verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << " Test 2d (SSA diagonal):  PASS (raw=" << std::fixed
+                               << std::setprecision(6) << raw_ssa << " corrected=" << corrected_ssa
+                               << ")\n";
+            }
+        }
+
+        // ================================================================
         // Test 3: MacroGeometry — verify dimensions
         // ================================================================
         if (status.passed) {
