@@ -37,11 +37,15 @@ target_include_directories(openimpala_io PUBLIC
 # Props Library (C++ only — Fortran kernels migrated to native C++)
 # ==============================================================================
 add_library(openimpala_props OBJECT
+    props/ConnectedComponents.cpp
     props/DeffTensor.cpp
     props/EffectiveDiffusivityHypre.cpp
     props/HypreStructSolver.cpp
+    props/ParticleSizeDistribution.cpp
     props/PercolationCheck.cpp
     props/REVStudy.cpp
+    props/SpecificSurfaceArea.cpp
+    props/ThroughThicknessProfile.cpp
     props/TortuosityDirect.cpp
     props/TortuosityHypre.cpp
     props/VolumeFraction.cpp

@@ -95,6 +95,7 @@ openimpala_add_test(tTortuosityDirect  "${CMAKE_CURRENT_SOURCE_DIR}/tTortuosityD
 openimpala_add_test(tSyntheticVolumeFraction  "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticVolumeFraction.cpp")
 openimpala_add_test(tSyntheticPercolation     "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticPercolation.cpp")
 openimpala_add_test(tSyntheticEffectiveDiffusivity "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticEffectiveDiffusivity.cpp")
+openimpala_add_test(tSyntheticMicrostructure "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticMicrostructure.cpp")
 
 # ==============================================================================
 # Multi-Phase Transport Tests

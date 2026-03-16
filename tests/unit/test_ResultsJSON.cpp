@@ -456,6 +456,121 @@ TEST_CASE("ResultsJSON BPX Bruggeman handles edge cases", "[ResultsJSON][bpx]") 
 }
 
 // ============================================================================
+// Microstructure parameters
+// ============================================================================
+TEST_CASE("ResultsJSON includes SSA in microstructure block", "[ResultsJSON][microstructure]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setSpecificSurfaceArea(0.0625);
+
+    auto j = writer.buildJSON();
+    REQUIRE(j["openimpala"].contains("microstructure"));
+    CHECK(j["openimpala"]["microstructure"]["specific_surface_area"].get<double>() ==
+          Approx(0.0625));
+}
+
+TEST_CASE("ResultsJSON includes multi-phase volume fractions", "[ResultsJSON][microstructure]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setMultiPhaseVolumeFractions({{0, 0.35}, {1, 0.50}, {2, 0.15}});
+
+    auto j = writer.buildJSON();
+    auto& pvf = j["openimpala"]["microstructure"]["phase_volume_fractions"];
+    CHECK(pvf["0"].get<double>() == Approx(0.35));
+    CHECK(pvf["1"].get<double>() == Approx(0.50));
+    CHECK(pvf["2"].get<double>() == Approx(0.15));
+}
+
+TEST_CASE("ResultsJSON includes macro geometry", "[ResultsJSON][microstructure]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setMacroGeometry(300.0, 20000.0, 6000000.0);
+
+    auto j = writer.buildJSON();
+    auto& mg = j["openimpala"]["microstructure"]["macro_geometry"];
+    CHECK(mg["thickness_voxels"].get<double>() == Approx(300.0));
+    CHECK(mg["cross_section_voxels"].get<double>() == Approx(20000.0));
+    CHECK(mg["total_volume_voxels"].get<double>() == Approx(6000000.0));
+}
+
+TEST_CASE("ResultsJSON includes through-thickness profile", "[ResultsJSON][microstructure]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    std::vector<double> profile = {0.3, 0.35, 0.32, 0.28};
+    writer.setThroughThicknessProfile("Z", profile);
+
+    auto j = writer.buildJSON();
+    auto& ttp = j["openimpala"]["microstructure"]["through_thickness_profiles"]["Z"];
+    auto vf = ttp["volume_fraction"].get<std::vector<double>>();
+    REQUIRE(vf.size() == 4);
+    CHECK(vf[0] == Approx(0.3));
+    CHECK(vf[3] == Approx(0.28));
+}
+
+TEST_CASE("ResultsJSON includes solid-phase Bruggeman", "[ResultsJSON][microstructure]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setSolidPhaseBruggeman(2.5);
+
+    auto j = writer.buildJSON();
+    CHECK(j["openimpala"]["microstructure"]["solid_phase_bruggeman"].get<double>() == Approx(2.5));
+}
+
+TEST_CASE("ResultsJSON includes PSD", "[ResultsJSON][microstructure]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setParticleSizeDistribution(12.3, 147, {8.1, 9.3, 10.2});
+
+    auto j = writer.buildJSON();
+    auto& psd = j["openimpala"]["microstructure"]["particle_size"];
+    CHECK(psd["mean_radius_voxels"].get<double>() == Approx(12.3));
+    CHECK(psd["num_particles"].get<int>() == 147);
+    auto radii = psd["radii_voxels"].get<std::vector<double>>();
+    REQUIRE(radii.size() == 3);
+    CHECK(radii[0] == Approx(8.1));
+}
+
+TEST_CASE("ResultsJSON omits microstructure block when no params set",
+          "[ResultsJSON][microstructure]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVolumeFraction(0.35);
+    writer.addDirectionResult("X", 0.12);
+
+    auto j = writer.buildJSON();
+    CHECK_FALSE(j["openimpala"].contains("microstructure"));
+}
+
+TEST_CASE("ResultsJSON BPX includes microstructure params with voxel size",
+          "[ResultsJSON][bpx][microstructure]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVolumeFraction(0.35);
+    writer.addDirectionResult("X", 0.12);
+    writer.setBPXElectrode("negative");
+    writer.setSolidPhaseBruggeman(2.5);
+    writer.setParticleSizeDistribution(12.3, 147, {8.1, 9.3, 10.2});
+    writer.setMacroGeometry(300.0, 20000.0, 6000000.0);
+    writer.setVoxelSize(0.5e-6);
+
+    auto j = writer.buildJSON();
+    auto& params = j["bpx"]["Parameterisation"]["Negative electrode"];
+    CHECK(params["Bruggeman coefficient (electrode)"].get<double>() == Approx(2.5));
+    CHECK(params["Particle radius [m]"].get<double>() == Approx(12.3 * 0.5e-6));
+    CHECK(params["Electrode thickness [m]"].get<double>() == Approx(300.0 * 0.5e-6));
+}
+
+TEST_CASE("ResultsJSON includes voxel_size_m in microstructure", "[ResultsJSON][microstructure]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVoxelSize(0.5e-6);
+    writer.setSpecificSurfaceArea(0.0625);
+
+    auto j = writer.buildJSON();
+    CHECK(j["openimpala"]["microstructure"]["voxel_size_m"].get<double>() == Approx(0.5e-6));
+}
+
+// ============================================================================
 // Full round-trip with all features
 // ============================================================================
 TEST_CASE("ResultsJSON full round-trip with BPX and provenance", "[ResultsJSON][integration]") {

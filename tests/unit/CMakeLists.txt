@@ -34,3 +34,15 @@ target_link_libraries(unit_ResultsJSON PRIVATE
 )
 
 catch_discover_tests(unit_ResultsJSON)
+
+# --- MacroGeometry unit tests ---
+add_executable(unit_MacroGeometry
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_MacroGeometry.cpp"
+)
+target_include_directories(unit_MacroGeometry PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/props
+)
+target_compile_definitions(unit_MacroGeometry PRIVATE OPENIMPALA_UNIT_TEST)
+target_link_libraries(unit_MacroGeometry PRIVATE Catch2::Catch2WithMain)
+
+catch_discover_tests(unit_MacroGeometry)
