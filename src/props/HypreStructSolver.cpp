@@ -137,9 +137,8 @@ void HypreStructSolver::setupGrid(bool periodic) {
 // ---------------------------------------------------------------------------
 void HypreStructSolver::setupStencil() {
     HYPRE_Int ierr = 0;
-    HYPRE_Int offsets[STENCIL_SIZE][AMREX_SPACEDIM] = {{0, 0, 0},  {-1, 0, 0}, {1, 0, 0},
-                                                        {0, -1, 0}, {0, 1, 0},  {0, 0, -1},
-                                                        {0, 0, 1}};
+    HYPRE_Int offsets[STENCIL_SIZE][AMREX_SPACEDIM] = {{0, 0, 0}, {-1, 0, 0}, {1, 0, 0}, {0, -1, 0},
+                                                       {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
     if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "  setupStencil: Creating " << STENCIL_SIZE << "-point stencil..."
                        << std::endl;
@@ -161,8 +160,8 @@ void HypreStructSolver::setupStencil() {
 // createMatrixAndVectors — allocate HYPRE matrix A, RHS b, solution x
 // ---------------------------------------------------------------------------
 void HypreStructSolver::createMatrixAndVectors() {
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_grid != nullptr,
-                                     "m_grid is NULL in createMatrixAndVectors. Call setupGrid first.");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        m_grid != nullptr, "m_grid is NULL in createMatrixAndVectors. Call setupGrid first.");
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_stencil != nullptr,
         "m_stencil is NULL in createMatrixAndVectors. Call setupStencil first.");
@@ -171,18 +170,40 @@ void HypreStructSolver::createMatrixAndVectors() {
 
     ierr = HYPRE_StructMatrixCreate(MPI_COMM_WORLD, m_grid, m_stencil, &m_A);
     HYPRE_CHECK(ierr);
-    ierr = HYPRE_StructMatrixInitialize(m_A);
-    HYPRE_CHECK(ierr);
 
     ierr = HYPRE_StructVectorCreate(MPI_COMM_WORLD, m_grid, &m_b);
     HYPRE_CHECK(ierr);
+
+    ierr = HYPRE_StructVectorCreate(MPI_COMM_WORLD, m_grid, &m_x);
+    HYPRE_CHECK(ierr);
+
+#ifdef OPENIMPALA_USE_GPU
+    // When GPU acceleration is enabled, tell HYPRE to allocate matrix and
+    // vector data on the device.  The SetBoxValues calls will then expect
+    // device pointers (or HYPRE performs the transfer internally depending
+    // on build configuration).  HYPRE_MEMORY_DEVICE is defined when HYPRE
+    // is built with --with-cuda or --with-hip.
+    HYPRE_StructMatrixSetMemoryLocation(m_A, HYPRE_MEMORY_DEVICE);
+    HYPRE_StructVectorSetMemoryLocation(m_b, HYPRE_MEMORY_DEVICE);
+    HYPRE_StructVectorSetMemoryLocation(m_x, HYPRE_MEMORY_DEVICE);
+
+    // Use a GPU-friendly execution policy for the preconditioner
+    HYPRE_SetExecutionPolicy(HYPRE_EXEC_DEVICE);
+
+    if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
+        amrex::Print() << "  createMatrixAndVectors: HYPRE memory location set to DEVICE."
+                       << std::endl;
+    }
+#endif
+
+    ierr = HYPRE_StructMatrixInitialize(m_A);
+    HYPRE_CHECK(ierr);
+
     ierr = HYPRE_StructVectorInitialize(m_b);
     HYPRE_CHECK(ierr);
     ierr = HYPRE_StructVectorSetConstantValues(m_b, 0.0);
     HYPRE_CHECK(ierr);
 
-    ierr = HYPRE_StructVectorCreate(MPI_COMM_WORLD, m_grid, &m_x);
-    HYPRE_CHECK(ierr);
     ierr = HYPRE_StructVectorInitialize(m_x);
     HYPRE_CHECK(ierr);
     ierr = HYPRE_StructVectorSetConstantValues(m_x, 0.0);

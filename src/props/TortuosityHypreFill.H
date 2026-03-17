@@ -12,6 +12,10 @@
 #include <AMReX_BLassert.H>
 #include <AMReX_REAL.H>
 #include <AMReX_Print.H>
+#include <AMReX_Array4.H>
+#include <AMReX_GpuLaunch.H>
+#include <AMReX_GpuQualifiers.H>
+#include <AMReX_Math.H>
 
 #include "BoundaryCondition.H"
 
@@ -302,6 +306,149 @@ inline void tortuosityFillMatrix(amrex::Real* a, amrex::Real* rhs, amrex::Real* 
                           dc_hi, bxlo, bxhi, domlo, domhi, dxinv, vlo, vhi, dir);
     }
 }
+
+// =============================================================================
+// GPU-accelerated matrix fill kernel
+// =============================================================================
+#ifdef OPENIMPALA_USE_GPU
+
+/**
+ * @brief GPU-compatible tortuosity matrix fill using AMReX ParallelFor.
+ *
+ * Fills HYPRE stencil coefficients, RHS, and initial guess for the tortuosity
+ * solve on GPU. Uses Array4<> accessors for mask and diffusion coefficient data.
+ * The output arrays (a, rhs, xinit) must be device-accessible.
+ *
+ * @param bx         Valid box defining the region.
+ * @param a          Device pointer: flattened stencil, size bx.numPts()*7.
+ * @param rhs        Device pointer: RHS, size bx.numPts().
+ * @param xinit      Device pointer: initial guess, size bx.numPts().
+ * @param mask_arr   Array4<const int> for activity mask (with ghosts).
+ * @param dc_arr     Array4<const Real> for diffusion coefficients (with ghosts).
+ * @param domlo      Domain lower corner.
+ * @param domhi      Domain upper corner.
+ * @param dxinv      Inverse grid spacing squared [1/dx^2, 1/dy^2, 1/dz^2].
+ * @param vlo        Dirichlet BC value at low face.
+ * @param vhi        Dirichlet BC value at high face.
+ * @param dir        Flow direction (0=X, 1=Y, 2=Z).
+ */
+inline void tortuosityFillMatrixGpu(const amrex::Box& bx, amrex::Real* a, amrex::Real* rhs,
+                                    amrex::Real* xinit, const amrex::Array4<const int>& mask_arr,
+                                    const amrex::Array4<const amrex::Real>& dc_arr,
+                                    const int* domlo, const int* domhi, const amrex::Real* dxinv,
+                                    amrex::Real vlo, amrex::Real vhi, int dir) {
+    const int bx_lo0 = bx.smallEnd(0);
+    const int bx_lo1 = bx.smallEnd(1);
+    const int bx_lo2 = bx.smallEnd(2);
+    const int bx_nx = bx.length(0);
+    const int bx_ny = bx.length(1);
+
+    const amrex::Real coeff_x = dxinv[0];
+    const amrex::Real coeff_y = dxinv[1];
+    const amrex::Real coeff_z = dxinv[2];
+
+    const int dom_lo_dir = domlo[dir];
+    const int dom_hi_dir = domhi[dir];
+    const amrex::Real domain_extent = static_cast<amrex::Real>(dom_hi_dir - dom_lo_dir);
+    const amrex::Real inv_extent =
+        (std::abs(domain_extent) < SMALL_REAL) ? 0.0 : 1.0 / domain_extent;
+
+    amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+        // Linear index into output arrays (column-major: i varies fastest)
+        const int m_idx = (i - bx_lo0) + (j - bx_lo1) * bx_nx + (k - bx_lo2) * bx_nx * bx_ny;
+        const int stn_start = NSTENCIL * m_idx;
+
+        // Initialize stencil to zero
+        for (int s = 0; s < NSTENCIL; ++s)
+            a[stn_start + s] = 0.0;
+
+        // Inactive cell: decouple
+        if (mask_arr(i, j, k) == CELL_INACTIVE) {
+            a[stn_start + STN_C] = 1.0;
+            rhs[m_idx] = 0.0;
+            xinit[m_idx] = 0.0;
+            return;
+        }
+
+        // Active cell: build stencil with harmonic-mean face coefficients
+        const amrex::Real D_c = dc_arr(i, j, k);
+        amrex::Real diag_val = 0.0;
+
+        // -X face
+        if (mask_arr(i - 1, j, k) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i - 1, j, k);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a[stn_start + STN_MX] = -D_face * coeff_x;
+            diag_val += D_face * coeff_x;
+        }
+
+        // +X face
+        if (mask_arr(i + 1, j, k) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i + 1, j, k);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a[stn_start + STN_PX] = -D_face * coeff_x;
+            diag_val += D_face * coeff_x;
+        }
+
+        // -Y face
+        if (mask_arr(i, j - 1, k) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i, j - 1, k);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a[stn_start + STN_MY] = -D_face * coeff_y;
+            diag_val += D_face * coeff_y;
+        }
+
+        // +Y face
+        if (mask_arr(i, j + 1, k) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i, j + 1, k);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a[stn_start + STN_PY] = -D_face * coeff_y;
+            diag_val += D_face * coeff_y;
+        }
+
+        // -Z face
+        if (mask_arr(i, j, k - 1) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i, j, k - 1);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a[stn_start + STN_MZ] = -D_face * coeff_z;
+            diag_val += D_face * coeff_z;
+        }
+
+        // +Z face
+        if (mask_arr(i, j, k + 1) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i, j, k + 1);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a[stn_start + STN_PZ] = -D_face * coeff_z;
+            diag_val += D_face * coeff_z;
+        }
+
+        a[stn_start + STN_C] = diag_val;
+
+        // Zero diagonal safety: decouple
+        if (amrex::Math::abs(diag_val) < SMALL_REAL) {
+            for (int s = 0; s < NSTENCIL; ++s)
+                a[stn_start + s] = 0.0;
+            a[stn_start + STN_C] = 1.0;
+            rhs[m_idx] = 0.0;
+            xinit[m_idx] = 0.0;
+            return;
+        }
+
+        rhs[m_idx] = 0.0;
+
+        // Initial guess: linear interpolation along flow direction
+        amrex::Real coord = 0.0;
+        if (dir == 0)
+            coord = static_cast<amrex::Real>(i - dom_lo_dir);
+        else if (dir == 1)
+            coord = static_cast<amrex::Real>(j - dom_lo_dir);
+        else
+            coord = static_cast<amrex::Real>(k - dom_lo_dir);
+        xinit[m_idx] = vlo + (vhi - vlo) * coord * inv_extent;
+    });
+}
+
+#endif // OPENIMPALA_USE_GPU
 
 } // namespace OpenImpala
 
