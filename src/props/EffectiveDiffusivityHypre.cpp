@@ -18,6 +18,10 @@
 
 #include <AMReX_MultiFab.H>
 #include <AMReX_iMultiFab.H>
+#ifdef OPENIMPALA_USE_GPU
+#include <AMReX_GpuDevice.H>
+#include <AMReX_GpuContainers.H>
+#endif
 #include <AMReX_MultiFabUtil.H>
 #include <AMReX_PlotFileUtil.H>
 #include <AMReX_ParallelDescriptor.H>
@@ -98,8 +102,7 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
     const std::string& resultspath, int verbose_level, bool write_plotfile_flag)
     : HypreStructSolver(geom, ba, dm, solver_type, 1e-9, 1000, verbose_level),
       m_mf_phase_original(ba, dm, mf_phase_input.nComp(), mf_phase_input.nGrow()),
-      m_phase_id(phase_id_arg), m_dir_solve(dir_of_chi_k),
-      m_resultspath(resultspath),
+      m_phase_id(phase_id_arg), m_dir_solve(dir_of_chi_k), m_resultspath(resultspath),
       m_write_plotfile(write_plotfile_flag), m_mf_chi(ba, dm, numComponentsChi, 1),
       m_mf_active_mask(ba, dm, 1, 1), m_mf_diff_coeff(ba, dm, 1, 1) {
     // Ensure HYPRE is initialised exactly once (thread-safe via std::call_once).
@@ -417,6 +420,53 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
     std::vector<amrex::Real> rhs_values_buffer;
     std::vector<amrex::Real> initial_guess_buffer;
 
+#ifdef OPENIMPALA_USE_GPU
+    // GPU path: use device-resident buffers and ParallelFor kernel
+    for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+        const amrex::Box& valid_bx = mfi.validbox();
+        const int npts_valid = static_cast<int>(valid_bx.numPts());
+        if (npts_valid == 0)
+            continue;
+
+        const size_t mtx_size = static_cast<size_t>(npts_valid) * stencil_size;
+        amrex::Gpu::DeviceVector<amrex::Real> d_matrix(mtx_size);
+        amrex::Gpu::DeviceVector<amrex::Real> d_rhs(npts_valid);
+        amrex::Gpu::DeviceVector<amrex::Real> d_xinit(npts_valid);
+
+        const auto mask_arr = m_mf_active_mask.const_array(mfi, MaskComp);
+        const auto dc_arr = m_mf_diff_coeff.const_array(mfi, 0);
+
+        OpenImpala::effDiffFillMatrixGpu(valid_bx, d_matrix.data(), d_rhs.data(), d_xinit.data(),
+                                         mask_arr, dc_arr, m_dx.dataPtr(), current_dir_int);
+        amrex::Gpu::streamSynchronize();
+
+        // Copy device buffers to host for HYPRE SetBoxValues
+        matrix_values_buffer.resize(mtx_size);
+        rhs_values_buffer.resize(npts_valid);
+        initial_guess_buffer.resize(npts_valid);
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_matrix.begin(), d_matrix.end(),
+                         matrix_values_buffer.begin());
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_rhs.begin(), d_rhs.end(),
+                         rhs_values_buffer.begin());
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_xinit.begin(), d_xinit.end(),
+                         initial_guess_buffer.begin());
+
+        auto hypre_lo_valid = EffectiveDiffusivityHypre::loV(valid_bx);
+        auto hypre_hi_valid = EffectiveDiffusivityHypre::hiV(valid_bx);
+
+        ierr = HYPRE_StructMatrixSetBoxValues(m_A, hypre_lo_valid.data(), hypre_hi_valid.data(),
+                                              stencil_size, stencil_indices_hypre,
+                                              matrix_values_buffer.data());
+        HYPRE_CHECK(ierr);
+        ierr = HYPRE_StructVectorSetBoxValues(m_b, hypre_lo_valid.data(), hypre_hi_valid.data(),
+                                              rhs_values_buffer.data());
+        HYPRE_CHECK(ierr);
+        ierr = HYPRE_StructVectorSetBoxValues(m_x, hypre_lo_valid.data(), hypre_hi_valid.data(),
+                                              initial_guess_buffer.data());
+        HYPRE_CHECK(ierr);
+    }
+#else
+    // CPU path: original implementation with OMP tiling
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion()) private(                                 \
         matrix_values_buffer, rhs_values_buffer, initial_guess_buffer)
@@ -461,6 +511,7 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
                                               initial_guess_buffer.data());
         HYPRE_CHECK(ierr);
     }
+#endif
 
     // Assemble via base class
     assembleSystem();

@@ -23,6 +23,10 @@
 #include <AMReX_MultiFab.H>
 #include <AMReX_MultiFabUtil.H> // Needed for amrex::Copy, amrex::sum
 #include <AMReX_PlotFileUtil.H>
+#ifdef OPENIMPALA_USE_GPU
+#include <AMReX_GpuDevice.H>
+#include <AMReX_GpuContainers.H>
+#endif
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_Print.H>
 #include <AMReX_Utility.H>
@@ -663,6 +667,78 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
     std::vector<amrex::Real> rhs_values;
     std::vector<amrex::Real> initial_guess;
 
+#ifdef OPENIMPALA_USE_GPU
+    // GPU path: use device-resident buffers and ParallelFor kernel.
+    // BCs are applied on the CPU side after the GPU kernel fills the interior.
+    for (amrex::MFIter mfi(m_mf_phase); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.validbox();
+        const int npts = static_cast<int>(bx.numPts());
+        if (npts == 0)
+            continue;
+
+        // Allocate device buffers via AMReX arena
+        const size_t mtx_size = static_cast<size_t>(npts) * stencil_size;
+        amrex::Gpu::DeviceVector<amrex::Real> d_matrix(mtx_size);
+        amrex::Gpu::DeviceVector<amrex::Real> d_rhs(npts);
+        amrex::Gpu::DeviceVector<amrex::Real> d_xinit(npts);
+
+        const auto mask_arr = m_mf_active_mask.const_array(mfi, MaskComp);
+        const auto dc_arr = m_mf_diff_coeff.const_array(mfi, 0);
+
+        // GPU kernel: fills interior stencil (no BCs)
+        OpenImpala::tortuosityFillMatrixGpu(bx, d_matrix.data(), d_rhs.data(), d_xinit.data(),
+                                            mask_arr, dc_arr, domain.loVect(), domain.hiVect(),
+                                            dxinv_sq.data(), m_vlo, m_vhi, dir_int);
+        amrex::Gpu::streamSynchronize();
+
+        // Copy to host for BC application (BCs are small surface ops, CPU is fine)
+        matrix_values.resize(mtx_size);
+        rhs_values.resize(npts);
+        initial_guess.resize(npts);
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_matrix.begin(), d_matrix.end(),
+                         matrix_values.begin());
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_rhs.begin(), d_rhs.end(), rhs_values.begin());
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_xinit.begin(), d_xinit.end(),
+                         initial_guess.begin());
+
+        // Apply BCs on host (surface operation, not performance-critical)
+        const amrex::IArrayBox& mask_iab = m_mf_active_mask[mfi];
+        const int* mask_ptr = mask_iab.dataPtr(MaskComp);
+        const auto& mask_box = mask_iab.box();
+        const amrex::FArrayBox& dc_fab = m_mf_diff_coeff[mfi];
+        const amrex::Real* dc_ptr = dc_fab.dataPtr(0);
+        const auto& dc_box = dc_fab.box();
+
+        if (m_bc_inlet_outlet != nullptr) {
+            m_bc_inlet_outlet->applyBC(matrix_values.data(), rhs_values.data(),
+                                       initial_guess.data(), npts, mask_ptr, mask_box.loVect(),
+                                       mask_box.hiVect(), dc_ptr, dc_box.loVect(), dc_box.hiVect(),
+                                       bx.loVect(), bx.hiVect(), domain.loVect(), domain.hiVect(),
+                                       dxinv_sq.data(), m_vlo, m_vhi, dir_int);
+        }
+        if (m_bc_sides != nullptr) {
+            m_bc_sides->applyBC(matrix_values.data(), rhs_values.data(), initial_guess.data(), npts,
+                                mask_ptr, mask_box.loVect(), mask_box.hiVect(), dc_ptr,
+                                dc_box.loVect(), dc_box.hiVect(), bx.loVect(), bx.hiVect(),
+                                domain.loVect(), domain.hiVect(), dxinv_sq.data(), m_vlo, m_vhi,
+                                dir_int);
+        }
+
+        auto hypre_lo = OpenImpala::TortuosityHypre::loV(bx);
+        auto hypre_hi = OpenImpala::TortuosityHypre::hiV(bx);
+
+        ierr = HYPRE_StructMatrixSetBoxValues(m_A, hypre_lo.data(), hypre_hi.data(), stencil_size,
+                                              stencil_indices, matrix_values.data());
+        HYPRE_CHECK(ierr);
+        ierr = HYPRE_StructVectorSetBoxValues(m_b, hypre_lo.data(), hypre_hi.data(),
+                                              rhs_values.data());
+        HYPRE_CHECK(ierr);
+        ierr = HYPRE_StructVectorSetBoxValues(m_x, hypre_lo.data(), hypre_hi.data(),
+                                              initial_guess.data());
+        HYPRE_CHECK(ierr);
+    }
+#else
+    // CPU path: original implementation with OMP tiling
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion()) private(matrix_values, rhs_values,       \
                                                                       initial_guess)
@@ -691,7 +767,7 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
             bx.loVect(), bx.hiVect(), domain.loVect(), domain.hiVect(), dxinv_sq.data(), m_vlo,
             m_vhi, dir_int, m_verbose, m_bc_inlet_outlet.get(), m_bc_sides.get());
 
-        // NaN/Inf check remains the same...
+        // NaN/Inf check
         bool data_ok = true;
         for (size_t i = 0; i < matrix_values.size(); ++i) {
             if (std::isnan(matrix_values[i]) || std::isinf(matrix_values[i]))
@@ -704,7 +780,6 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
         if (!data_ok) {
             amrex::Warning("NaN/Inf detected in kernel output before HYPRE SetBoxValues!");
         }
-
 
         auto hypre_lo = OpenImpala::TortuosityHypre::loV(bx);
         auto hypre_hi = OpenImpala::TortuosityHypre::hiV(bx);
@@ -719,6 +794,7 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
                                               initial_guess.data());
         HYPRE_CHECK(ierr);
     }
+#endif
     if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "  setupMatrixEq: Finished MFIter loop." << std::endl;
     }

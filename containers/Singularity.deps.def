@@ -156,6 +156,18 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     mkdir build && cd build
     echo "--- Configuring AMReX ---"
     # Use cmake3 if cmake isn't the default command name
+    # GPU_BACKEND can be set to CUDA or HIP to build GPU-accelerated AMReX.
+    # For GPU builds, also set AMREX_CUDA_ARCH (e.g., 70 for V100, 80 for A100).
+    # Example:  GPU_BACKEND=CUDA AMREX_CUDA_ARCH=80  (before running build)
+    AMREX_GPU_FLAGS=""
+    if [ "${GPU_BACKEND:-NONE}" = "CUDA" ]; then
+        AMREX_GPU_FLAGS="-DAMReX_GPU_BACKEND=CUDA -DAMReX_CUDA_ARCH=${AMREX_CUDA_ARCH:-80}"
+        echo "--- AMReX: Enabling CUDA GPU backend (arch=${AMREX_CUDA_ARCH:-80}) ---"
+    elif [ "${GPU_BACKEND:-NONE}" = "HIP" ]; then
+        AMREX_GPU_FLAGS="-DAMReX_GPU_BACKEND=HIP -DAMReX_AMD_ARCH=${AMREX_AMD_ARCH:-gfx90a}"
+        echo "--- AMReX: Enabling HIP GPU backend (arch=${AMREX_AMD_ARCH:-gfx90a}) ---"
+    fi
+
     cmake3 .. \
         -DCMAKE_INSTALL_PREFIX=${AMREX_INSTALL_PREFIX} \
         -DCMAKE_BUILD_TYPE=Release \
@@ -163,6 +175,7 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
         -DAMReX_OMP=ON \
         -DAMReX_EB=ON \
         -DAMReX_FORTRAN=ON \
+        ${AMREX_GPU_FLAGS} \
         -DCMAKE_C_COMPILER=$(which mpicc) \
         -DCMAKE_CXX_COMPILER=$(which mpicxx) \
         -DCMAKE_Fortran_COMPILER=$(which mpif90) \
@@ -224,10 +237,21 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     cd /tmp/build_src
     git clone --depth 1 --branch ${HYPRE_VERSION} https://github.com/hypre-space/hypre.git
     cd hypre/src # Configure needs to be run from src directory
+    # GPU_BACKEND can be set to CUDA or HIP to build GPU-accelerated HYPRE.
+    HYPRE_GPU_FLAGS=""
+    if [ "${GPU_BACKEND:-NONE}" = "CUDA" ]; then
+        HYPRE_GPU_FLAGS="--with-cuda --with-cuda-home=${CUDA_HOME:-/usr/local/cuda}"
+        echo "--- HYPRE: Enabling CUDA GPU backend ---"
+    elif [ "${GPU_BACKEND:-NONE}" = "HIP" ]; then
+        HYPRE_GPU_FLAGS="--with-hip"
+        echo "--- HYPRE: Enabling HIP GPU backend ---"
+    fi
+
     LDFLAGS="-fopenmp" ./configure --prefix=${HYPRE_INSTALL_PREFIX} \
         --with-MPI \
         --with-openmp \
         --enable-shared \
+        ${HYPRE_GPU_FLAGS} \
         CFLAGS="-O3 -march=x86-64-v2" CXXFLAGS="-O3 -march=x86-64-v2"
 
     echo "--- Making HYPRE library ---"

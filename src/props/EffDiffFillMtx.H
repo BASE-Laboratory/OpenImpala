@@ -16,6 +16,10 @@
 #include <AMReX_BLassert.H>
 #include <AMReX_REAL.H>
 #include <AMReX_Print.H>
+#include <AMReX_Array4.H>
+#include <AMReX_GpuLaunch.H>
+#include <AMReX_GpuQualifiers.H>
+#include <AMReX_Math.H>
 
 #include <cmath>
 #include <cstdio>
@@ -50,7 +54,8 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                               const int* domhi, const amrex::Real* cell_sizes, int dir_k,
                               int verbose) {
 
-    if (npts <= 0) return;
+    if (npts <= 0)
+        return;
 
     const amrex::Real dx = cell_sizes[0];
     const amrex::Real dy = cell_sizes[1];
@@ -74,8 +79,7 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
     const int dc_nx = dc_hi[0] - dc_lo[0] + 1;
     const int dc_ny = dc_hi[1] - dc_lo[1] + 1;
     auto dc = [&](int i, int j, int k) -> amrex::Real {
-        return diff_coeff[(i - dc_lo[0]) + (j - dc_lo[1]) * dc_nx +
-                          (k - dc_lo[2]) * dc_nx * dc_ny];
+        return diff_coeff[(i - dc_lo[0]) + (j - dc_lo[1]) * dc_nx + (k - dc_lo[2]) * dc_nx * dc_ny];
     };
 
     constexpr int NSTEN = 7;
@@ -87,7 +91,8 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                 const int stn = NSTEN * m_idx;
 
                 // Initialize
-                for (int s = 0; s < NSTEN; ++s) a_out[stn + s] = 0.0;
+                for (int s = 0; s < NSTEN; ++s)
+                    a_out[stn + s] = 0.0;
                 rhs_out[m_idx] = 0.0;
                 xinit_out[m_idx] = 0.0;
 
@@ -114,7 +119,8 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                 } else {
                     // Internal Neumann: n_hat = (-1,0,0)
                     diag_val += D_c * inv_dx2;
-                    if (dir_k == 0) flux_bc_rhs += D_c / dx;
+                    if (dir_k == 0)
+                        flux_bc_rhs += D_c / dx;
                 }
 
                 // +X face
@@ -125,7 +131,8 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     diag_val += D_face * inv_dx2;
                 } else {
                     diag_val += D_c * inv_dx2;
-                    if (dir_k == 0) flux_bc_rhs -= D_c / dx;
+                    if (dir_k == 0)
+                        flux_bc_rhs -= D_c / dx;
                 }
 
                 // -Y face
@@ -136,7 +143,8 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     diag_val += D_face * inv_dy2;
                 } else {
                     diag_val += D_c * inv_dy2;
-                    if (dir_k == 1) flux_bc_rhs += D_c / dy;
+                    if (dir_k == 1)
+                        flux_bc_rhs += D_c / dy;
                 }
 
                 // +Y face
@@ -147,7 +155,8 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     diag_val += D_face * inv_dy2;
                 } else {
                     diag_val += D_c * inv_dy2;
-                    if (dir_k == 1) flux_bc_rhs -= D_c / dy;
+                    if (dir_k == 1)
+                        flux_bc_rhs -= D_c / dy;
                 }
 
 #if (AMREX_SPACEDIM == 3)
@@ -159,7 +168,8 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     diag_val += D_face * inv_dz2;
                 } else {
                     diag_val += D_c * inv_dz2;
-                    if (dir_k == 2) flux_bc_rhs += D_c / dz;
+                    if (dir_k == 2)
+                        flux_bc_rhs += D_c / dz;
                 }
 
                 // +Z face
@@ -170,7 +180,8 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     diag_val += D_face * inv_dz2;
                 } else {
                     diag_val += D_c * inv_dz2;
-                    if (dir_k == 2) flux_bc_rhs -= D_c / dz;
+                    if (dir_k == 2)
+                        flux_bc_rhs -= D_c / dz;
                 }
 #endif
 
@@ -198,15 +209,16 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                                     "cell (%d,%d,%d), diag_val=%.4e. Decoupling.\n",
                                     i, j, k, diag_val);
                     }
-                    for (int s = 0; s < NSTEN; ++s) a_out[stn + s] = 0.0;
+                    for (int s = 0; s < NSTEN; ++s)
+                        a_out[stn + s] = 0.0;
                     a_out[stn + STN_C] = 1.0;
                     rhs_out[m_idx] = 0.0;
                     xinit_out[m_idx] = 0.0;
                 }
 
                 if (verbose >= 3) {
-                    std::printf("DEBUG effdiff_fillmtx: Cell (%d,%d,%d) dir_k=%d D_c=%.4e\n", i,
-                                j, k, dir_k, D_c);
+                    std::printf("DEBUG effdiff_fillmtx: Cell (%d,%d,%d) dir_k=%d D_c=%.4e\n", i, j,
+                                k, dir_k, D_c);
                     std::printf("  Stencil A: %.4e %.4e %.4e %.4e %.4e %.4e %.4e\n", a_out[stn],
                                 a_out[stn + 1], a_out[stn + 2], a_out[stn + 3], a_out[stn + 4],
                                 a_out[stn + 5], a_out[stn + 6]);
@@ -221,6 +233,174 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
 
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_idx == npts, "effDiffFillMatrix: m_idx != npts.");
 }
+
+// =============================================================================
+// GPU-accelerated effective diffusivity matrix fill kernel
+// =============================================================================
+#ifdef OPENIMPALA_USE_GPU
+
+/**
+ * @brief GPU-compatible effective diffusivity matrix fill using AMReX ParallelFor.
+ *
+ * Fills HYPRE stencil coefficients, RHS, and initial guess for the cell problem
+ * div(D grad(chi_k)) = -div(D e_k) on GPU. Uses Array4<> accessors.
+ *
+ * @param bx         Valid box defining the region.
+ * @param a_out      Device pointer: flattened stencil, size bx.numPts()*7.
+ * @param rhs_out    Device pointer: RHS, size bx.numPts().
+ * @param xinit_out  Device pointer: initial guess, size bx.numPts().
+ * @param mask_arr   Array4<const int> for activity mask (with ghosts).
+ * @param dc_arr     Array4<const Real> for diffusion coefficients (with ghosts).
+ * @param cell_sizes Grid spacing [dx, dy, dz].
+ * @param dir_k      Direction of unit vector e_k (0=X, 1=Y, 2=Z).
+ */
+inline void effDiffFillMatrixGpu(const amrex::Box& bx, amrex::Real* a_out, amrex::Real* rhs_out,
+                                 amrex::Real* xinit_out, const amrex::Array4<const int>& mask_arr,
+                                 const amrex::Array4<const amrex::Real>& dc_arr,
+                                 const amrex::Real* cell_sizes, int dir_k) {
+    const int bx_lo0 = bx.smallEnd(0);
+    const int bx_lo1 = bx.smallEnd(1);
+    const int bx_lo2 = bx.smallEnd(2);
+    const int bx_nx = bx.length(0);
+    const int bx_ny = bx.length(1);
+
+    const amrex::Real dx = cell_sizes[0];
+    const amrex::Real dy = cell_sizes[1];
+    const amrex::Real dz = cell_sizes[2];
+
+    const amrex::Real inv_dx2 = 1.0 / (dx * dx);
+    const amrex::Real inv_dy2 = 1.0 / (dy * dy);
+    const amrex::Real inv_dz2 = 1.0 / (dz * dz);
+    const amrex::Real inv_2dx = 1.0 / (2.0 * dx);
+    const amrex::Real inv_2dy = 1.0 / (2.0 * dy);
+    const amrex::Real inv_2dz = 1.0 / (2.0 * dz);
+
+    constexpr int NSTEN = 7;
+
+    amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+        const int m_idx = (i - bx_lo0) + (j - bx_lo1) * bx_nx + (k - bx_lo2) * bx_nx * bx_ny;
+        const int stn = NSTEN * m_idx;
+
+        // Initialize
+        for (int s = 0; s < NSTEN; ++s)
+            a_out[stn + s] = 0.0;
+        rhs_out[m_idx] = 0.0;
+        xinit_out[m_idx] = 0.0;
+
+        // Inactive cell: decouple
+        if (mask_arr(i, j, k) == CELL_INACTIVE) {
+            a_out[stn + STN_C] = 1.0;
+            return;
+        }
+
+        // Active cell
+        const amrex::Real D_c = dc_arr(i, j, k);
+        amrex::Real diag_val = 0.0;
+        amrex::Real flux_bc_rhs = 0.0;
+
+        // -X face
+        if (mask_arr(i - 1, j, k) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i - 1, j, k);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a_out[stn + STN_MX] = -D_face * inv_dx2;
+            diag_val += D_face * inv_dx2;
+        } else {
+            diag_val += D_c * inv_dx2;
+            if (dir_k == 0)
+                flux_bc_rhs += D_c / dx;
+        }
+
+        // +X face
+        if (mask_arr(i + 1, j, k) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i + 1, j, k);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a_out[stn + STN_PX] = -D_face * inv_dx2;
+            diag_val += D_face * inv_dx2;
+        } else {
+            diag_val += D_c * inv_dx2;
+            if (dir_k == 0)
+                flux_bc_rhs -= D_c / dx;
+        }
+
+        // -Y face
+        if (mask_arr(i, j - 1, k) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i, j - 1, k);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a_out[stn + STN_MY] = -D_face * inv_dy2;
+            diag_val += D_face * inv_dy2;
+        } else {
+            diag_val += D_c * inv_dy2;
+            if (dir_k == 1)
+                flux_bc_rhs += D_c / dy;
+        }
+
+        // +Y face
+        if (mask_arr(i, j + 1, k) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i, j + 1, k);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a_out[stn + STN_PY] = -D_face * inv_dy2;
+            diag_val += D_face * inv_dy2;
+        } else {
+            diag_val += D_c * inv_dy2;
+            if (dir_k == 1)
+                flux_bc_rhs -= D_c / dy;
+        }
+
+#if (AMREX_SPACEDIM == 3)
+        // -Z face
+        if (mask_arr(i, j, k - 1) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i, j, k - 1);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a_out[stn + STN_MZ] = -D_face * inv_dz2;
+            diag_val += D_face * inv_dz2;
+        } else {
+            diag_val += D_c * inv_dz2;
+            if (dir_k == 2)
+                flux_bc_rhs += D_c / dz;
+        }
+
+        // +Z face
+        if (mask_arr(i, j, k + 1) == CELL_ACTIVE) {
+            amrex::Real D_nbr = dc_arr(i, j, k + 1);
+            amrex::Real D_face = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+            a_out[stn + STN_PZ] = -D_face * inv_dz2;
+            diag_val += D_face * inv_dz2;
+        } else {
+            diag_val += D_c * inv_dz2;
+            if (dir_k == 2)
+                flux_bc_rhs -= D_c / dz;
+        }
+#endif
+
+        a_out[stn + STN_C] = diag_val;
+
+        // RHS: -div(D e_k) via central differences
+        amrex::Real rhs_div_De = 0.0;
+        if (dir_k == 0) {
+            rhs_div_De = -(dc_arr(i + 1, j, k) - dc_arr(i - 1, j, k)) * inv_2dx;
+        } else if (dir_k == 1) {
+            rhs_div_De = -(dc_arr(i, j + 1, k) - dc_arr(i, j - 1, k)) * inv_2dy;
+        }
+#if (AMREX_SPACEDIM == 3)
+        else if (dir_k == 2) {
+            rhs_div_De = -(dc_arr(i, j, k + 1) - dc_arr(i, j, k - 1)) * inv_2dz;
+        }
+#endif
+
+        rhs_out[m_idx] = rhs_div_De + flux_bc_rhs;
+
+        // Safety: decouple near-zero diagonal
+        if (amrex::Math::abs(diag_val) < SMALL_REAL) {
+            for (int s = 0; s < NSTEN; ++s)
+                a_out[stn + s] = 0.0;
+            a_out[stn + STN_C] = 1.0;
+            rhs_out[m_idx] = 0.0;
+            xinit_out[m_idx] = 0.0;
+        }
+    });
+}
+
+#endif // OPENIMPALA_USE_GPU
 
 } // namespace OpenImpala
 
