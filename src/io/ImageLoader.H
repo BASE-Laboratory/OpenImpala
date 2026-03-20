@@ -2,7 +2,8 @@
  *  @brief Loads 3D voxel images from multiple file formats and thresholds into phase data.
  *
  *  Consolidates file format detection, reader instantiation, and phase thresholding
- *  into a single utility. Supports TIFF, HDF5, and DAT formats. The output is always
+ *  into a single utility. Supports TIFF, HDF5, and DAT formats (RAW files require
+ *  RawReader directly due to needing explicit dimensions and data type). The output is always
  *  an amrex::iMultiFab containing integer phase IDs, ready for solver consumption.
  */
 #ifndef IMAGE_LOADER_H

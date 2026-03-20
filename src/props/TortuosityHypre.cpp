@@ -20,6 +20,7 @@
 #include <numeric>   // For std::accumulate, iota (potentially useful)
 #include <sstream>   // For std::stringstream
 
+#include <AMReX_Loop.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_MultiFabUtil.H> // Needed for amrex::Copy, amrex::sum
 #include <AMReX_PlotFileUtil.H>
@@ -618,10 +619,20 @@ void OpenImpala::TortuosityHypre::generateActivityMask(const amrex::iMultiFab& p
     if (write_debug_mask) { /* ... plotfile code ... */
     }
 
-    // <<< CORRECTED: Use correct iMultiFab::sum call >>>
-    // Sum the number of active cells (value=1) in the mask component globally over valid cells
-    long num_active = m_mf_active_mask.sum(MaskComp);
-    // <<< END CORRECTION >>>
+    // Manually sum active cells over valid regions only (avoids ghost cell inclusion
+    // that may occur with iMultiFab::sum() on some AMReX versions)
+    long num_active_local = 0;
+    for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.validbox();
+        auto const& mask_arr = m_mf_active_mask.const_array(mfi);
+        amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+            if (mask_arr(i, j, k, MaskComp) == 1) {
+                ++num_active_local;
+            }
+        });
+    }
+    long num_active = num_active_local;
+    amrex::ParallelDescriptor::ReduceLongSum(num_active);
 
     long total_cells = m_geom.Domain().numPts();
     m_active_vf = (total_cells > 0)

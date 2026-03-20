@@ -178,20 +178,16 @@ void HypreStructSolver::createMatrixAndVectors() {
     HYPRE_CHECK(ierr);
 
 #ifdef OPENIMPALA_USE_GPU
-    // When GPU acceleration is enabled, tell HYPRE to allocate matrix and
-    // vector data on the device.  The SetBoxValues calls will then expect
-    // device pointers (or HYPRE performs the transfer internally depending
-    // on build configuration).  HYPRE_MEMORY_DEVICE is defined when HYPRE
-    // is built with --with-cuda or --with-hip.
-    HYPRE_StructMatrixSetMemoryLocation(m_A, HYPRE_MEMORY_DEVICE);
-    HYPRE_StructVectorSetMemoryLocation(m_b, HYPRE_MEMORY_DEVICE);
-    HYPRE_StructVectorSetMemoryLocation(m_x, HYPRE_MEMORY_DEVICE);
-
-    // Use a GPU-friendly execution policy for the preconditioner
+    // GPU kernels compute on device and copy results to host before calling
+    // HYPRE_StructSetBoxValues with host pointers. Therefore HYPRE matrix
+    // and vector storage must remain on the host (HYPRE_MEMORY_HOST) so that
+    // SetBoxValues receives compatible pointers.  Only the execution policy
+    // is set to device so that HYPRE's own internal solver operations can
+    // run on the GPU when HYPRE is built with device support.
     HYPRE_SetExecutionPolicy(HYPRE_EXEC_DEVICE);
 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  createMatrixAndVectors: HYPRE memory location set to DEVICE."
+        amrex::Print() << "  createMatrixAndVectors: HYPRE execution policy set to DEVICE."
                        << std::endl;
     }
 #endif
@@ -370,6 +366,164 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
 
         HYPRE_StructPCGDestroy(solver);
         destroyPrecond();
+
+    } else if (m_solvertype == SolverType::GMRES) {
+        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "  Setting up HYPRE GMRES Solver with " << precond_name
+                           << " Preconditioner..." << std::endl;
+        }
+        ierr = HYPRE_StructGMRESCreate(MPI_COMM_WORLD, &solver);
+        HYPRE_CHECK(ierr);
+        HYPRE_StructGMRESSetTol(solver, m_eps);
+        HYPRE_StructGMRESSetMaxIter(solver, m_maxiter);
+        HYPRE_StructGMRESSetPrintLevel(solver, m_verbose > 1 ? 3 : 0);
+
+        createPrecond();
+        HYPRE_StructGMRESSetPrecond(solver, getPrecondSolve(), getPrecondSetup(), precond);
+
+        ierr = HYPRE_StructGMRESSetup(solver, m_A, m_b, m_x);
+        HYPRE_CHECK(ierr);
+        ierr = HYPRE_StructGMRESSolve(solver, m_A, m_b, m_x);
+        if (ierr != 0 && ierr != HYPRE_ERROR_CONV) {
+            HYPRE_CHECK(ierr);
+        }
+
+        HYPRE_StructGMRESGetNumIterations(solver, &m_num_iterations);
+        HYPRE_StructGMRESGetFinalRelativeResidualNorm(solver, &m_final_res_norm);
+
+        m_converged = !(std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm));
+        m_converged = m_converged && (m_final_res_norm >= 0.0) && (m_final_res_norm <= m_eps);
+
+        if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
+            amrex::Warning("HYPRE GMRES solver did not converge within tolerance!");
+        }
+
+        HYPRE_StructGMRESDestroy(solver);
+        destroyPrecond();
+
+    } else if (m_solvertype == SolverType::BiCGSTAB) {
+        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "  Setting up HYPRE BiCGSTAB Solver with " << precond_name
+                           << " Preconditioner..." << std::endl;
+        }
+        ierr = HYPRE_StructBiCGSTABCreate(MPI_COMM_WORLD, &solver);
+        HYPRE_CHECK(ierr);
+        HYPRE_StructBiCGSTABSetTol(solver, m_eps);
+        HYPRE_StructBiCGSTABSetMaxIter(solver, m_maxiter);
+        HYPRE_StructBiCGSTABSetPrintLevel(solver, m_verbose > 1 ? 3 : 0);
+
+        createPrecond();
+        HYPRE_StructBiCGSTABSetPrecond(solver, getPrecondSolve(), getPrecondSetup(), precond);
+
+        ierr = HYPRE_StructBiCGSTABSetup(solver, m_A, m_b, m_x);
+        HYPRE_CHECK(ierr);
+        ierr = HYPRE_StructBiCGSTABSolve(solver, m_A, m_b, m_x);
+        if (ierr != 0 && ierr != HYPRE_ERROR_CONV) {
+            HYPRE_CHECK(ierr);
+        }
+
+        HYPRE_StructBiCGSTABGetNumIterations(solver, &m_num_iterations);
+        HYPRE_StructBiCGSTABGetFinalRelativeResidualNorm(solver, &m_final_res_norm);
+
+        m_converged = !(std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm));
+        m_converged = m_converged && (m_final_res_norm >= 0.0) && (m_final_res_norm <= m_eps);
+
+        if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
+            amrex::Warning("HYPRE BiCGSTAB solver did not converge within tolerance!");
+        }
+
+        HYPRE_StructBiCGSTABDestroy(solver);
+        destroyPrecond();
+
+    } else if (m_solvertype == SolverType::SMG) {
+        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "  Setting up HYPRE SMG Solver (standalone)..." << std::endl;
+        }
+        ierr = HYPRE_StructSMGCreate(MPI_COMM_WORLD, &solver);
+        HYPRE_CHECK(ierr);
+        HYPRE_StructSMGSetTol(solver, m_eps);
+        HYPRE_StructSMGSetMaxIter(solver, m_maxiter);
+        HYPRE_StructSMGSetNumPreRelax(solver, 1);
+        HYPRE_StructSMGSetNumPostRelax(solver, 1);
+        HYPRE_StructSMGSetPrintLevel(solver, m_verbose > 1 ? 3 : 0);
+
+        ierr = HYPRE_StructSMGSetup(solver, m_A, m_b, m_x);
+        HYPRE_CHECK(ierr);
+        ierr = HYPRE_StructSMGSolve(solver, m_A, m_b, m_x);
+        if (ierr != 0 && ierr != HYPRE_ERROR_CONV) {
+            HYPRE_CHECK(ierr);
+        }
+
+        HYPRE_StructSMGGetNumIterations(solver, &m_num_iterations);
+        HYPRE_StructSMGGetFinalRelativeResidualNorm(solver, &m_final_res_norm);
+
+        m_converged = !(std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm));
+        m_converged = m_converged && (m_final_res_norm >= 0.0) && (m_final_res_norm <= m_eps);
+
+        if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
+            amrex::Warning("HYPRE SMG solver did not converge within tolerance!");
+        }
+
+        HYPRE_StructSMGDestroy(solver);
+
+    } else if (m_solvertype == SolverType::PFMG) {
+        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "  Setting up HYPRE PFMG Solver (standalone)..." << std::endl;
+        }
+        ierr = HYPRE_StructPFMGCreate(MPI_COMM_WORLD, &solver);
+        HYPRE_CHECK(ierr);
+        HYPRE_StructPFMGSetTol(solver, m_eps);
+        HYPRE_StructPFMGSetMaxIter(solver, m_maxiter);
+        HYPRE_StructPFMGSetNumPreRelax(solver, 1);
+        HYPRE_StructPFMGSetNumPostRelax(solver, 1);
+        HYPRE_StructPFMGSetPrintLevel(solver, m_verbose > 1 ? 3 : 0);
+
+        ierr = HYPRE_StructPFMGSetup(solver, m_A, m_b, m_x);
+        HYPRE_CHECK(ierr);
+        ierr = HYPRE_StructPFMGSolve(solver, m_A, m_b, m_x);
+        if (ierr != 0 && ierr != HYPRE_ERROR_CONV) {
+            HYPRE_CHECK(ierr);
+        }
+
+        HYPRE_StructPFMGGetNumIterations(solver, &m_num_iterations);
+        HYPRE_StructPFMGGetFinalRelativeResidualNorm(solver, &m_final_res_norm);
+
+        m_converged = !(std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm));
+        m_converged = m_converged && (m_final_res_norm >= 0.0) && (m_final_res_norm <= m_eps);
+
+        if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
+            amrex::Warning("HYPRE PFMG solver did not converge within tolerance!");
+        }
+
+        HYPRE_StructPFMGDestroy(solver);
+
+    } else if (m_solvertype == SolverType::Jacobi) {
+        if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "  Setting up HYPRE Jacobi Solver..." << std::endl;
+        }
+        ierr = HYPRE_StructJacobiCreate(MPI_COMM_WORLD, &solver);
+        HYPRE_CHECK(ierr);
+        HYPRE_StructJacobiSetTol(solver, m_eps);
+        HYPRE_StructJacobiSetMaxIter(solver, m_maxiter);
+
+        ierr = HYPRE_StructJacobiSetup(solver, m_A, m_b, m_x);
+        HYPRE_CHECK(ierr);
+        ierr = HYPRE_StructJacobiSolve(solver, m_A, m_b, m_x);
+        if (ierr != 0 && ierr != HYPRE_ERROR_CONV) {
+            HYPRE_CHECK(ierr);
+        }
+
+        HYPRE_StructJacobiGetNumIterations(solver, &m_num_iterations);
+        HYPRE_StructJacobiGetFinalRelativeResidualNorm(solver, &m_final_res_norm);
+
+        m_converged = !(std::isnan(m_final_res_norm) || std::isinf(m_final_res_norm));
+        m_converged = m_converged && (m_final_res_norm >= 0.0) && (m_final_res_norm <= m_eps);
+
+        if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
+            amrex::Warning("HYPRE Jacobi solver did not converge within tolerance!");
+        }
+
+        HYPRE_StructJacobiDestroy(solver);
 
     } else {
         amrex::Abort("Unsupported solver type requested: " +
