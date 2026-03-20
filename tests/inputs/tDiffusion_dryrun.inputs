@@ -1,0 +1,19 @@
+# Diffusion.cpp Integration Test: Dry Run Mode
+#
+# Exercises the dry-run code path in Diffusion.cpp which performs:
+#   - File I/O (TIFF reader branch)
+#   - Volume fraction calculation for all phases
+#   - Percolation check in all 3 directions
+#   - Domain summary output
+# Without running any solver (fast, ~1 second).
+
+filename = SampleData_2Phase_stack_3d_1bit.tif
+data_path = ./data/
+results_path = ./tDiffusion_dryrun_results/
+threshold_val = 0.5
+phase_id = 1
+box_size = 32
+verbose = 1
+dry_run = 1
+calculation_method = homogenization
+solver_type = FlexGMRES

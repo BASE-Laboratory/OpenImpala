@@ -48,7 +48,7 @@ jobs:
 
           # Install all build dependencies inside the manylinux container.
           # Key points:
-          #   - gcc-gfortran is explicitly installed for Fortran kernel compilation
+          #   - gcc-gfortran is kept for AMReX's Fortran dependencies
           #   - HDF5 and libtiff are built from source as static libraries so they
           #     get linked into the wheel without auditwheel needing to vendor them
           #   - HYPRE is built static (--enable-shared=no)
@@ -127,14 +127,13 @@ jobs:
             PATH="/usr/lib64/openmpi/bin:$PATH"
             CMAKE_C_COMPILER="mpicc"
             CMAKE_CXX_COMPILER="mpicxx"
-            CMAKE_Fortran_COMPILER="mpif90"
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
 
           # Vendor libraries into the wheel, but exclude host-specific MPI and
           # runtime libraries that users must provide on their system.
           # With all C/C++ deps statically linked, the only external shared libs
-          # left are MPI, OpenMP runtime (libgomp), and Fortran runtime.
+          # left are MPI and OpenMP runtime (libgomp).
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel}
             --exclude libmpi.so

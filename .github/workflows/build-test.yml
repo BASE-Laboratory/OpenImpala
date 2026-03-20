@@ -160,7 +160,6 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCMAKE_C_COMPILER=$(which mpicc) \
                 -DCMAKE_CXX_COMPILER=$(which mpicxx) \
-                -DCMAKE_Fortran_COMPILER=$(which mpif90) \
                 -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
                 -DBUILD_TESTING=ON
               
@@ -207,7 +206,6 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCMAKE_C_COMPILER=$(which mpicc) \
                 -DCMAKE_CXX_COMPILER=$(which mpicxx) \
-                -DCMAKE_Fortran_COMPILER=$(which mpif90) \
                 -DPython_EXECUTABLE=/usr/bin/python3.11 \
                 -Dpybind11_DIR=${PYBIND11_DIR} \
                 -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
@@ -266,7 +264,6 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Debug \
                 -DCMAKE_C_COMPILER=$(which mpicc) \
                 -DCMAKE_CXX_COMPILER=$(which mpicxx) \
-                -DCMAKE_Fortran_COMPILER=$(which mpif90) \
                 -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
                 -DBUILD_TESTING=ON \
                 -DENABLE_COVERAGE=ON

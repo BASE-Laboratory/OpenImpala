@@ -1,0 +1,32 @@
+# Regression Benchmark: Series Layers (PCG Solver)
+#
+# Identical to tRegressionBenchmark_series but uses PCG instead of FlexGMRES.
+# Validates PCG convergence on a non-trivial heterogeneous problem.
+#
+# Geometry:  32^3 domain, alternating layers perpendicular to flow (series resistance)
+# Phases:    Phase 0 (D=1.0) and Phase 1 (D=0.5), alternating along X
+# Analytical: D_eff = harmonic mean = 2*D0*D1/(D0+D1) = 2/3
+#             tau = VF / D_eff  (with discrete grid correction)
+
+domain_size = 32
+box_size = 16
+verbose = 2
+num_phases_fill = 2
+direction = X
+layer_axis = X
+solver = PCG
+
+# Series resistance analytical result (discrete grid)
+expected_tau = 1.453125
+tau_tolerance = 0.01
+
+resultsdir = ./tRegressionBenchmark_series_PCG_results
+
+# --- Solver Controls ---
+hypre.maxiter = 500
+hypre.eps = 1e-9
+
+# --- Multi-phase configuration ---
+tortuosity.active_phases = 0 1
+tortuosity.phase_diffusivities = 1.0 0.5
+tortuosity.remspot_passes = 0

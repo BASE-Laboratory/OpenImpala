@@ -1,8 +1,9 @@
-#include "TiffReader.H"      // Assuming TiffReader is in OpenImpala namespace
-#include "TortuosityHypre.H" // Assuming TortuosityHypre is in OpenImpala namespace
-#include "VolumeFraction.H"  // Assuming VolumeFraction is in OpenImpala namespace
-#include "Tortuosity.H"      // Include base class for OpenImpala::Direction enum
-#include "PhysicsConfig.H"   // Physics-type-aware output
+#include "TiffReader.H"
+#include "TortuosityHypre.H"
+#include "VolumeFraction.H"
+#include "Tortuosity.H"
+#include "PhysicsConfig.H"
+#include "SolverConfig.H"
 
 #include <AMReX.H>
 #include <AMReX_ParmParse.H>
@@ -32,43 +33,7 @@
 #include <HYPRE.h>
 #include <mpi.h>
 
-// Helper function definitions (stringToDirection, stringToSolverType) remain the same...
-OpenImpala::Direction stringToDirection(const std::string& dir_str) {
-    std::string lower_dir_str = dir_str;
-    std::transform(lower_dir_str.begin(), lower_dir_str.end(), lower_dir_str.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    if (lower_dir_str == "x")
-        return OpenImpala::Direction::X;
-    if (lower_dir_str == "y")
-        return OpenImpala::Direction::Y;
-    if (lower_dir_str == "z")
-        return OpenImpala::Direction::Z;
-    amrex::Abort("Invalid direction string: " + dir_str + ". Use X, Y, or Z.");
-    return OpenImpala::Direction::X; // Should not reach here
-}
-
-OpenImpala::TortuosityHypre::SolverType stringToSolverType(const std::string& solver_str) {
-    std::string lower_solver_str = solver_str;
-    std::transform(lower_solver_str.begin(), lower_solver_str.end(), lower_solver_str.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    if (lower_solver_str == "jacobi")
-        return OpenImpala::TortuosityHypre::SolverType::Jacobi;
-    if (lower_solver_str == "gmres")
-        return OpenImpala::TortuosityHypre::SolverType::GMRES;
-    if (lower_solver_str == "flexgmres")
-        return OpenImpala::TortuosityHypre::SolverType::FlexGMRES;
-    if (lower_solver_str == "pcg")
-        return OpenImpala::TortuosityHypre::SolverType::PCG;
-    if (lower_solver_str == "bicgstab")
-        return OpenImpala::TortuosityHypre::SolverType::BiCGSTAB;
-    if (lower_solver_str == "smg")
-        return OpenImpala::TortuosityHypre::SolverType::SMG;
-    if (lower_solver_str == "pfmg")
-        return OpenImpala::TortuosityHypre::SolverType::PFMG;
-    amrex::Abort("Invalid solver string: '" + solver_str +
-                 "'. Supported: Jacobi, GMRES, FlexGMRES, PCG, BiCGSTAB, SMG, PFMG");
-    return OpenImpala::TortuosityHypre::SolverType::GMRES; // Should not reach here
-}
+// Solver/direction string parsing now provided by SolverConfig.H
 
 
 // --- Test Status Helper ---
@@ -194,8 +159,8 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        OpenImpala::Direction direction = stringToDirection(direction_str);
-        OpenImpala::TortuosityHypre::SolverType solver_type = stringToSolverType(solver_str);
+        OpenImpala::Direction direction = OpenImpala::parseDirection(direction_str);
+        OpenImpala::SolverType solver_type = OpenImpala::parseSolverType(solver_str);
 
         // Print configuration (Keep as before)
         if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
