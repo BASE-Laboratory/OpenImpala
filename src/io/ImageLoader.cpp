@@ -6,6 +6,7 @@
 #include "TiffReader.H"
 #include "DatReader.H"
 #include "HDF5Reader.H"
+#include "RawReader.H"
 
 #include <AMReX_Print.H>
 #include <AMReX_ParallelDescriptor.H>
@@ -84,9 +85,14 @@ ImageData loadImage(const std::filesystem::path& filepath, const std::string& hd
         reader.threshold(threshold_val, phase_active, phase_inactive, mf_temp);
         amrex::Copy(result.mf_phase, mf_temp, 0, 0, 1, 0);
 
+    } else if (ext == ".raw") {
+        throw std::runtime_error(
+            "RAW format requires dimensions and data type at construction. "
+            "Use RawReader directly instead of ImageLoader for .raw files.");
     } else {
         throw std::runtime_error("Unsupported file extension: " + ext +
-                                 ". Supported: .tif, .tiff, .dat, .h5, .hdf5");
+                                 ". Supported: .tif, .tiff, .dat, .h5, .hdf5, .raw (via "
+                                 "RawReader directly)");
     }
 
     // Set up periodic geometry

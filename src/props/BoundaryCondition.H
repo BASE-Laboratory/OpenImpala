@@ -190,21 +190,8 @@ public:
                             a[stn_start + s] = 0.0;
                         a[stn_start + STN_C] = 1.0;
                         rhs[m_idx] = bc_val;
+                        xinit[m_idx] = bc_val;
                     }
-
-                    // Linear initial guess along flow direction
-                    amrex::Real domain_extent = static_cast<amrex::Real>(domhi[dir] - domlo[dir]);
-                    amrex::Real coord = 0.0;
-                    if (dir == 0)
-                        coord = static_cast<amrex::Real>(i - domlo[0]);
-                    else if (dir == 1)
-                        coord = static_cast<amrex::Real>(j - domlo[1]);
-                    else
-                        coord = static_cast<amrex::Real>(k - domlo[2]);
-
-                    amrex::Real factor =
-                        (std::abs(domain_extent) < SMALL_REAL) ? 0.0 : 1.0 / domain_extent;
-                    xinit[m_idx] = vlo + (vhi - vlo) * coord * factor;
 
                     ++m_idx;
                 }
@@ -272,10 +259,9 @@ public:
                         int nj = j + di_lo[1];
                         int nk = k + di_lo[2];
                         if (mask(ni, nj, nk) == CELL_INACTIVE) {
-                            // Check we're in the "near boundary" region (within a few cells)
-                            // For the phase boundary BC, any active cell with an inactive
-                            // neighbor in the flow direction near the low boundary counts
-                            if (coords[dir] <= domlo[dir] + (domhi[dir] - domlo[dir]) / 4) {
+                            // Only apply at the immediate boundary layer (first cell
+                            // adjacent to the domain face), not deep into the interior
+                            if (coords[dir] <= domlo[dir] + 1) {
                                 apply_lo = true;
                             }
                         }
@@ -289,10 +275,16 @@ public:
                         int nj = j + di_hi[1];
                         int nk = k + di_hi[2];
                         if (mask(ni, nj, nk) == CELL_INACTIVE) {
-                            if (coords[dir] >= domhi[dir] - (domhi[dir] - domlo[dir]) / 4) {
+                            if (coords[dir] >= domhi[dir] - 1) {
                                 apply_hi = true;
                             }
                         }
+                    }
+
+                    // If both flags are set (very small domain), skip — ambiguous
+                    if (apply_lo && apply_hi) {
+                        apply_lo = false;
+                        apply_hi = false;
                     }
 
                     if (apply_lo || apply_hi) {
@@ -301,21 +293,8 @@ public:
                             a[stn_start + s] = 0.0;
                         a[stn_start + STN_C] = 1.0;
                         rhs[m_idx] = bc_val;
+                        xinit[m_idx] = bc_val;
                     }
-
-                    // Linear initial guess along flow direction
-                    amrex::Real domain_extent = static_cast<amrex::Real>(domhi[dir] - domlo[dir]);
-                    amrex::Real coord = 0.0;
-                    if (dir == 0)
-                        coord = static_cast<amrex::Real>(i - domlo[0]);
-                    else if (dir == 1)
-                        coord = static_cast<amrex::Real>(j - domlo[1]);
-                    else
-                        coord = static_cast<amrex::Real>(k - domlo[2]);
-
-                    amrex::Real factor =
-                        (std::abs(domain_extent) < SMALL_REAL) ? 0.0 : 1.0 / domain_extent;
-                    xinit[m_idx] = vlo + (vhi - vlo) * coord * factor;
 
                     ++m_idx;
                 }

@@ -43,62 +43,82 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
     }
 
 #ifdef AMREX_USE_OMP
-#pragma omp parallel reduction(+ : sum_local)
+#pragma omp parallel
 #endif
-    for (amrex::MFIter mfi(active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& bx = mfi.tilebox();
-        amrex::Array4<const int> const mask_arr = active_mask.const_array(mfi);
-        amrex::Array4<const amrex::Real> const chi_x_arr = mf_chi_x.const_array(mfi);
-        amrex::Array4<const amrex::Real> const chi_y_arr = mf_chi_y.const_array(mfi);
-        amrex::Array4<const amrex::Real> const chi_z_arr =
-            (AMREX_SPACEDIM == 3 && mf_chi_z.isDefined()) ? mf_chi_z.const_array(mfi)
-                                                           : mf_chi_x.const_array(mfi);
+    {
+        amrex::Real sum_thread[AMREX_SPACEDIM][AMREX_SPACEDIM];
+        for (int r = 0; r < AMREX_SPACEDIM; ++r) {
+            for (int c = 0; c < AMREX_SPACEDIM; ++c) {
+                sum_thread[r][c] = 0.0;
+            }
+        }
 
-        amrex::LoopOnCpu(bx, [=, &sum_local](int i, int j, int k) noexcept {
-            if (mask_arr(i, j, k, 0) == 1) {
-                amrex::Real grad_chi_x[AMREX_SPACEDIM] = {0.0};
-                amrex::Real grad_chi_y[AMREX_SPACEDIM] = {0.0};
-                amrex::Real grad_chi_z[AMREX_SPACEDIM] = {0.0};
+        for (amrex::MFIter mfi(active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.tilebox();
+            amrex::Array4<const int> const mask_arr = active_mask.const_array(mfi);
+            amrex::Array4<const amrex::Real> const chi_x_arr = mf_chi_x.const_array(mfi);
+            amrex::Array4<const amrex::Real> const chi_y_arr = mf_chi_y.const_array(mfi);
+            amrex::Array4<const amrex::Real> const chi_z_arr =
+                (AMREX_SPACEDIM == 3 && mf_chi_z.isDefined()) ? mf_chi_z.const_array(mfi)
+                                                               : mf_chi_x.const_array(mfi);
 
-                grad_chi_x[0] =
-                    (chi_x_arr(i + 1, j, k, 0) - chi_x_arr(i - 1, j, k, 0)) * inv_2dx[0];
-                grad_chi_x[1] =
-                    (chi_x_arr(i, j + 1, k, 0) - chi_x_arr(i, j - 1, k, 0)) * inv_2dx[1];
-                if (AMREX_SPACEDIM == 3)
-                    grad_chi_x[2] =
-                        (chi_x_arr(i, j, k + 1, 0) - chi_x_arr(i, j, k - 1, 0)) * inv_2dx[2];
+            amrex::LoopOnCpu(bx, [=, &sum_thread](int i, int j, int k) noexcept {
+                if (mask_arr(i, j, k, 0) == 1) {
+                    amrex::Real grad_chi_x[AMREX_SPACEDIM] = {0.0};
+                    amrex::Real grad_chi_y[AMREX_SPACEDIM] = {0.0};
+                    amrex::Real grad_chi_z[AMREX_SPACEDIM] = {0.0};
 
-                grad_chi_y[0] =
-                    (chi_y_arr(i + 1, j, k, 0) - chi_y_arr(i - 1, j, k, 0)) * inv_2dx[0];
-                grad_chi_y[1] =
-                    (chi_y_arr(i, j + 1, k, 0) - chi_y_arr(i, j - 1, k, 0)) * inv_2dx[1];
-                if (AMREX_SPACEDIM == 3)
-                    grad_chi_y[2] =
-                        (chi_y_arr(i, j, k + 1, 0) - chi_y_arr(i, j, k - 1, 0)) * inv_2dx[2];
+                    grad_chi_x[0] =
+                        (chi_x_arr(i + 1, j, k, 0) - chi_x_arr(i - 1, j, k, 0)) * inv_2dx[0];
+                    grad_chi_x[1] =
+                        (chi_x_arr(i, j + 1, k, 0) - chi_x_arr(i, j - 1, k, 0)) * inv_2dx[1];
+                    if (AMREX_SPACEDIM == 3)
+                        grad_chi_x[2] =
+                            (chi_x_arr(i, j, k + 1, 0) - chi_x_arr(i, j, k - 1, 0)) * inv_2dx[2];
 
-                if (AMREX_SPACEDIM == 3) {
-                    grad_chi_z[0] =
-                        (chi_z_arr(i + 1, j, k, 0) - chi_z_arr(i - 1, j, k, 0)) * inv_2dx[0];
-                    grad_chi_z[1] =
-                        (chi_z_arr(i, j + 1, k, 0) - chi_z_arr(i, j - 1, k, 0)) * inv_2dx[1];
-                    grad_chi_z[2] =
-                        (chi_z_arr(i, j, k + 1, 0) - chi_z_arr(i, j, k - 1, 0)) * inv_2dx[2];
+                    grad_chi_y[0] =
+                        (chi_y_arr(i + 1, j, k, 0) - chi_y_arr(i - 1, j, k, 0)) * inv_2dx[0];
+                    grad_chi_y[1] =
+                        (chi_y_arr(i, j + 1, k, 0) - chi_y_arr(i, j - 1, k, 0)) * inv_2dx[1];
+                    if (AMREX_SPACEDIM == 3)
+                        grad_chi_y[2] =
+                            (chi_y_arr(i, j, k + 1, 0) - chi_y_arr(i, j, k - 1, 0)) * inv_2dx[2];
+
+                    if (AMREX_SPACEDIM == 3) {
+                        grad_chi_z[0] =
+                            (chi_z_arr(i + 1, j, k, 0) - chi_z_arr(i - 1, j, k, 0)) * inv_2dx[0];
+                        grad_chi_z[1] =
+                            (chi_z_arr(i, j + 1, k, 0) - chi_z_arr(i, j - 1, k, 0)) * inv_2dx[1];
+                        grad_chi_z[2] =
+                            (chi_z_arr(i, j, k + 1, 0) - chi_z_arr(i, j, k - 1, 0)) * inv_2dx[2];
+                    }
+
+                    sum_thread[0][0] += (1.0 - grad_chi_x[0]);
+                    sum_thread[0][1] += (-grad_chi_y[0]);
+                    sum_thread[1][0] += (-grad_chi_x[1]);
+                    sum_thread[1][1] += (1.0 - grad_chi_y[1]);
+
+                    if (AMREX_SPACEDIM == 3) {
+                        sum_thread[0][2] += (-grad_chi_z[0]);
+                        sum_thread[2][0] += (-grad_chi_x[2]);
+                        sum_thread[1][2] += (-grad_chi_z[1]);
+                        sum_thread[2][1] += (-grad_chi_y[2]);
+                        sum_thread[2][2] += (1.0 - grad_chi_z[2]);
+                    }
                 }
+            });
+        }
 
-                sum_local[0][0] += (1.0 - grad_chi_x[0]);
-                sum_local[0][1] += (-grad_chi_y[0]);
-                sum_local[1][0] += (-grad_chi_x[1]);
-                sum_local[1][1] += (1.0 - grad_chi_y[1]);
-
-                if (AMREX_SPACEDIM == 3) {
-                    sum_local[0][2] += (-grad_chi_z[0]);
-                    sum_local[2][0] += (-grad_chi_x[2]);
-                    sum_local[1][2] += (-grad_chi_z[1]);
-                    sum_local[2][1] += (-grad_chi_y[2]);
-                    sum_local[2][2] += (1.0 - grad_chi_z[2]);
+#ifdef AMREX_USE_OMP
+#pragma omp critical
+#endif
+        {
+            for (int r = 0; r < AMREX_SPACEDIM; ++r) {
+                for (int c = 0; c < AMREX_SPACEDIM; ++c) {
+                    sum_local[r][c] += sum_thread[r][c];
                 }
             }
-        });
+        }
     }
 
     // MPI reduction

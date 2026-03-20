@@ -56,7 +56,8 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
                     "ActualSizeY,ActualSizeZ,D_xx,D_yy,D_zz,D_xy,D_xz,D_yz\n";
     }
 
-    std::mt19937 gen(amrex::ParallelDescriptor::MyProc() + 12345 + config.num_samples);
+    // Use rank-independent seed so all MPI ranks agree on sub-volume coordinates
+    std::mt19937 gen(12345 + config.num_samples);
 
     for (int s_idx = 0; s_idx < config.num_samples; ++s_idx) {
         for (int target_size : config.sizes) {
