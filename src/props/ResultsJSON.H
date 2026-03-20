@@ -38,6 +38,7 @@
 #include <fstream>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace OpenImpala {
 
@@ -88,6 +89,58 @@ public:
         m_bpx_electrode = electrode;
     }
 
+    // --- Microstructure parameter setters ---
+
+    /// Set corrected specific surface area (Cauchy-Crofton corrected, voxel units).
+    void setSpecificSurfaceArea(Real ssa) {
+        m_ssa = ssa;
+        m_has_ssa = true;
+    }
+
+    /// Set raw specific surface area (uncorrected voxel face count per volume).
+    void setSpecificSurfaceAreaRaw(Real ssa_raw) {
+        m_ssa_raw = ssa_raw;
+        m_has_ssa_raw = true;
+    }
+
+    /// Set multi-phase volume fractions (phase_id -> VF).
+    void setMultiPhaseVolumeFractions(const std::map<int, Real>& phase_vfs) {
+        m_phase_vfs = phase_vfs;
+    }
+
+    /// Set macro-geometric parameters (thickness, cross-section, volume).
+    void setMacroGeometry(Real thickness, Real cross_section, Real total_volume) {
+        m_macro_thickness = thickness;
+        m_macro_cross_section = cross_section;
+        m_macro_volume = total_volume;
+        m_has_macro = true;
+    }
+
+    /// Set through-thickness volume fraction profile for a direction.
+    void setThroughThicknessProfile(const std::string& dir, const std::vector<Real>& vf_profile) {
+        m_tt_profiles[dir] = vf_profile;
+    }
+
+    /// Set solid-phase Bruggeman exponent.
+    void setSolidPhaseBruggeman(Real b_s) {
+        m_solid_bruggeman = b_s;
+        m_has_solid_bruggeman = true;
+    }
+
+    /// Set particle size distribution results.
+    void setParticleSizeDistribution(Real mean_radius, int num_particles,
+                                     const std::vector<Real>& radii) {
+        m_psd_mean_radius = mean_radius;
+        m_psd_num_particles = num_particles;
+        m_psd_radii = radii;
+        m_has_psd = true;
+    }
+
+    /// Set voxel size in meters for unit conversion in BPX output.
+    void setVoxelSize(Real voxel_size_m) {
+        m_voxel_size_m = voxel_size_m;
+    }
+
     // --- Build the JSON object ---
     nlohmann::ordered_json buildJSON() const {
         nlohmann::ordered_json j;
@@ -129,6 +182,9 @@ public:
                 dir_obj["formation_factor"] = m_physics.formationFactor(ratio);
             }
         }
+
+        // --- microstructure block: additional geometric parameters ---
+        buildMicrostructureBlock(oi);
 
         // --- units block: SI unit annotations (BattINFO-aligned) ---
         buildUnitsBlock(j);
@@ -191,6 +247,78 @@ private:
 
     // BPX electrode type (empty = no BPX fragment)
     std::string m_bpx_electrode;
+
+    // Microstructure parameters
+    Real m_ssa = 0.0;
+    bool m_has_ssa = false;
+    Real m_ssa_raw = 0.0;
+    bool m_has_ssa_raw = false;
+    std::map<int, Real> m_phase_vfs;
+    Real m_macro_thickness = 0.0;
+    Real m_macro_cross_section = 0.0;
+    Real m_macro_volume = 0.0;
+    bool m_has_macro = false;
+    std::map<std::string, std::vector<Real>> m_tt_profiles;
+    Real m_solid_bruggeman = 0.0;
+    bool m_has_solid_bruggeman = false;
+    Real m_psd_mean_radius = 0.0;
+    int m_psd_num_particles = 0;
+    std::vector<Real> m_psd_radii;
+    bool m_has_psd = false;
+    Real m_voxel_size_m = 0.0;
+
+    // --- Build microstructure parameters block ---
+    void buildMicrostructureBlock(nlohmann::ordered_json& oi) const {
+        if (!m_has_ssa && !m_has_ssa_raw && m_phase_vfs.empty() && !m_has_macro &&
+            m_tt_profiles.empty() && !m_has_solid_bruggeman && !m_has_psd) {
+            return;
+        }
+
+        auto& ms = oi["microstructure"];
+
+        if (m_has_ssa) {
+            ms["specific_surface_area"] = m_ssa;
+        }
+        if (m_has_ssa_raw) {
+            ms["specific_surface_area_raw"] = m_ssa_raw;
+        }
+
+        if (!m_phase_vfs.empty()) {
+            auto& pvf = ms["phase_volume_fractions"];
+            for (const auto& [pid, vf] : m_phase_vfs) {
+                pvf[std::to_string(pid)] = vf;
+            }
+        }
+
+        if (m_has_macro) {
+            auto& mg = ms["macro_geometry"];
+            mg["thickness_voxels"] = m_macro_thickness;
+            mg["cross_section_voxels"] = m_macro_cross_section;
+            mg["total_volume_voxels"] = m_macro_volume;
+        }
+
+        if (!m_tt_profiles.empty()) {
+            auto& ttp = ms["through_thickness_profiles"];
+            for (const auto& [dir, profile] : m_tt_profiles) {
+                ttp[dir]["volume_fraction"] = profile;
+            }
+        }
+
+        if (m_has_solid_bruggeman) {
+            ms["solid_phase_bruggeman"] = m_solid_bruggeman;
+        }
+
+        if (m_has_psd) {
+            auto& psd = ms["particle_size"];
+            psd["mean_radius_voxels"] = m_psd_mean_radius;
+            psd["num_particles"] = m_psd_num_particles;
+            psd["radii_voxels"] = m_psd_radii;
+        }
+
+        if (m_voxel_size_m > 0.0) {
+            ms["voxel_size_m"] = m_voxel_size_m;
+        }
+    }
 
     // --- Build BattINFO-aligned SI unit annotations ---
     void buildUnitsBlock(nlohmann::ordered_json& j) const {
@@ -282,6 +410,17 @@ private:
         params["Porosity"] = m_volume_fraction;
         params["Transport efficiency"] = mean_te;
         params["Bruggeman coefficient (electrolyte)"] = b;
+
+        // Microstructure parameters in BPX
+        if (m_has_solid_bruggeman) {
+            params["Bruggeman coefficient (electrode)"] = m_solid_bruggeman;
+        }
+        if (m_has_psd && m_voxel_size_m > 0.0) {
+            params["Particle radius [m]"] = m_psd_mean_radius * m_voxel_size_m;
+        }
+        if (m_has_macro && m_voxel_size_m > 0.0) {
+            params["Electrode thickness [m]"] = m_macro_thickness * m_voxel_size_m;
+        }
 
         // Per-direction transport efficiencies (BPX extension — not in base spec)
         if (m_deff_ratios.size() > 1) {

@@ -14,6 +14,7 @@
 #include "TortuosityHypre.H"
 #include "Tortuosity.H"
 #include "PhysicsConfig.H"
+#include "SolverConfig.H"
 
 #include <AMReX.H>
 #include <AMReX_ParmParse.H>
@@ -35,44 +36,6 @@
 
 #include <HYPRE.h>
 #include <mpi.h>
-
-namespace {
-
-OpenImpala::TortuosityHypre::SolverType stringToSolverType(const std::string& solver_str) {
-    std::string s = solver_str;
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
-    if (s == "jacobi")
-        return OpenImpala::TortuosityHypre::SolverType::Jacobi;
-    if (s == "gmres")
-        return OpenImpala::TortuosityHypre::SolverType::GMRES;
-    if (s == "flexgmres")
-        return OpenImpala::TortuosityHypre::SolverType::FlexGMRES;
-    if (s == "pcg")
-        return OpenImpala::TortuosityHypre::SolverType::PCG;
-    if (s == "bicgstab")
-        return OpenImpala::TortuosityHypre::SolverType::BiCGSTAB;
-    if (s == "smg")
-        return OpenImpala::TortuosityHypre::SolverType::SMG;
-    if (s == "pfmg")
-        return OpenImpala::TortuosityHypre::SolverType::PFMG;
-    amrex::Abort("Invalid solver string: '" + solver_str + "'.");
-    return OpenImpala::TortuosityHypre::SolverType::FlexGMRES;
-}
-
-OpenImpala::Direction stringToDirection(const std::string& dir_str) {
-    std::string s = dir_str;
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
-    if (s == "x")
-        return OpenImpala::Direction::X;
-    if (s == "y")
-        return OpenImpala::Direction::Y;
-    if (s == "z")
-        return OpenImpala::Direction::Z;
-    amrex::Abort("Invalid direction string: " + dir_str + ". Use X, Y, or Z.");
-    return OpenImpala::Direction::X;
-}
-
-} // anonymous namespace
 
 
 int main(int argc, char* argv[]) {
@@ -119,9 +82,9 @@ int main(int argc, char* argv[]) {
             layer_axis_str = direction_str;
         }
 
-        OpenImpala::Direction direction = stringToDirection(direction_str);
-        int layer_dir_idx = static_cast<int>(stringToDirection(layer_axis_str));
-        OpenImpala::TortuosityHypre::SolverType solver_type = stringToSolverType(solver_str);
+        OpenImpala::Direction direction = OpenImpala::parseDirection(direction_str);
+        int layer_dir_idx = static_cast<int>(OpenImpala::parseDirection(layer_axis_str));
+        OpenImpala::SolverType solver_type = OpenImpala::parseSolverType(solver_str);
 
         if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "\n--- Multi-Phase Transport Test ---\n";

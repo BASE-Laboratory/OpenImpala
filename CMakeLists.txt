@@ -17,9 +17,32 @@ cmake_minimum_required(VERSION 3.18)
 
 project(OpenImpala
     VERSION 0.1.0
-    LANGUAGES C CXX Fortran
+    LANGUAGES C CXX
     DESCRIPTION "Image-based simulation of transport properties in porous media"
 )
+
+# ==============================================================================
+# GPU Acceleration
+# ==============================================================================
+# Set GPU_BACKEND to CUDA, HIP, or NONE (default) to enable GPU-accelerated
+# HYPRE solves. When enabled, AMReX and HYPRE must also be built with matching
+# GPU support. The CUDA or HIP language is added to the project automatically.
+set(GPU_BACKEND "NONE" CACHE STRING "GPU backend: NONE, CUDA, or HIP")
+set_property(CACHE GPU_BACKEND PROPERTY STRINGS NONE CUDA HIP)
+
+if(GPU_BACKEND STREQUAL "CUDA")
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    add_compile_definitions(OPENIMPALA_USE_GPU OPENIMPALA_USE_CUDA)
+    message(STATUS "GPU acceleration enabled: CUDA")
+elseif(GPU_BACKEND STREQUAL "HIP")
+    enable_language(HIP)
+    add_compile_definitions(OPENIMPALA_USE_GPU OPENIMPALA_USE_HIP)
+    message(STATUS "GPU acceleration enabled: HIP")
+else()
+    message(STATUS "GPU acceleration: disabled")
+endif()
 
 # ==============================================================================
 # C++ Standard
@@ -55,10 +78,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json)
 
 # --- MPI ---
-find_package(MPI REQUIRED COMPONENTS CXX Fortran)
+find_package(MPI REQUIRED COMPONENTS CXX)
 
 # --- OpenMP ---
-find_package(OpenMP REQUIRED COMPONENTS CXX Fortran)
+find_package(OpenMP REQUIRED COMPONENTS CXX)
 
 # --- AMReX ---
 # AMReX ships AMReXConfig.cmake when installed via CMake.

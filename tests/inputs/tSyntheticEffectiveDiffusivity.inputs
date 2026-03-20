@@ -1,0 +1,14 @@
+# Synthetic Effective Diffusivity Test
+#
+# Uniform 16^3 domain, all phase 0, D=1.0.
+# For uniform material with periodic BCs, chi_k = 0 => D_eff = I.
+
+domain_size = 16
+box_size = 16
+verbose = 2
+chi_tolerance = 1e-6
+resultsdir = ./tSyntheticEffDiff_results
+
+# --- Solver Controls ---
+hypre.maxiter = 500
+hypre.eps = 1e-9

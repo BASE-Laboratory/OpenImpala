@@ -94,6 +94,8 @@ openimpala_add_test(tTortuosityDirect  "${CMAKE_CURRENT_SOURCE_DIR}/tTortuosityD
 # ==============================================================================
 openimpala_add_test(tSyntheticVolumeFraction  "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticVolumeFraction.cpp")
 openimpala_add_test(tSyntheticPercolation     "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticPercolation.cpp")
+openimpala_add_test(tSyntheticEffectiveDiffusivity "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticEffectiveDiffusivity.cpp")
+openimpala_add_test(tSyntheticMicrostructure "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticMicrostructure.cpp")
 
 # ==============================================================================
 # Multi-Phase Transport Tests
@@ -235,6 +237,44 @@ set_tests_properties(tMultiPhaseTransport_thermal PROPERTIES
 )
 
 # ==============================================================================
+# Boundary Condition Tests (Issue #16)
+#
+# Verify that the BC abstraction layer produces correct results:
+#   dirichlet_external_bc — explicit DirichletExternal matches default
+#   periodic_sides        — Periodic lateral BCs on uniform block
+# ==============================================================================
+
+# Explicit DirichletExternal BC: same result as default
+add_test(
+    NAME tMultiPhaseTransport_dirichlet_external_bc
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_dirichlet_external_bc.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tMultiPhaseTransport_dirichlet_external_bc PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# Periodic lateral BCs on uniform block
+add_test(
+    NAME tMultiPhaseTransport_periodic_sides
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tMultiPhaseTransport_periodic_sides.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tMultiPhaseTransport_periodic_sides PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# ==============================================================================
 # Regression Benchmarks (Issue #80)
 #
 # Lightweight synthetic geometries with known analytical solutions.
@@ -289,6 +329,96 @@ add_test(
 set_tests_properties(tRegressionBenchmark_parallel PROPERTIES
     ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
     TIMEOUT 300
+)
+
+# ==============================================================================
+# PCG Solver Regression Benchmarks (Issue #109)
+#
+# Validates the PCG solver path (new in this branch) against the same
+# analytical solutions used for FlexGMRES benchmarks.
+# ==============================================================================
+
+# PCG on uniform block: tau = (N-1)/N = 0.96875
+add_test(
+    NAME tRegressionBenchmark_uniform_PCG
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tRegressionBenchmark_uniform_PCG.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tRegressionBenchmark_uniform_PCG PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# PCG on series layers: tau = 1.453125
+add_test(
+    NAME tRegressionBenchmark_series_PCG
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tMultiPhaseTransport>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tRegressionBenchmark_series_PCG.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tRegressionBenchmark_series_PCG PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# ==============================================================================
+# Diffusion.cpp Integration Tests (Issue #109)
+#
+# Exercise the main application entry point (src/props/Diffusion.cpp),
+# which is the largest file at 0% coverage.  Uses the Diffusion executable
+# built by src/CMakeLists.txt.
+# ==============================================================================
+
+# Dry-run mode: exercises file I/O, volume fraction, percolation checks
+add_test(
+    NAME tDiffusion_dryrun
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:Diffusion>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tDiffusion_dryrun.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tDiffusion_dryrun PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# Full TIFF solve: exercises TIFF reader branch + homogenization pipeline
+add_test(
+    NAME tDiffusion_tiff
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:Diffusion>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tDiffusion_tiff.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tDiffusion_tiff PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 600
+)
+
+# HDF5 solve: exercises HDF5 reader branch
+add_test(
+    NAME tDiffusion_hdf5
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:Diffusion>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tDiffusion_hdf5.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tDiffusion_hdf5 PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 600
 )
 
 # ==============================================================================

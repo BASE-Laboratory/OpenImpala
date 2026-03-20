@@ -69,7 +69,7 @@ BUILD_DIRS    := $(addprefix build/,$(MODULES))# build/io build/props
 # --- Find source files ---
 SOURCES_IO_ALL     := $(wildcard src/io/*.cpp)
 SOURCES_PRP_ALL    := $(wildcard src/props/*.cpp)
-SOURCES_F90_ALL    := $(wildcard src/props/*.F90) # Assuming Fortran only in props
+# Fortran sources removed — all kernels are now native C++
 
 # --- Test drivers (now in tests/ directory) ---
 SOURCES_TESTS      := $(wildcard tests/t*.cpp)
@@ -80,7 +80,6 @@ SOURCES_APP_DRIVER := src/props/Diffusion.cpp
 # --- Identify Library Sources (excluding app driver and auxiliary files) ---
 SOURCES_IO_LIB     := $(SOURCES_IO_ALL)
 SOURCES_PRP_LIB    := $(filter-out $(SOURCES_APP_DRIVER) src/props/hypre_test.cpp, $(SOURCES_PRP_ALL))
-SOURCES_F90_LIB    := $(SOURCES_F90_ALL) # Assuming all F90 are library code
 
 # --- Define Object Files based on Categories ---
 OBJECTS_APP_DRIVER := $(patsubst src/props/%.cpp,$(PROPS_DIR)/%.o,$(SOURCES_APP_DRIVER))
@@ -89,10 +88,9 @@ TEST_EXECS         := $(patsubst tests/%.cpp,$(TST_DIR)/%,$(SOURCES_TESTS))
 
 OBJECTS_IO_LIB     := $(patsubst src/io/%.cpp,$(IO_DIR)/%.o,$(SOURCES_IO_LIB))
 OBJECTS_PRP_LIB    := $(patsubst src/props/%.cpp,$(PROPS_DIR)/%.o,$(SOURCES_PRP_LIB))
-OBJECTS_F90_LIB    := $(patsubst src/props/%.F90,$(PROPS_DIR)/%.o,$(SOURCES_F90_LIB))
 
 # --- Consolidate Library Objects ---
-OBJECTS_LIB_ALL    := $(OBJECTS_IO_LIB) $(OBJECTS_PRP_LIB) $(OBJECTS_F90_LIB)
+OBJECTS_LIB_ALL    := $(OBJECTS_IO_LIB) $(OBJECTS_PRP_LIB)
 
 # Let Make search for source files in relevant directories
 VPATH := $(subst $(space),:,$(SRC_DIRS)):src
@@ -184,11 +182,6 @@ $(OBJECTS_APP_DRIVER): $(PROPS_DIR)/%.o: src/props/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(INCLUDE) -c $< -o $@
 
-# Static Pattern Rule for Props Lib F90 objects
-$(OBJECTS_F90_LIB): $(PROPS_DIR)/%.o: src/props/%.F90
-	@echo "Compiling (Props Fortran) $< ..."
-	@mkdir -p $(@D) $(INC_DIR) # Ensure both obj and mod dirs exist
-	$(F90) $(F90FLAGS) $(INCLUDE) -J$(INC_DIR) -c $< -o $@
 
 # ============================================================
 # Linking Executables (Revised Rules - v4 style)

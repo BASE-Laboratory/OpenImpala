@@ -11,6 +11,7 @@ add_library(openimpala_io OBJECT
     io/CathodeWrite.cpp
     io/DatReader.cpp
     io/HDF5Reader.cpp
+    io/ImageLoader.cpp
     io/RawReader.cpp
     io/TiffReader.cpp
 )
@@ -33,20 +34,21 @@ target_include_directories(openimpala_io PUBLIC
 )
 
 # ==============================================================================
-# Props Library (C++ and Fortran)
+# Props Library (C++ only — Fortran kernels migrated to native C++)
 # ==============================================================================
 add_library(openimpala_props OBJECT
-    # C++ sources
+    props/ConnectedComponents.cpp
+    props/DeffTensor.cpp
     props/EffectiveDiffusivityHypre.cpp
+    props/HypreStructSolver.cpp
+    props/ParticleSizeDistribution.cpp
     props/PercolationCheck.cpp
+    props/REVStudy.cpp
+    props/SpecificSurfaceArea.cpp
+    props/ThroughThicknessProfile.cpp
     props/TortuosityDirect.cpp
     props/TortuosityHypre.cpp
     props/VolumeFraction.cpp
-    # Fortran sources
-    props/EffDiffFillMtx.F90
-    props/TortuosityHypreFill.F90
-    props/Tortuosity_filcc.F90
-    props/Tortuosity_poisson_3d.F90
 )
 
 target_include_directories(openimpala_props PUBLIC
@@ -54,22 +56,11 @@ target_include_directories(openimpala_props PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/io
 )
 
-# Fortran module output directory
-set_target_properties(openimpala_props PROPERTIES
-    Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/fortran_modules
-)
-
-target_include_directories(openimpala_props PUBLIC
-    ${CMAKE_BINARY_DIR}/fortran_modules
-)
-
 target_link_libraries(openimpala_props PUBLIC
     AMReX::amrex
     HYPRE::HYPRE
     MPI::MPI_CXX
-    MPI::MPI_Fortran
     OpenMP::OpenMP_CXX
-    OpenMP::OpenMP_Fortran
 )
 
 # ==============================================================================

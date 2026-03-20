@@ -1,5 +1,6 @@
 /** @file Tortuosity.H
- *  @brief Abstract base class for tortuosity solvers and shared enums (Direction, CellType).
+ *  @brief Abstract base class for tortuosity solvers and shared enums
+ *         (Direction, CellType, SolverType).
  */
 #ifndef TORTUOSITY_H // Standard include guard
 #define TORTUOSITY_H
@@ -34,6 +35,20 @@ enum class CellType {
     BOUNDARY_Z_LO = 6,
     /** @brief Cell is on the higher boundary in the Z-direction. */
     BOUNDARY_Z_HI = 7
+};
+
+/** @brief Specifies the HYPRE structured solver algorithm to use.
+ *
+ *  Shared by TortuosityHypre and EffectiveDiffusivityHypre.
+ */
+enum class SolverType {
+    Jacobi,    /**< HYPRE_StructJacobi */
+    GMRES,     /**< HYPRE_StructGMRES */
+    FlexGMRES, /**< HYPRE_StructFlexGMRES */
+    PCG,       /**< HYPRE_StructPCG */
+    BiCGSTAB,  /**< HYPRE_StructBiCGSTAB */
+    SMG,       /**< HYPRE_StructSMG */
+    PFMG       /**< HYPRE_StructPFMG */
 };
 
 /**
