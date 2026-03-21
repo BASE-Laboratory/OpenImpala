@@ -528,50 +528,39 @@ void TortuosityMLMG::computePlaneFluxes(const amrex::MultiFab& mf_soln) {
         face_area_element = (idir == 0) ? dx[1] : dx[0];
     }
 
-    // Plane flux accumulation indexes into a per-plane histogram; kept on CPU.
-    // Ensure device data is synchronized before host-side access.
-    amrex::Gpu::streamSynchronize();
-    std::vector<amrex::Real> local_plane_flux(n_faces, 0.0);
+    // GPU-compatible plane flux accumulation using device memory with atomic scatter-add
+    amrex::Gpu::DeviceVector<amrex::Real> d_plane_flux(n_faces, 0.0);
+    amrex::Real* d_plane_flux_ptr = d_plane_flux.data();
+    const int domain_lo_idir = domain.smallEnd(idir);
 
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-    {
-        std::vector<amrex::Real> priv_plane_flux(n_faces, 0.0);
+    for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+        const amrex::Box& validBox = mfi.validbox();
+        amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
+        amrex::Array4<const amrex::Real> const soln = mf_soln.const_array(mfi);
+        amrex::Array4<const amrex::Real> const dc = m_mf_diff_coeff.const_array(mfi);
 
-        for (amrex::MFIter mfi(m_mf_active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-            const amrex::Box& tileBox = mfi.tilebox();
-            amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
-            amrex::Array4<const amrex::Real> const soln = mf_soln.const_array(mfi);
-            amrex::Array4<const amrex::Real> const dc = m_mf_diff_coeff.const_array(mfi);
+        amrex::Box flux_box = validBox;
+        flux_box.setBig(idir, std::min(validBox.bigEnd(idir), domain.bigEnd(idir) - 1));
 
-            amrex::Box flux_box = tileBox;
-            flux_box.setBig(idir, std::min(tileBox.bigEnd(idir), domain.bigEnd(idir) - 1));
-
-            amrex::LoopOnCpu(flux_box, [&](int i, int j, int k) {
+        amrex::ParallelFor(flux_box, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            int si = i + shift[0], sj = j + shift[1], sk = k + shift[2];
+            if (mask(i, j, k) == cell_active && mask(si, sj, sk) == cell_active) {
+                amrex::Real D_lo = dc(i, j, k);
+                amrex::Real D_hi = dc(si, sj, sk);
+                amrex::Real D_face =
+                    (D_lo + D_hi > 0.0) ? 2.0 * D_lo * D_hi / (D_lo + D_hi) : 0.0;
+                amrex::Real grad = (soln(si, sj, sk) - soln(i, j, k)) / dx_dir;
+                amrex::Real flux = -D_face * grad * face_area_element;
                 amrex::IntVect iv(i, j, k);
-                amrex::IntVect iv_plus = iv + shift;
-                if (mask(iv) == cell_active && mask(iv_plus) == cell_active) {
-                    amrex::Real D_lo = dc(iv);
-                    amrex::Real D_hi = dc(iv_plus);
-                    amrex::Real D_face =
-                        (D_lo + D_hi > 0.0) ? 2.0 * D_lo * D_hi / (D_lo + D_hi) : 0.0;
-                    amrex::Real grad = (soln(iv_plus) - soln(iv)) / dx_dir;
-                    amrex::Real flux = -D_face * grad * face_area_element;
-                    int face_idx = iv[idir] - domain.smallEnd(idir);
-                    priv_plane_flux[face_idx] += flux;
-                }
-            });
-        }
-#ifdef AMREX_USE_OMP
-#pragma omp critical
-#endif
-        {
-            for (int f = 0; f < n_faces; ++f) {
-                local_plane_flux[f] += priv_plane_flux[f];
+                int face_idx = iv[idir] - domain_lo_idir;
+                amrex::Gpu::Atomic::Add(&d_plane_flux_ptr[face_idx], flux);
             }
-        }
+        });
     }
+
+    std::vector<amrex::Real> local_plane_flux(n_faces);
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_plane_flux.begin(), d_plane_flux.end(),
+                     local_plane_flux.begin());
 
     amrex::ParallelDescriptor::ReduceRealSum(local_plane_flux.data(), n_faces);
     m_plane_fluxes = std::move(local_plane_flux);
