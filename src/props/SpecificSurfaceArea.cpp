@@ -38,6 +38,7 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
 #endif
     for (amrex::MFIter mfi(m_mf, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.tilebox();
+        const amrex::Box& vbx = mfi.validbox();
         const auto& fab = m_mf.const_array(mfi, phase_comp);
 
         // Restrict cell counting to the padded interior
@@ -50,13 +51,16 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
         // For each direction d, we check the face between cell (i,j,k) and its
         // neighbor in the +d direction. Both cells must lie within the padded
         // domain. The face is "owned" by the cell on its low side.
+        // We also clamp to the valid box to avoid accessing ghost cells that
+        // may not be filled (the +d neighbor must be within this FAB's valid region).
         for (int d = 0; d < AMREX_SPACEDIM; ++d) {
             amrex::Box check_bx = bx & padded_domain;
             if (!check_bx.ok()) {
                 continue;
             }
-            // The +d neighbor must also be in padded_domain, so shrink high end by 1
+            // The +d neighbor must be in padded_domain and in the valid box
             int hi_limit = std::min(check_bx.bigEnd(d), padded_domain.bigEnd(d) - 1);
+            hi_limit = std::min(hi_limit, vbx.bigEnd(d) - 1);
             check_bx.setBig(d, hi_limit);
 
             if (check_bx.ok()) {

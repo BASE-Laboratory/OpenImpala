@@ -874,7 +874,7 @@ bool OpenImpala::TortuosityHypre::solve() {
         if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  Plotfile written to " << plotfilename << std::endl;
         }
-    } else if (!m_converged) {
+    } else if (m_write_plotfile && !m_converged) {
         // Write a "failed" plotfile for debugging non-convergent solves
         if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  Solver did not converge. Writing failed plotfile for debugging..."
