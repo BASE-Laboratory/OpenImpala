@@ -35,6 +35,9 @@
 #include <AMReX_IntVect.H>
 #include <AMReX_VisMF.H>
 #include <AMReX_Loop.H>
+#include <AMReX_Reduce.H>
+#include <AMReX_GpuLaunch.H>
+#include <AMReX_GpuQualifiers.H>
 
 // HYPRE includes
 #include <HYPRE.h>
@@ -72,22 +75,19 @@ constexpr int istn_py = 4;
 constexpr int istn_mz = 5;
 constexpr int istn_pz = 6;
 
-// Helper function to manually sum active cells in an iMultiFab
+// Helper function to manually sum active cells in an iMultiFab (GPU-compatible)
 long ManualSumActiveCells(const amrex::iMultiFab& imf, int component, int active_value) {
-    long total_active_cells = 0;
-    // Not using TilingIfNotGPU() here as it's a simple sum,
-    // and this function might be called outside OMP regions too.
-    // The MFIter itself is safe.
-    for (amrex::MFIter mfi(imf, false); mfi.isValid(); ++mfi) {
+    amrex::ReduceOps<amrex::ReduceOpSum> reduce_op;
+    amrex::ReduceData<long> reduce_data(reduce_op);
+    for (amrex::MFIter mfi(imf); mfi.isValid(); ++mfi) {
         const amrex::Box& vbox = mfi.validbox();
         amrex::Array4<const int> const arr = imf.const_array(mfi);
-        long local_s = 0;
-        amrex::LoopOnCpu(vbox, [&](int i, int j, int k) {
-            if (arr(i, j, k, component) == active_value)
-                local_s++;
-        });
-        total_active_cells += local_s;
+        reduce_op.eval(vbox, reduce_data,
+                       [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept -> amrex::GpuTuple<long> {
+                           return {(arr(i, j, k, component) == active_value) ? 1L : 0L};
+                       });
     }
+    long total_active_cells = amrex::get<0>(reduce_data.value());
     amrex::ParallelDescriptor::ReduceLongSum(total_active_cells);
     return total_active_cells;
 }
@@ -173,21 +173,32 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
         }
     }
 
-    // Build coefficient MultiFab
+    // Build coefficient MultiFab using a device-accessible lookup table
     m_mf_diff_coeff.setVal(0.0);
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-    for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& bx = mfi.growntilebox();
-        amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
-        amrex::Array4<const int> const phase_arr = m_mf_phase_original.const_array(mfi);
-        const auto& coeff_map = m_phase_coeff_map;
-        amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
-            int pid = phase_arr(i, j, k, 0);
-            auto it = coeff_map.find(pid);
-            dc_arr(i, j, k, 0) = (it != coeff_map.end()) ? it->second : 0.0;
-        });
+    {
+        int max_pid = 0;
+        for (const auto& kv : m_phase_coeff_map) {
+            max_pid = std::max(max_pid, kv.first);
+        }
+        amrex::Gpu::DeviceVector<amrex::Real> d_coeff_lut(max_pid + 1, 0.0);
+        amrex::Gpu::HostVector<amrex::Real> h_coeff_lut(max_pid + 1, 0.0);
+        for (const auto& kv : m_phase_coeff_map) {
+            h_coeff_lut[kv.first] = kv.second;
+        }
+        amrex::Gpu::copy(amrex::Gpu::hostToDevice, h_coeff_lut.begin(), h_coeff_lut.end(),
+                         d_coeff_lut.begin());
+        const amrex::Real* lut_ptr = d_coeff_lut.data();
+        const int lut_size = max_pid + 1;
+
+        for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.growntilebox();
+            amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
+            amrex::Array4<const int> const phase_arr = m_mf_phase_original.const_array(mfi);
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                int pid = phase_arr(i, j, k, 0);
+                dc_arr(i, j, k, 0) = (pid >= 0 && pid < lut_size) ? lut_ptr[pid] : 0.0;
+            });
+        }
     }
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
@@ -577,16 +588,12 @@ bool EffectiveDiffusivityHypre::solve() {
         amrex::MultiFab mf_plot(m_ba, m_dm, 2, 0);
         amrex::Copy(mf_plot, m_mf_chi, ChiComp, 0, 1, 0);
 
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
         for (amrex::MFIter mfi(mf_plot, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
             const amrex::Box& bx_plot = mfi.tilebox();
             amrex::Array4<amrex::Real> const plot_arr = mf_plot.array(mfi);
-            // Use m_mf_active_mask which has the correct content for visualization
             amrex::Array4<const int> const mask_arr_plot = m_mf_active_mask.const_array(mfi);
 
-            amrex::LoopOnCpu(bx_plot, [=](int i, int j, int k) noexcept {
+            amrex::ParallelFor(bx_plot, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
                 plot_arr(i, j, k, 1) = static_cast<amrex::Real>(mask_arr_plot(i, j, k, MaskComp));
             });
         }

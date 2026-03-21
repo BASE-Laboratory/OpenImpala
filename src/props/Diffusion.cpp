@@ -45,6 +45,8 @@
 #include <AMReX_PlotFileUtil.H>
 #include <AMReX_MultiFabUtil.H>
 #include <AMReX_Loop.H>
+#include <AMReX_GpuLaunch.H>
+#include <AMReX_GpuQualifiers.H>
 
 #include <sstream>
 #include <iostream>
@@ -344,14 +346,11 @@ void runHomogenization(const amrex::Geometry& geom, const amrex::BoxArray& ba,
     if (all_converged) {
         amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM];
         amrex::iMultiFab active_mask(ba, dm, 1, 0);
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
         for (amrex::MFIter mfi(active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
             const amrex::Box& tb = mfi.tilebox();
             auto const& mask_arr = active_mask.array(mfi);
             auto const& phase_arr = mf_phase.const_array(mfi);
-            amrex::LoopOnCpu(tb, [=](int i, int j, int k) {
+            amrex::ParallelFor(tb, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
                 mask_arr(i, j, k, 0) = (phase_arr(i, j, k, 0) == phase_id) ? 1 : 0;
             });
         }

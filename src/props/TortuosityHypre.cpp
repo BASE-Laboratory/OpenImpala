@@ -42,6 +42,8 @@
 #include <AMReX_IndexType.H>     // For cell/node types if needed later
 #include <AMReX_VisMF.H>         // For potential debug writes
 #include <AMReX_Loop.H>          // For amrex::LoopOnCpu
+#include <AMReX_Reduce.H>        // For GPU-compatible reductions
+#include <AMReX_GpuLaunch.H>     // For amrex::ParallelFor
 
 // HYPRE includes remain the same...
 #include <HYPRE.h>
@@ -225,20 +227,31 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "TortuosityHypre: Building diffusion coefficient field..." << std::endl;
     m_mf_diff_coeff.setVal(0.0);
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-    for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& bx = mfi.growntilebox();
-        amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
-        amrex::Array4<const int> const phase_arr = m_mf_phase.const_array(mfi);
-        // Copy map to local for lambda capture
-        const auto& coeff_map = m_phase_coeff_map;
-        amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
-            int pid = phase_arr(i, j, k, 0);
-            auto it = coeff_map.find(pid);
-            dc_arr(i, j, k, 0) = (it != coeff_map.end()) ? it->second : 0.0;
-        });
+    // Flatten phase coefficient map to a device-accessible lookup table
+    {
+        int max_pid = 0;
+        for (const auto& kv : m_phase_coeff_map) {
+            max_pid = std::max(max_pid, kv.first);
+        }
+        amrex::Gpu::DeviceVector<amrex::Real> d_coeff_lut(max_pid + 1, 0.0);
+        amrex::Gpu::HostVector<amrex::Real> h_coeff_lut(max_pid + 1, 0.0);
+        for (const auto& kv : m_phase_coeff_map) {
+            h_coeff_lut[kv.first] = kv.second;
+        }
+        amrex::Gpu::copy(amrex::Gpu::hostToDevice, h_coeff_lut.begin(), h_coeff_lut.end(),
+                         d_coeff_lut.begin());
+        const amrex::Real* lut_ptr = d_coeff_lut.data();
+        const int lut_size = max_pid + 1;
+
+        for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.growntilebox();
+            amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
+            amrex::Array4<const int> const phase_arr = m_mf_phase.const_array(mfi);
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                int pid = phase_arr(i, j, k, 0);
+                dc_arr(i, j, k, 0) = (pid >= 0 && pid < lut_size) ? lut_ptr[pid] : 0.0;
+            });
+        }
     }
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
@@ -253,15 +266,12 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
         // Create a temporary binary phase fab: 1 where D > 0, 0 otherwise
         amrex::iMultiFab mf_binary_traversable(m_ba, m_dm, 1, m_mf_phase.nGrow());
         mf_binary_traversable.setVal(0);
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
         for (amrex::MFIter mfi(mf_binary_traversable, amrex::TilingIfNotGPU()); mfi.isValid();
              ++mfi) {
             const amrex::Box& bx = mfi.growntilebox();
             amrex::Array4<int> const trav_arr = mf_binary_traversable.array(mfi);
             amrex::Array4<const amrex::Real> const dc_arr = m_mf_diff_coeff.const_array(mfi);
-            amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
                 trav_arr(i, j, k, 0) = (dc_arr(i, j, k, 0) > 0.0) ? 1 : 0;
             });
         }
@@ -430,18 +440,19 @@ void OpenImpala::TortuosityHypre::generateActivityMask(const amrex::iMultiFab& p
     if (write_debug_mask) { /* ... plotfile code ... */
     }
 
-    // Count active cells via manual sum (avoids ghost cell inclusion)
-    long num_active_local = 0;
+    // Count active cells via GPU-compatible reduction (avoids ghost cell inclusion)
+    amrex::ReduceOps<amrex::ReduceOpSum> count_reduce_op;
+    amrex::ReduceData<long> count_reduce_data(count_reduce_op);
     for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();
         auto const& mask_arr = m_mf_active_mask.const_array(mfi);
-        amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
-            if (mask_arr(i, j, k, MaskComp) == 1) {
-                ++num_active_local;
-            }
-        });
+        count_reduce_op.eval(
+            bx, count_reduce_data,
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept -> amrex::GpuTuple<long> {
+                return {(mask_arr(i, j, k, MaskComp) == 1) ? 1L : 0L};
+            });
     }
-    long num_active = num_active_local;
+    long num_active = amrex::get<0>(count_reduce_data.value());
     amrex::ParallelDescriptor::ReduceLongSum(num_active);
 
     long total_cells = m_geom.Domain().numPts();
@@ -1157,10 +1168,6 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
     // Flux calculation loop - uses D_face (harmonic mean) for variable-coefficient diffusion
-    amrex::Real local_fxin = 0.0;
-    amrex::Real local_fxout = 0.0;
-    amrex::Real local_active_cells_in = 0.0;
-    amrex::Real local_active_cells_out = 0.0;
     const amrex::Real dx_dir = dx[idir];
     if (dx_dir <= 0.0)
         amrex::Abort("Zero cell size in flux calculation direction!");
@@ -1169,64 +1176,79 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
         amrex::Print() << "\n--- START LIMITED DEBUG_FLUX (global_fluxes, verbose>=3) ---\n";
         amrex::Print() << "DEBUG_FLUX: Printing details for first few active cells per tile...\n";
     }
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())                                          \
-    reduction(+ : local_fxin, local_fxout, local_active_cells_in, local_active_cells_out)
-#endif
-    for (amrex::MFIter mfi(m_mf_active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& tileBox = mfi.tilebox();
+
+    // GPU-compatible reduction for inlet/outlet flux and active cell counts
+    amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum,
+                     amrex::ReduceOpSum>
+        flux_reduce_op;
+    amrex::ReduceData<amrex::Real, amrex::Real, amrex::Real, amrex::Real> flux_reduce_data(
+        flux_reduce_op);
+
+    amrex::Box lobox_domain = amrex::bdryLo(domain, idir);
+    amrex::Box hibox_domain = domain;
+    hibox_domain.setSmall(idir, domain.bigEnd(idir));
+    hibox_domain.setBig(idir, domain.bigEnd(idir));
+
+    for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+        const amrex::Box& validBox = mfi.validbox();
         amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
         amrex::Array4<const amrex::Real> const soln = mf_soln_temp.const_array(mfi);
         amrex::Array4<const amrex::Real> const dc = m_mf_diff_coeff.const_array(mfi);
-        amrex::Box lobox_face = amrex::bdryLo(domain, idir);
-        lobox_face &= tileBox;
-        amrex::Box domain_hi_face = domain;
-        domain_hi_face.setSmall(idir, domain.bigEnd(idir));
-        domain_hi_face.setBig(idir, domain.bigEnd(idir));
-        amrex::Box hibox_face = domain_hi_face & tileBox;
 
+        amrex::Box lobox_face = validBox & lobox_domain;
         if (!lobox_face.isEmpty()) {
-            amrex::LoopOnCpu(lobox_face, [&](int i, int j, int k) {
-                amrex::IntVect iv(i, j, k);
-                if (mask(iv) == cell_active) {
-                    local_active_cells_in += 1.0;
-                    amrex::IntVect iv_inner = iv + shift;
-                    if (mask(iv_inner) == cell_active) {
-                        amrex::Real D_bnd = dc(iv);
-                        amrex::Real D_inn = dc(iv_inner);
-                        amrex::Real D_face =
-                            (D_bnd + D_inn > 0.0) ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn) : 0.0;
-                        amrex::Real val_bnd = soln(iv);
-                        amrex::Real val_in = soln(iv_inner);
-                        amrex::Real grad = (val_in - val_bnd) / dx_dir;
-                        amrex::Real flux = -D_face * grad;
-                        local_fxin += flux;
+            flux_reduce_op.eval(
+                lobox_face, flux_reduce_data,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                    -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
+                    amrex::Real fxin = 0.0, cells_in = 0.0;
+                    if (mask(i, j, k) == cell_active) {
+                        cells_in = 1.0;
+                        int si = i + shift[0], sj = j + shift[1], sk = k + shift[2];
+                        if (mask(si, sj, sk) == cell_active) {
+                            amrex::Real D_bnd = dc(i, j, k);
+                            amrex::Real D_inn = dc(si, sj, sk);
+                            amrex::Real D_face = (D_bnd + D_inn > 0.0)
+                                                     ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn)
+                                                     : 0.0;
+                            amrex::Real grad = (soln(si, sj, sk) - soln(i, j, k)) / dx_dir;
+                            fxin = -D_face * grad;
+                        }
                     }
-                }
-            });
+                    return {fxin, 0.0, cells_in, 0.0};
+                });
         }
+
+        amrex::Box hibox_face = validBox & hibox_domain;
         if (!hibox_face.isEmpty()) {
-            amrex::LoopOnCpu(hibox_face, [&](int i, int j, int k) {
-                amrex::IntVect iv(i, j, k);
-                int mask_val = mask(iv);
-                if (mask_val == cell_active) {
-                    local_active_cells_out += 1.0;
-                    amrex::IntVect iv_inner = iv - shift;
-                    if (mask(iv_inner) == cell_active) {
-                        amrex::Real D_bnd = dc(iv);
-                        amrex::Real D_inn = dc(iv_inner);
-                        amrex::Real D_face =
-                            (D_bnd + D_inn > 0.0) ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn) : 0.0;
-                        amrex::Real val_bnd = soln(iv);
-                        amrex::Real val_in = soln(iv_inner);
-                        amrex::Real grad = (val_bnd - val_in) / dx_dir;
-                        amrex::Real flux = -D_face * grad;
-                        local_fxout += flux;
+            flux_reduce_op.eval(
+                hibox_face, flux_reduce_data,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                    -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
+                    amrex::Real fxout = 0.0, cells_out = 0.0;
+                    if (mask(i, j, k) == cell_active) {
+                        cells_out = 1.0;
+                        int si = i - shift[0], sj = j - shift[1], sk = k - shift[2];
+                        if (mask(si, sj, sk) == cell_active) {
+                            amrex::Real D_bnd = dc(i, j, k);
+                            amrex::Real D_inn = dc(si, sj, sk);
+                            amrex::Real D_face = (D_bnd + D_inn > 0.0)
+                                                     ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn)
+                                                     : 0.0;
+                            amrex::Real grad = (soln(i, j, k) - soln(si, sj, sk)) / dx_dir;
+                            fxout = -D_face * grad;
+                        }
                     }
-                }
-            });
+                    return {0.0, fxout, 0.0, cells_out};
+                });
         }
     } // End MFIter loop
+
+    auto flux_hv = flux_reduce_data.value();
+    amrex::Real local_fxin = amrex::get<0>(flux_hv);
+    amrex::Real local_fxout = amrex::get<1>(flux_hv);
+    amrex::Real local_active_cells_in = amrex::get<2>(flux_hv);
+    amrex::Real local_active_cells_out = amrex::get<3>(flux_hv);
 
     // Reduction and final scaling remain the same...
     amrex::ParallelDescriptor::ReduceRealSum(local_fxin);
@@ -1304,59 +1326,41 @@ void OpenImpala::TortuosityHypre::computePlaneFluxes(const amrex::MultiFab& mf_s
     const amrex::Real dx_dir = dx[idir];
     amrex::IntVect shift = amrex::IntVect::TheDimensionVector(idir);
 
-    // Each rank accumulates its local contribution per face.
-    std::vector<amrex::Real> local_plane_flux(n_faces, 0.0);
+    // Each rank accumulates its local contribution per face using device memory
+    // for GPU compatibility with atomic scatter-add.
+    amrex::Gpu::DeviceVector<amrex::Real> d_plane_flux(n_faces, 0.0);
+    amrex::Real* d_plane_flux_ptr = d_plane_flux.data();
+    const int domain_lo_idir = domain.smallEnd(idir);
 
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-    {
-        // Thread-private accumulator to avoid lock contention
-        std::vector<amrex::Real> priv_plane_flux(n_faces, 0.0);
+    for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+        const amrex::Box& validBox = mfi.validbox();
+        amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
+        amrex::Array4<const amrex::Real> const soln = mf_soln.const_array(mfi);
+        amrex::Array4<const amrex::Real> const dc = m_mf_diff_coeff.const_array(mfi);
 
-        for (amrex::MFIter mfi(m_mf_active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-            const amrex::Box& tileBox = mfi.tilebox();
-            amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
-            amrex::Array4<const amrex::Real> const soln = mf_soln.const_array(mfi);
-            amrex::Array4<const amrex::Real> const dc = m_mf_diff_coeff.const_array(mfi);
+        amrex::Box flux_box = validBox;
+        flux_box.setBig(idir, std::min(validBox.bigEnd(idir), domain.bigEnd(idir) - 1));
 
-            // For each cell in the tile, compute flux across its "plus" face
-            // in the flow direction (i.e. the face between cell iv and iv+shift).
-            // Only consider faces where both cells are active.
-            // We skip the last cell-plane (domain.bigEnd) because there is no
-            // cell beyond it within the domain.
-            amrex::Box flux_box = tileBox;
-            flux_box.setBig(idir, std::min(tileBox.bigEnd(idir), domain.bigEnd(idir) - 1));
-
-            amrex::LoopOnCpu(flux_box, [&](int i, int j, int k) {
+        amrex::ParallelFor(flux_box, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            int si = i + shift[0], sj = j + shift[1], sk = k + shift[2];
+            if (mask(i, j, k) == cell_active && mask(si, sj, sk) == cell_active) {
+                amrex::Real D_lo = dc(i, j, k);
+                amrex::Real D_hi = dc(si, sj, sk);
+                amrex::Real D_face =
+                    (D_lo + D_hi > 0.0) ? 2.0 * D_lo * D_hi / (D_lo + D_hi) : 0.0;
+                amrex::Real grad = (soln(si, sj, sk) - soln(i, j, k)) / dx_dir;
+                amrex::Real flux = -D_face * grad * face_area_element;
                 amrex::IntVect iv(i, j, k);
-                amrex::IntVect iv_plus = iv + shift;
-                if (mask(iv) == cell_active && mask(iv_plus) == cell_active) {
-                    amrex::Real D_lo = dc(iv);
-                    amrex::Real D_hi = dc(iv_plus);
-                    amrex::Real D_face =
-                        (D_lo + D_hi > 0.0) ? 2.0 * D_lo * D_hi / (D_lo + D_hi) : 0.0;
-                    amrex::Real grad = (soln(iv_plus) - soln(iv)) / dx_dir;
-                    amrex::Real flux = -D_face * grad * face_area_element;
-                    // Face index: the face between cell-plane p and p+1 has index p,
-                    // where p is the cell coordinate in the flow direction minus the
-                    // domain lower bound.
-                    int face_idx = iv[idir] - domain.smallEnd(idir);
-                    priv_plane_flux[face_idx] += flux;
-                }
-            });
-        } // end MFIter
-
-        // Merge thread-private into local
-#ifdef AMREX_USE_OMP
-#pragma omp critical
-#endif
-        {
-            for (int f = 0; f < n_faces; ++f) {
-                local_plane_flux[f] += priv_plane_flux[f];
+                int face_idx = iv[idir] - domain_lo_idir;
+                amrex::Gpu::Atomic::Add(&d_plane_flux_ptr[face_idx], flux);
             }
-        }
-    } // end parallel region
+        });
+    }
+
+    // Copy device results to host
+    std::vector<amrex::Real> local_plane_flux(n_faces);
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_plane_flux.begin(), d_plane_flux.end(),
+                     local_plane_flux.begin());
 
     // MPI reduction across ranks
     amrex::ParallelDescriptor::ReduceRealSum(local_plane_flux.data(), n_faces);

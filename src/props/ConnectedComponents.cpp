@@ -7,6 +7,9 @@
 #include <AMReX_MFIter.H>
 #include <AMReX_Box.H>
 #include <AMReX_ParallelReduce.H>
+#include <AMReX_GpuLaunch.H>
+#include <AMReX_GpuQualifiers.H>
+#include <AMReX_Gpu.H>
 
 #include <mpi.h>
 
@@ -102,35 +105,28 @@ void ConnectedComponents::run(const amrex::iMultiFab& mf_phase, int phase_id) {
         amrex::Print() << "  ConnectedComponents: found " << m_num_components << " components\n";
     }
 
-    // Compute volume of each component
+    // Compute volume of each component using GPU-compatible atomic scatter-add
     m_volumes.resize(m_num_components, 0);
 
-    std::vector<long long> local_volumes(m_num_components, 0);
-#ifdef AMREX_USE_OMP
-#pragma omp parallel
-#endif
-    {
-        std::vector<long long> thr_volumes(m_num_components, 0);
-        for (amrex::MFIter mfi(m_labels, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-            const amrex::Box& bx = mfi.tilebox();
-            const auto label_arr = m_labels.const_array(mfi);
+    amrex::Gpu::DeviceVector<long long> d_volumes(m_num_components, 0);
+    long long* d_vol_ptr = d_volumes.data();
+    const int num_comp = m_num_components;
 
-            amrex::Loop(bx, [&](int i, int j, int k) {
-                int lbl = label_arr(i, j, k, 0);
-                if (lbl > 0 && lbl <= m_num_components) {
-                    thr_volumes[lbl - 1] += 1;
-                }
-            });
-        }
-#ifdef AMREX_USE_OMP
-#pragma omp critical(ccl_volumes)
-#endif
-        {
-            for (int c = 0; c < m_num_components; ++c) {
-                local_volumes[c] += thr_volumes[c];
+    for (amrex::MFIter mfi(m_labels); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.validbox();
+        const auto label_arr = m_labels.const_array(mfi);
+
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            int lbl = label_arr(i, j, k, 0);
+            if (lbl > 0 && lbl <= num_comp) {
+                amrex::Gpu::Atomic::Add(&d_vol_ptr[lbl - 1], 1LL);
             }
-        }
+        });
     }
+
+    std::vector<long long> local_volumes(m_num_components);
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_volumes.begin(), d_volumes.end(),
+                     local_volumes.begin());
 
     if (m_num_components > 0) {
         amrex::ParallelAllReduce::Sum(local_volumes.data(), m_num_components,

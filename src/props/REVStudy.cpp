@@ -8,6 +8,8 @@
 #include "Tortuosity.H"
 
 #include <AMReX_Loop.H>
+#include <AMReX_GpuLaunch.H>
+#include <AMReX_GpuQualifiers.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_Print.H>
 #include <AMReX_Utility.H>
@@ -202,16 +204,13 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
 
             if (all_converged) {
                 amrex::iMultiFab active_mask(ba_rev, dm_rev, 1, 0);
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
                 for (amrex::MFIter mfi(active_mask, amrex::TilingIfNotGPU()); mfi.isValid();
                      ++mfi) {
                     const amrex::Box& tb = mfi.tilebox();
                     auto const& mask_arr = active_mask.array(mfi);
                     auto const& phase_arr = mf_phase_rev.const_array(mfi);
                     int pid = config.phase_id;
-                    amrex::LoopOnCpu(tb, [=](int i, int j, int k) {
+                    amrex::ParallelFor(tb, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
                         mask_arr(i, j, k, 0) = (phase_arr(i, j, k, 0) == pid) ? 1 : 0;
                     });
                 }
