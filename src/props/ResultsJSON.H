@@ -136,6 +136,16 @@ public:
         m_has_psd = true;
     }
 
+    /// Set the full effective diffusivity tensor (from homogenization).
+    void setDeffTensor(const Real tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]) {
+        for (int r = 0; r < AMREX_SPACEDIM; ++r) {
+            for (int c = 0; c < AMREX_SPACEDIM; ++c) {
+                m_deff_tensor[r][c] = tensor[r][c];
+            }
+        }
+        m_has_deff_tensor = true;
+    }
+
     /// Set voxel size in meters for unit conversion in BPX output.
     void setVoxelSize(Real voxel_size_m) {
         m_voxel_size_m = voxel_size_m;
@@ -180,6 +190,19 @@ public:
             }
             if (m_physics.type == PhysicsType::ElectricalConductivity) {
                 dir_obj["formation_factor"] = m_physics.formationFactor(ratio);
+            }
+        }
+
+        // D_eff tensor (from homogenization)
+        if (m_has_deff_tensor) {
+            auto& tensor_obj = oi["deff_tensor"];
+            const char* labels[AMREX_SPACEDIM] = {AMREX_D_DECL("X", "Y", "Z")};
+            for (int r = 0; r < AMREX_SPACEDIM; ++r) {
+                for (int c = 0; c < AMREX_SPACEDIM; ++c) {
+                    std::string key =
+                        std::string(labels[r]) + std::string(labels[c]);
+                    tensor_obj[key] = m_deff_tensor[r][c];
+                }
             }
         }
 
@@ -266,6 +289,10 @@ private:
     std::vector<Real> m_psd_radii;
     bool m_has_psd = false;
     Real m_voxel_size_m = 0.0;
+
+    // D_eff tensor (from homogenization)
+    Real m_deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM] = {};
+    bool m_has_deff_tensor = false;
 
     // --- Build microstructure parameters block ---
     void buildMicrostructureBlock(nlohmann::ordered_json& oi) const {

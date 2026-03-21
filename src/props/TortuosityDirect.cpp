@@ -247,6 +247,9 @@ void TortuosityDirect::global_fluxes(amrex::Real& fxin, amrex::Real& fxout) cons
     // ownership check to fail and reading out-of-bounds data.
     const amrex::Box& domain = m_geom.Domain();
 
+    // integrateBoundaryFluxes is a host-only function reading Array4 data
+    amrex::Gpu::streamSynchronize();
+
 #ifdef AMREX_USE_OMP
 #pragma omp parallel reduction(+ : fxin, fxout)
 #endif

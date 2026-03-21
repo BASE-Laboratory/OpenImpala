@@ -27,7 +27,8 @@ namespace OpenImpala {
  * from the computation, mitigating artifacts from truncated features at domain
  * boundaries.
  *
- * @note Ghost cells are not required; the computation uses only valid regions.
+ * @note The iMultiFab must have at least 1 ghost cell filled with valid phase data,
+ *       since the face counting reads neighbor cells across MFIter box boundaries.
  * @warning The iMultiFab must remain valid for the lifetime of this object.
  */
 class SpecificSurfaceArea {

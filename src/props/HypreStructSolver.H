@@ -120,10 +120,10 @@ protected:
     amrex::Real m_final_res_norm = std::numeric_limits<amrex::Real>::quiet_NaN();
     bool m_converged = false;
 
-    // --- AMReX grid info (references, not owned) ---
-    const amrex::Geometry& m_geom;
-    const amrex::BoxArray& m_ba;
-    const amrex::DistributionMapping& m_dm;
+    // --- AMReX grid info (stored by value to avoid dangling references) ---
+    amrex::Geometry m_geom;
+    amrex::BoxArray m_ba;
+    amrex::DistributionMapping m_dm;
 
     // --- Constants ---
     static constexpr int STENCIL_SIZE = 7;

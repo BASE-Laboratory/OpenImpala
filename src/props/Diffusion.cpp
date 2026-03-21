@@ -100,7 +100,15 @@ void runMicrostructureParams(const amrex::Geometry& geom, const amrex::BoxArray&
 
     // Always compute macro geometry (trivial)
     {
-        auto mg = OpenImpala::MacroGeometry::fromGeometry(geom, 2); // default Z
+        std::string upper_profile_dir = profile_dir_str;
+        std::transform(upper_profile_dir.begin(), upper_profile_dir.end(), upper_profile_dir.begin(),
+                       ::toupper);
+        int flow_dir_idx = 2; // default Z
+        if (upper_profile_dir == "X")
+            flow_dir_idx = 0;
+        else if (upper_profile_dir == "Y")
+            flow_dir_idx = 1;
+        auto mg = OpenImpala::MacroGeometry::fromGeometry(geom, flow_dir_idx);
         json_writer.setMacroGeometry(mg.thickness, mg.cross_section, mg.total_volume);
         if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  Macro Geometry: thickness=" << mg.thickness
@@ -111,8 +119,20 @@ void runMicrostructureParams(const amrex::Geometry& geom, const amrex::BoxArray&
 
     // Multi-phase volume fractions
     {
+        // Detect max phase ID present in the data
+        int local_max_phase = 0;
+        for (amrex::MFIter mfi(mf_phase); mfi.isValid(); ++mfi) {
+            const auto& fab = mf_phase.const_array(mfi);
+            const amrex::Box& bx = mfi.validbox();
+            amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+                local_max_phase = std::max(local_max_phase, fab(i, j, k, 0));
+            });
+        }
+        int max_phase = local_max_phase;
+        amrex::ParallelDescriptor::ReduceIntMax(max_phase);
+
         std::map<int, OpenImpala::Real> phase_vfs;
-        for (int pid = 0; pid <= 1; ++pid) {
+        for (int pid = 0; pid <= max_phase; ++pid) {
             OpenImpala::VolumeFraction vf_calc(mf_phase, pid);
             amrex::Real vf_val = vf_calc.value_vf(false);
             phase_vfs[pid] = vf_val;
@@ -210,11 +230,22 @@ void runDryRunChecks(const amrex::Geometry& geom, const amrex::BoxArray& ba,
         amrex::Print() << "  Calc method:   " << calc_method << "\n";
     }
 
-    // Volume fractions for phases 0 and 1
+    // Volume fractions for all phases
+    int local_max_phase = 0;
+    for (amrex::MFIter mfi(mf_phase); mfi.isValid(); ++mfi) {
+        const auto& fab = mf_phase.const_array(mfi);
+        const amrex::Box& bx = mfi.validbox();
+        amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+            local_max_phase = std::max(local_max_phase, fab(i, j, k, 0));
+        });
+    }
+    int max_phase = local_max_phase;
+    amrex::ParallelDescriptor::ReduceIntMax(max_phase);
+
     if (amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "\n--- Volume Fractions ---\n";
     }
-    for (int pid = 0; pid <= 1; ++pid) {
+    for (int pid = 0; pid <= max_phase; ++pid) {
         OpenImpala::VolumeFraction vf_calc(mf_phase, pid);
         long long phase_count = 0, total_count = 0;
         vf_calc.value(phase_count, total_count, false);
@@ -283,10 +314,11 @@ void runDryRunChecks(const amrex::Geometry& geom, const amrex::BoxArray& ba,
 // ---------------------------------------------------------------------------
 void runHomogenization(const amrex::Geometry& geom, const amrex::BoxArray& ba,
                        const amrex::DistributionMapping& dm, const amrex::iMultiFab& mf_phase,
-                       int phase_id, OpenImpala::SolverType solver_type,
+                       const amrex::Box& domain_box, int phase_id,
+                       OpenImpala::SolverType solver_type, const std::string& solver_str,
                        const std::filesystem::path& results_path,
-                       const OpenImpala::PhysicsConfig& physics_config, int verbose,
-                       bool write_plotfiles) {
+                       const OpenImpala::PhysicsConfig& physics_config,
+                       const std::string& filename, int verbose, bool write_plotfiles) {
     if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "\n--- Effective Diffusivity via Homogenization (Full Domain) ---\n";
     }
@@ -383,6 +415,51 @@ void runHomogenization(const amrex::Geometry& geom, const amrex::BoxArray& ba,
                     amrex::Print() << "]\n";
                 }
             }
+
+            // Write persistent output files
+            OpenImpala::ResultsJSON json_writer;
+            json_writer.setPhysicsConfig(physics_config);
+            json_writer.setInputFile(filename);
+            json_writer.setPhaseId(phase_id);
+            json_writer.setGridInfo(domain_box.length(0), domain_box.length(1),
+                                    domain_box.length(2), 0);
+            json_writer.setSolverInfo(solver_str, all_converged);
+            json_writer.setDeffTensor(Deff_tensor);
+
+            // Also store diagonal elements as per-direction D_eff ratios
+            const char* dir_labels[AMREX_SPACEDIM] = {AMREX_D_DECL("X", "Y", "Z")};
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                json_writer.addDirectionResult(dir_labels[d], Deff_tensor[d][d]);
+            }
+
+            // Write results.txt
+            std::filesystem::path output_filepath = results_path / "results.txt";
+            amrex::Print() << "\nWriting final results to: " << output_filepath << "\n";
+            std::ofstream outfile(output_filepath);
+            if (outfile.is_open()) {
+                physics_config.writeHeader(outfile, filename, phase_id);
+                outfile << "CalculationMethod: homogenization\n";
+                outfile << "DeffTensor:\n";
+                for (int r = 0; r < AMREX_SPACEDIM; ++r) {
+                    outfile << "  [";
+                    for (int c = 0; c < AMREX_SPACEDIM; ++c) {
+                        outfile << std::scientific << std::setprecision(9) << Deff_tensor[r][c]
+                                << (c == AMREX_SPACEDIM - 1 ? "" : ", ");
+                    }
+                    outfile << "]\n";
+                }
+                outfile.close();
+            } else {
+                amrex::Warning("Could not open output file: " + output_filepath.string());
+            }
+
+            // Write results.json
+            std::filesystem::path json_filepath = results_path / "results.json";
+            if (json_writer.write(json_filepath.string())) {
+                amrex::Print() << "Writing JSON results to:  " << json_filepath << "\n";
+            } else {
+                amrex::Warning("Could not write JSON results to: " + json_filepath.string());
+            }
         }
     } else {
         if (amrex::ParallelDescriptor::IOProcessor()) {
@@ -433,6 +510,7 @@ void runFlowThrough(const amrex::Geometry& geom, const amrex::BoxArray& ba,
     }
 
     // Parse directions
+    bool all_converged = true;
     std::map<std::string, amrex::Real> tortuosity_results;
     std::map<std::string, amrex::Real> deff_ratio_results;
     std::string direction_str;
@@ -457,6 +535,10 @@ void runFlowThrough(const amrex::Geometry& geom, const amrex::BoxArray& ba,
                 directions_to_run.push_back(OpenImpala::Direction::Y);
             else if (single_dir == "Z")
                 directions_to_run.push_back(OpenImpala::Direction::Z);
+            else {
+                amrex::Warning("Unrecognized direction token: '" + single_dir +
+                               "'. Valid: X, Y, Z.");
+            }
         }
     }
 
@@ -489,11 +571,15 @@ void runFlowThrough(const amrex::Geometry& geom, const amrex::BoxArray& ba,
             results_path.string(), vlo, vhi, verbose, write_plotfiles);
 
         amrex::Real tau = tort_solver.value();
+        bool dir_converged = tort_solver.getSolverConverged();
         amrex::Real D_eff_ratio =
             (tau > 0.0 && !std::isnan(tau) && !std::isinf(tau)) ? volume_fraction / tau : 0.0;
 
         tortuosity_results["Tortuosity_" + dir_char] = tau;
         deff_ratio_results[dir_char] = D_eff_ratio;
+        if (!dir_converged) {
+            all_converged = false;
+        }
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  >>> Calculated Tortuosity (" << dir_char << "): " << std::fixed
@@ -514,7 +600,7 @@ void runFlowThrough(const amrex::Geometry& geom, const amrex::BoxArray& ba,
     json_writer.setPhaseId(phase_id);
     json_writer.setGridInfo(domain_box.length(0), domain_box.length(1), domain_box.length(2),
                             0); // box_size not needed here
-    json_writer.setSolverInfo(solver_str, true);
+    json_writer.setSolverInfo(solver_str, all_converged);
     json_writer.setProvenance(provenance_sample_id, provenance_uri);
     json_writer.setVolumeFraction(volume_fraction);
     for (const auto& pair : deff_ratio_results) {
@@ -569,8 +655,8 @@ void runFlowThrough(const amrex::Geometry& geom, const amrex::BoxArray& ba,
 // Main — thin orchestrator
 // ===========================================================================
 int main(int argc, char* argv[]) {
-    HYPRE_Init();
     amrex::Initialize(argc, argv);
+    HYPRE_Init();
     {
         amrex::Real master_strt_time = amrex::second();
 
@@ -660,12 +746,18 @@ int main(int argc, char* argv[]) {
 
         // Create results directory
         if (amrex::ParallelDescriptor::IOProcessor()) {
-            if (!std::filesystem::exists(main_results_path)) {
-                std::filesystem::create_directories(main_results_path);
-                if (main_verbose >= 1) {
-                    amrex::Print()
-                        << "Created results directory: " << main_results_path.string() << "\n";
+            try {
+                if (!std::filesystem::exists(main_results_path)) {
+                    std::filesystem::create_directories(main_results_path);
+                    if (main_verbose >= 1) {
+                        amrex::Print()
+                            << "Created results directory: " << main_results_path.string()
+                            << "\n";
+                    }
                 }
+            } catch (const std::filesystem::filesystem_error& e) {
+                amrex::Abort("Failed to create results directory '" +
+                             main_results_path.string() + "': " + e.what());
             }
         }
         amrex::ParallelDescriptor::Barrier();
@@ -720,14 +812,18 @@ int main(int argc, char* argv[]) {
             }
 
             if (main_calc_method == "homogenization") {
-                runHomogenization(img.geom, img.ba, img.dm, img.mf_phase, main_phase_id,
-                                  OpenImpala::parseSolverType(main_solver_str), main_results_path,
-                                  physics_config, main_verbose, (main_write_plotfile != 0));
+                runHomogenization(img.geom, img.ba, img.dm, img.mf_phase, img.domain_box,
+                                  main_phase_id, OpenImpala::parseSolverType(main_solver_str),
+                                  main_solver_str, main_results_path, physics_config,
+                                  main_filename, main_verbose, (main_write_plotfile != 0));
             } else if (main_calc_method == "flow_through") {
                 runFlowThrough(img.geom, img.ba, img.dm, img.mf_phase, img.domain_box,
                                main_phase_id, main_solver_str, main_results_path, physics_config,
                                main_filename, provenance_sample_id, provenance_uri, bpx_electrode,
                                main_verbose, (main_write_plotfile != 0));
+            } else {
+                amrex::Abort("Unrecognized calculation_method: '" + main_calc_method +
+                             "'. Valid options: 'homogenization', 'flow_through'.");
             }
         }
 
@@ -748,7 +844,7 @@ int main(int argc, char* argv[]) {
                            << "Total run time (seconds) = " << master_stop_time << std::endl;
         }
     }
-    amrex::Finalize();
     HYPRE_Finalize();
+    amrex::Finalize();
     return 0;
 }

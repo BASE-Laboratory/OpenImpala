@@ -65,9 +65,9 @@ private:
     amrex::IntVect findNextUnlabeled(const amrex::iMultiFab& labelMF,
                                      const amrex::iMultiFab& phaseFab, int phaseID) const;
 
-    const amrex::Geometry& m_geom;
-    const amrex::BoxArray& m_ba;
-    const amrex::DistributionMapping& m_dm;
+    amrex::Geometry m_geom;
+    amrex::BoxArray m_ba;
+    amrex::DistributionMapping m_dm;
     int m_verbose;
 
     amrex::iMultiFab m_labels;
