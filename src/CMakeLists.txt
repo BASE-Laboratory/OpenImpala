@@ -40,6 +40,7 @@ add_library(openimpala_props OBJECT
     props/ConnectedComponents.cpp
     props/DeffTensor.cpp
     props/EffectiveDiffusivityHypre.cpp
+    props/FloodFill.cpp
     props/HypreStructSolver.cpp
     props/ParticleSizeDistribution.cpp
     props/PercolationCheck.cpp

@@ -1,4 +1,5 @@
 #include "ConnectedComponents.H"
+#include "FloodFill.H"
 
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_Print.H>
@@ -68,86 +69,15 @@ amrex::IntVect ConnectedComponents::findNextUnlabeled(const amrex::iMultiFab& la
     return best;
 }
 
-void ConnectedComponents::parallelFloodFill(amrex::iMultiFab& labelMF,
-                                            const amrex::iMultiFab& phaseFab, int phaseID,
-                                            int label, const amrex::IntVect& seed) {
-    BL_PROFILE("ConnectedComponents::parallelFloodFill");
-
-    // Plant seed
-    for (amrex::MFIter mfi(labelMF); mfi.isValid(); ++mfi) {
-        const amrex::Box& vbox = mfi.validbox();
-        if (vbox.contains(seed)) {
-            auto label_arr = labelMF.array(mfi);
-            const auto phase_arr = phaseFab.const_array(mfi, 0);
-            if (phase_arr(seed) == phaseID) {
-                label_arr(seed, 0) = label;
-            }
-        }
-    }
-
-    // Iterative expansion (same pattern as PercolationCheck::parallelFloodFill)
-    const amrex::IntVect domain_size = m_geom.Domain().size();
-    const int max_iter = domain_size[0] + domain_size[1] + domain_size[2] + 2;
-    const std::vector<amrex::IntVect> offsets = {amrex::IntVect{1, 0, 0}, amrex::IntVect{-1, 0, 0},
-                                                 amrex::IntVect{0, 1, 0}, amrex::IntVect{0, -1, 0},
-                                                 amrex::IntVect{0, 0, 1}, amrex::IntVect{0, 0, -1}};
-
-    bool changed_globally = true;
-    int iter = 0;
-
-    while (changed_globally && iter < max_iter) {
-        ++iter;
-        changed_globally = false;
-        labelMF.FillBoundary(m_geom.periodicity());
-
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-        {
-            bool changed_locally = false;
-            for (amrex::MFIter mfi(labelMF, true); mfi.isValid(); ++mfi) {
-                const amrex::Box& tileBox = mfi.tilebox();
-                auto label_arr = labelMF.array(mfi);
-                const auto phase_arr = phaseFab.const_array(mfi, 0);
-                const amrex::Box& grownBox = amrex::grow(tileBox, labelMF.nGrow());
-
-                amrex::LoopOnCpu(tileBox, [&](int i, int j, int k) {
-                    amrex::IntVect cell(i, j, k);
-                    if (label_arr(cell, 0) != 0 || phase_arr(cell) != phaseID) {
-                        return;
-                    }
-                    for (const auto& offset : offsets) {
-                        amrex::IntVect nbr = cell + offset;
-                        if (grownBox.contains(nbr) && label_arr(nbr, 0) == label) {
-                            label_arr(cell, 0) = label;
-                            changed_locally = true;
-                            break;
-                        }
-                    }
-                });
-            }
-#ifdef AMREX_USE_OMP
-#pragma omp critical(ccl_flood_fill)
-#endif
-            {
-                if (changed_locally) {
-                    changed_globally = true;
-                }
-            }
-        }
-        amrex::ParallelDescriptor::ReduceBoolOr(changed_globally);
-    }
-
-    labelMF.FillBoundary(m_geom.periodicity());
-}
-
 void ConnectedComponents::run(const amrex::iMultiFab& mf_phase, int phase_id) {
     BL_PROFILE("ConnectedComponents::run");
 
     m_labels.setVal(0);
     m_num_components = 0;
 
-    // Iteratively find seeds and flood-fill until all cells are labeled
+    // Iteratively find seeds and flood-fill until all cells are labeled.
+    // Each component gets a unique label (1, 2, 3, ...) via the shared
+    // GPU-compatible flood fill utility.
     while (true) {
         amrex::IntVect seed = findNextUnlabeled(m_labels, mf_phase, phase_id);
         if (seed[0] < 0) {
@@ -162,7 +92,10 @@ void ConnectedComponents::run(const amrex::iMultiFab& mf_phase, int phase_id) {
                            << ", " << seed[1] << ", " << seed[2] << ")\n";
         }
 
-        parallelFloodFill(m_labels, mf_phase, phase_id, label, seed);
+        // Use shared flood fill with a single-seed vector and custom label
+        amrex::Vector<amrex::IntVect> seedVec = {seed};
+        OpenImpala::parallelFloodFill(m_labels, mf_phase, phase_id, seedVec, m_geom, m_verbose,
+                                       label);
     }
 
     if (m_verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {

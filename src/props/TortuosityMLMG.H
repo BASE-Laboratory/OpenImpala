@@ -96,8 +96,6 @@ private:
     void preconditionPhaseFab();
     void generateActivityMask(const amrex::iMultiFab& phaseFab, int phaseID,
                               OpenImpala::Direction dir);
-    void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFab& phaseFab,
-                           int phaseID, const amrex::Vector<amrex::IntVect>& seedPoints);
     void globalFluxes();
     void computePlaneFluxes(const amrex::MultiFab& mf_soln);
 
