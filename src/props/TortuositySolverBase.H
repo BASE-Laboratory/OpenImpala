@@ -117,10 +117,10 @@ protected:
     void computePlaneFluxes(const amrex::MultiFab& mf_soln);
     void writeSolutionPlotfile(const std::string& label);
 
-    // --- Grid references ---
-    const amrex::Geometry& m_geom;
-    const amrex::BoxArray& m_ba;
-    const amrex::DistributionMapping& m_dm;
+    // --- Grid data (stored by value to avoid dangling references) ---
+    amrex::Geometry m_geom;
+    amrex::BoxArray m_ba;
+    amrex::DistributionMapping m_dm;
 
     // --- AMReX data ---
     amrex::iMultiFab m_mf_phase;       ///< Phase IDs (with ghosts)

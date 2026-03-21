@@ -181,7 +181,7 @@ void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFa
             auto mask_arr = reachabilityMask.array(mfi);
             const auto phase_arr = phaseFab.const_array(mfi, 0);
             // The grown box defines valid memory for neighbor access
-            const amrex::Box grownBox = amrex::grow(tileBox, reachabilityMask.nGrow());
+            const amrex::Box grownBox = amrex::grow(mfi.validbox(), reachabilityMask.nGrow());
             const int pid = phaseID;
             const int lbl = label;
 

@@ -1,6 +1,7 @@
 // --- HypreStructSolver.cpp ---
 
 #include "HypreStructSolver.H"
+#include "HypreCheck.H"
 
 #include <cmath>
 #include <limits>
@@ -13,18 +14,6 @@
 #include <HYPRE_struct_ls.h>
 #include <HYPRE_struct_mv.h>
 #include <mpi.h>
-
-// HYPRE error checking macro (same as in TortuosityHypre.cpp / EffectiveDiffusivityHypre.cpp)
-#define HYPRE_CHECK(ierr)                                                                          \
-    do {                                                                                           \
-        if ((ierr) != 0) {                                                                         \
-            char hypre_error_msg[256];                                                             \
-            HYPRE_DescribeError(ierr, hypre_error_msg);                                            \
-            amrex::Abort("HYPRE Error: " + std::string(hypre_error_msg) +                          \
-                         " - Error Code: " + std::to_string(ierr) + " File: " + __FILE__ +         \
-                         " Line: " + std::to_string(__LINE__));                                    \
-        }                                                                                          \
-    } while (0)
 
 namespace OpenImpala {
 
@@ -85,7 +74,7 @@ HypreStructSolver::~HypreStructSolver() {
 // ---------------------------------------------------------------------------
 void HypreStructSolver::setupGrid(bool periodic) {
     HYPRE_Int ierr = 0;
-    ierr = HYPRE_StructGridCreate(MPI_COMM_WORLD, AMREX_SPACEDIM, &m_grid);
+    ierr = HYPRE_StructGridCreate(amrex::ParallelDescriptor::Communicator(), AMREX_SPACEDIM, &m_grid);
     HYPRE_CHECK(ierr);
 
     for (int i = 0; i < m_ba.size(); ++i) {
@@ -168,13 +157,13 @@ void HypreStructSolver::createMatrixAndVectors() {
 
     HYPRE_Int ierr = 0;
 
-    ierr = HYPRE_StructMatrixCreate(MPI_COMM_WORLD, m_grid, m_stencil, &m_A);
+    ierr = HYPRE_StructMatrixCreate(amrex::ParallelDescriptor::Communicator(), m_grid, m_stencil, &m_A);
     HYPRE_CHECK(ierr);
 
-    ierr = HYPRE_StructVectorCreate(MPI_COMM_WORLD, m_grid, &m_b);
+    ierr = HYPRE_StructVectorCreate(amrex::ParallelDescriptor::Communicator(), m_grid, &m_b);
     HYPRE_CHECK(ierr);
 
-    ierr = HYPRE_StructVectorCreate(MPI_COMM_WORLD, m_grid, &m_x);
+    ierr = HYPRE_StructVectorCreate(amrex::ParallelDescriptor::Communicator(), m_grid, &m_x);
     HYPRE_CHECK(ierr);
 
 #ifdef OPENIMPALA_USE_GPU
@@ -241,7 +230,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
     // Helper: create and configure preconditioner
     auto createPrecond = [&]() {
         if (precond_type == PrecondType::PFMG) {
-            ierr = HYPRE_StructPFMGCreate(MPI_COMM_WORLD, &precond);
+            ierr = HYPRE_StructPFMGCreate(amrex::ParallelDescriptor::Communicator(), &precond);
             HYPRE_CHECK(ierr);
             HYPRE_StructPFMGSetTol(precond, 0.0);
             HYPRE_StructPFMGSetMaxIter(precond, 1);
@@ -249,7 +238,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
             HYPRE_StructPFMGSetNumPostRelax(precond, 1);
             HYPRE_StructPFMGSetPrintLevel(precond, (m_verbose > 3) ? 1 : 0);
         } else {
-            ierr = HYPRE_StructSMGCreate(MPI_COMM_WORLD, &precond);
+            ierr = HYPRE_StructSMGCreate(amrex::ParallelDescriptor::Communicator(), &precond);
             HYPRE_CHECK(ierr);
             HYPRE_StructSMGSetTol(precond, 0.0);
             HYPRE_StructSMGSetMaxIter(precond, 1);
@@ -285,7 +274,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
             amrex::Print() << "  Setting up HYPRE FlexGMRES Solver with " << precond_name
                            << " Preconditioner..." << std::endl;
         }
-        ierr = HYPRE_StructFlexGMRESCreate(MPI_COMM_WORLD, &solver);
+        ierr = HYPRE_StructFlexGMRESCreate(amrex::ParallelDescriptor::Communicator(), &solver);
         HYPRE_CHECK(ierr);
         HYPRE_StructFlexGMRESSetTol(solver, m_eps);
         HYPRE_StructFlexGMRESSetMaxIter(solver, m_maxiter);
@@ -319,6 +308,9 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         } else if (ierr != 0 && ierr != HYPRE_ERROR_CONV && m_verbose >= 0) {
             amrex::Warning("HYPRE FlexGMRES solver returned error code: " + std::to_string(ierr));
         }
+        if (ierr != 0) {
+            HYPRE_ClearAllErrors();
+        }
 
         HYPRE_StructFlexGMRESDestroy(solver);
         destroyPrecond();
@@ -328,7 +320,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
             amrex::Print() << "  Setting up HYPRE PCG Solver with " << precond_name
                            << " Preconditioner..." << std::endl;
         }
-        ierr = HYPRE_StructPCGCreate(MPI_COMM_WORLD, &solver);
+        ierr = HYPRE_StructPCGCreate(amrex::ParallelDescriptor::Communicator(), &solver);
         HYPRE_CHECK(ierr);
         HYPRE_StructPCGSetTol(solver, m_eps);
         HYPRE_StructPCGSetMaxIter(solver, m_maxiter);
@@ -363,6 +355,9 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         } else if (ierr != 0 && ierr != HYPRE_ERROR_CONV && m_verbose >= 0) {
             amrex::Warning("HYPRE PCG solver returned error code: " + std::to_string(ierr));
         }
+        if (ierr != 0) {
+            HYPRE_ClearAllErrors();
+        }
 
         HYPRE_StructPCGDestroy(solver);
         destroyPrecond();
@@ -372,7 +367,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
             amrex::Print() << "  Setting up HYPRE GMRES Solver with " << precond_name
                            << " Preconditioner..." << std::endl;
         }
-        ierr = HYPRE_StructGMRESCreate(MPI_COMM_WORLD, &solver);
+        ierr = HYPRE_StructGMRESCreate(amrex::ParallelDescriptor::Communicator(), &solver);
         HYPRE_CHECK(ierr);
         HYPRE_StructGMRESSetTol(solver, m_eps);
         HYPRE_StructGMRESSetMaxIter(solver, m_maxiter);
@@ -397,6 +392,9 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
             amrex::Warning("HYPRE GMRES solver did not converge within tolerance!");
         }
+        if (ierr != 0) {
+            HYPRE_ClearAllErrors();
+        }
 
         HYPRE_StructGMRESDestroy(solver);
         destroyPrecond();
@@ -406,7 +404,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
             amrex::Print() << "  Setting up HYPRE BiCGSTAB Solver with " << precond_name
                            << " Preconditioner..." << std::endl;
         }
-        ierr = HYPRE_StructBiCGSTABCreate(MPI_COMM_WORLD, &solver);
+        ierr = HYPRE_StructBiCGSTABCreate(amrex::ParallelDescriptor::Communicator(), &solver);
         HYPRE_CHECK(ierr);
         HYPRE_StructBiCGSTABSetTol(solver, m_eps);
         HYPRE_StructBiCGSTABSetMaxIter(solver, m_maxiter);
@@ -431,6 +429,9 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
             amrex::Warning("HYPRE BiCGSTAB solver did not converge within tolerance!");
         }
+        if (ierr != 0) {
+            HYPRE_ClearAllErrors();
+        }
 
         HYPRE_StructBiCGSTABDestroy(solver);
         destroyPrecond();
@@ -439,7 +440,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  Setting up HYPRE SMG Solver (standalone)..." << std::endl;
         }
-        ierr = HYPRE_StructSMGCreate(MPI_COMM_WORLD, &solver);
+        ierr = HYPRE_StructSMGCreate(amrex::ParallelDescriptor::Communicator(), &solver);
         HYPRE_CHECK(ierr);
         HYPRE_StructSMGSetTol(solver, m_eps);
         HYPRE_StructSMGSetMaxIter(solver, m_maxiter);
@@ -463,6 +464,9 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
             amrex::Warning("HYPRE SMG solver did not converge within tolerance!");
         }
+        if (ierr != 0) {
+            HYPRE_ClearAllErrors();
+        }
 
         HYPRE_StructSMGDestroy(solver);
 
@@ -470,7 +474,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  Setting up HYPRE PFMG Solver (standalone)..." << std::endl;
         }
-        ierr = HYPRE_StructPFMGCreate(MPI_COMM_WORLD, &solver);
+        ierr = HYPRE_StructPFMGCreate(amrex::ParallelDescriptor::Communicator(), &solver);
         HYPRE_CHECK(ierr);
         HYPRE_StructPFMGSetTol(solver, m_eps);
         HYPRE_StructPFMGSetMaxIter(solver, m_maxiter);
@@ -494,6 +498,9 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
             amrex::Warning("HYPRE PFMG solver did not converge within tolerance!");
         }
+        if (ierr != 0) {
+            HYPRE_ClearAllErrors();
+        }
 
         HYPRE_StructPFMGDestroy(solver);
 
@@ -501,7 +508,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  Setting up HYPRE Jacobi Solver..." << std::endl;
         }
-        ierr = HYPRE_StructJacobiCreate(MPI_COMM_WORLD, &solver);
+        ierr = HYPRE_StructJacobiCreate(amrex::ParallelDescriptor::Communicator(), &solver);
         HYPRE_CHECK(ierr);
         HYPRE_StructJacobiSetTol(solver, m_eps);
         HYPRE_StructJacobiSetMaxIter(solver, m_maxiter);
@@ -521,6 +528,9 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
 
         if (ierr == HYPRE_ERROR_CONV && !m_converged && m_verbose >= 0) {
             amrex::Warning("HYPRE Jacobi solver did not converge within tolerance!");
+        }
+        if (ierr != 0) {
+            HYPRE_ClearAllErrors();
         }
 
         HYPRE_StructJacobiDestroy(solver);

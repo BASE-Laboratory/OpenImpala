@@ -188,15 +188,23 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                 a_out[stn + STN_C] = diag_val;
 
                 // === RHS: -div(D e_k) via central differences on D ===
+                // At pore-solid interfaces, use the center cell value for the
+                // inactive neighbor (Neumann mirror) to avoid reading undefined D.
                 amrex::Real rhs_div_De = 0.0;
                 if (dir_k == 0) {
-                    rhs_div_De = -(dc(i + 1, j, k) - dc(i - 1, j, k)) * inv_2dx;
+                    amrex::Real dc_px = (mask(i + 1, j, k) == CELL_ACTIVE) ? dc(i + 1, j, k) : D_c;
+                    amrex::Real dc_mx = (mask(i - 1, j, k) == CELL_ACTIVE) ? dc(i - 1, j, k) : D_c;
+                    rhs_div_De = -(dc_px - dc_mx) * inv_2dx;
                 } else if (dir_k == 1) {
-                    rhs_div_De = -(dc(i, j + 1, k) - dc(i, j - 1, k)) * inv_2dy;
+                    amrex::Real dc_py = (mask(i, j + 1, k) == CELL_ACTIVE) ? dc(i, j + 1, k) : D_c;
+                    amrex::Real dc_my = (mask(i, j - 1, k) == CELL_ACTIVE) ? dc(i, j - 1, k) : D_c;
+                    rhs_div_De = -(dc_py - dc_my) * inv_2dy;
                 }
 #if (AMREX_SPACEDIM == 3)
                 else if (dir_k == 2) {
-                    rhs_div_De = -(dc(i, j, k + 1) - dc(i, j, k - 1)) * inv_2dz;
+                    amrex::Real dc_pz = (mask(i, j, k + 1) == CELL_ACTIVE) ? dc(i, j, k + 1) : D_c;
+                    amrex::Real dc_mz = (mask(i, j, k - 1) == CELL_ACTIVE) ? dc(i, j, k - 1) : D_c;
+                    rhs_div_De = -(dc_pz - dc_mz) * inv_2dz;
                 }
 #endif
 
@@ -375,15 +383,22 @@ inline void effDiffFillMatrixGpu(const amrex::Box& bx, amrex::Real* a_out, amrex
         a_out[stn + STN_C] = diag_val;
 
         // RHS: -div(D e_k) via central differences
+        // At pore-solid interfaces, mirror D from center cell (Neumann BC).
         amrex::Real rhs_div_De = 0.0;
         if (dir_k == 0) {
-            rhs_div_De = -(dc_arr(i + 1, j, k) - dc_arr(i - 1, j, k)) * inv_2dx;
+            amrex::Real dc_px = (mask_arr(i + 1, j, k) == CELL_ACTIVE) ? dc_arr(i + 1, j, k) : D_c;
+            amrex::Real dc_mx = (mask_arr(i - 1, j, k) == CELL_ACTIVE) ? dc_arr(i - 1, j, k) : D_c;
+            rhs_div_De = -(dc_px - dc_mx) * inv_2dx;
         } else if (dir_k == 1) {
-            rhs_div_De = -(dc_arr(i, j + 1, k) - dc_arr(i, j - 1, k)) * inv_2dy;
+            amrex::Real dc_py = (mask_arr(i, j + 1, k) == CELL_ACTIVE) ? dc_arr(i, j + 1, k) : D_c;
+            amrex::Real dc_my = (mask_arr(i, j - 1, k) == CELL_ACTIVE) ? dc_arr(i, j - 1, k) : D_c;
+            rhs_div_De = -(dc_py - dc_my) * inv_2dy;
         }
 #if (AMREX_SPACEDIM == 3)
         else if (dir_k == 2) {
-            rhs_div_De = -(dc_arr(i, j, k + 1) - dc_arr(i, j, k - 1)) * inv_2dz;
+            amrex::Real dc_pz = (mask_arr(i, j, k + 1) == CELL_ACTIVE) ? dc_arr(i, j, k + 1) : D_c;
+            amrex::Real dc_mz = (mask_arr(i, j, k - 1) == CELL_ACTIVE) ? dc_arr(i, j, k - 1) : D_c;
+            rhs_div_De = -(dc_pz - dc_mz) * inv_2dz;
         }
 #endif
 

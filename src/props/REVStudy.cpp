@@ -113,29 +113,25 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
             amrex::DistributionMapping dm_rev(ba_rev);
             amrex::iMultiFab mf_phase_rev(ba_rev, dm_rev, 1, 1);
 
-            // Copy phase data from full domain to sub-volume
-            amrex::BoxArray ba_temp(bx_rev);
-            amrex::DistributionMapping dm_temp(ba_temp);
-            amrex::iMultiFab mf_temp(ba_temp, dm_temp, 1, 0);
+            // Copy phase data from full domain to sub-volume.
+            // Create a temporary with the same BoxArray/DM as mf_phase_rev but
+            // shifted to bx_rev coordinates, so ParallelCopy from the full domain
+            // works correctly across MPI ranks.
+            amrex::BoxArray ba_shifted = ba_rev;
+            ba_shifted.shift(bx_rev.smallEnd());
+            amrex::iMultiFab mf_temp(ba_shifted, dm_rev, 1, 0);
             mf_temp.ParallelCopy(mf_phase_full, 0, 0, 1, amrex::IntVect::TheZeroVector(),
                                  amrex::IntVect::TheZeroVector(), geom_full.periodicity());
 
+            // Now copy from shifted coords to REV coords (same rank, same FAB order)
             mf_phase_rev.setVal(0);
-            for (amrex::MFIter mfi_dest(mf_phase_rev); mfi_dest.isValid(); ++mfi_dest) {
-                amrex::IArrayBox& dest_fab = mf_phase_rev[mfi_dest];
-                const amrex::Box& dest_box = dest_fab.box();
+            for (amrex::MFIter mfi(mf_phase_rev); mfi.isValid(); ++mfi) {
+                amrex::IArrayBox& dest_fab = mf_phase_rev[mfi];
+                const amrex::IArrayBox& src_fab = mf_temp[mfi];
+                const amrex::Box& dest_box = mfi.validbox();
                 amrex::Box src_box = dest_box;
                 src_box.shift(bx_rev.smallEnd());
-
-                for (amrex::MFIter mfi_src(mf_temp); mfi_src.isValid(); ++mfi_src) {
-                    const amrex::IArrayBox& src_fab = mf_temp[mfi_src];
-                    amrex::Box copy_region = src_box & src_fab.box();
-                    if (!copy_region.isEmpty()) {
-                        amrex::Box dest_region = copy_region;
-                        dest_region.shift(-bx_rev.smallEnd());
-                        dest_fab.copy(src_fab, copy_region, 0, dest_region, 0, 1);
-                    }
-                }
+                dest_fab.copy(src_fab, src_box, 0, dest_box, 0, 1);
             }
             mf_phase_rev.FillBoundary(geom_rev.periodicity());
 
@@ -203,6 +199,13 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
             }
 
             if (all_converged) {
+                // Fill ghost cells for chi fields before computing gradients
+                mf_chi_x.FillBoundary(geom_rev.periodicity());
+                mf_chi_y.FillBoundary(geom_rev.periodicity());
+                if (AMREX_SPACEDIM == 3) {
+                    mf_chi_z.FillBoundary(geom_rev.periodicity());
+                }
+
                 amrex::iMultiFab active_mask(ba_rev, dm_rev, 1, 0);
                 for (amrex::MFIter mfi(active_mask, amrex::TilingIfNotGPU()); mfi.isValid();
                      ++mfi) {

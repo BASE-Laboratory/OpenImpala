@@ -50,6 +50,7 @@ add_library(openimpala_props OBJECT
     props/TortuosityDirect.cpp
     props/TortuosityHypre.cpp
     props/TortuosityMLMG.cpp
+    props/TortuositySolverBase.cpp
     props/VolumeFraction.cpp
 )
 

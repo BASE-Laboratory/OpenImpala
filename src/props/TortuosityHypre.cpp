@@ -2,6 +2,7 @@
 
 #include "TortuosityHypre.H"
 #include "FloodFill.H"
+#include "HypreCheck.H"
 #include "TortuosityKernels.H"   // For removeIsolatedCells (replaces tortuosity_remspot)
 #include "TortuosityHypreFill.H" // For tortuosityFillMatrix (replaces tortuosity_fillmtx)
 
@@ -52,18 +53,6 @@
 
 // MPI include remains the same...
 #include <mpi.h>
-
-// HYPRE_CHECK macro remains the same...
-#define HYPRE_CHECK(ierr)                                                                          \
-    do {                                                                                           \
-        if ((ierr) != 0) {                                                                         \
-            char hypre_error_msg[256];                                                             \
-            HYPRE_DescribeError(ierr, hypre_error_msg);                                            \
-            amrex::Abort("HYPRE Error: " + std::string(hypre_error_msg) +                          \
-                         " - Error Code: " + std::to_string(ierr) + " File: " + __FILE__ +         \
-                         " Line: " + std::to_string(__LINE__));                                    \
-        }                                                                                          \
-    } while (0)
 
 
 // Constants namespace remains the same...
@@ -570,12 +559,9 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
         HYPRE_CHECK(ierr);
     }
 #else
-    // CPU path: original implementation with OMP tiling
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion()) private(matrix_values, rhs_values,       \
-                                                                      initial_guess)
-#endif
-    for (amrex::MFIter mfi(m_mf_phase, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+    // CPU path: no OMP parallelism here because HYPRE_StructMatrixSetBoxValues
+    // and HYPRE_StructVectorSetBoxValues are not thread-safe for the same object.
+    for (amrex::MFIter mfi(m_mf_phase, false); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.tilebox();
         const int npts = static_cast<int>(bx.numPts());
         if (npts == 0)
@@ -650,10 +636,8 @@ bool OpenImpala::TortuosityHypre::solve() {
         amrex::MultiFab mf_plot(m_ba, m_dm, numComponentsPhi, 0);
         amrex::MultiFab mf_soln_temp(m_ba, m_dm, 1, 0);
         mf_soln_temp.setVal(0.0);
-        std::vector<double> soln_buffer;
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion()) private(soln_buffer)
-#endif
+        // No OMP: HYPRE_StructVectorGetBoxValues is not thread-safe for the same vector.
+        std::vector<HYPRE_Real> soln_buffer;
         for (amrex::MFIter mfi(mf_soln_temp, false); mfi.isValid(); ++mfi) {
             const amrex::Box& bx = mfi.validbox();
             const int npts = static_cast<int>(bx.numPts());
@@ -704,10 +688,8 @@ bool OpenImpala::TortuosityHypre::solve() {
         amrex::MultiFab mf_plot_fail(m_ba, m_dm, numComponentsPhi, 0);
         amrex::MultiFab mf_soln_fail(m_ba, m_dm, 1, 0);
         mf_soln_fail.setVal(0.0);
-        std::vector<double> soln_buf_fail;
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion()) private(soln_buf_fail)
-#endif
+        // No OMP: HYPRE_StructVectorGetBoxValues is not thread-safe for the same vector.
+        std::vector<HYPRE_Real> soln_buf_fail;
         for (amrex::MFIter mfi(mf_soln_fail, false); mfi.isValid(); ++mfi) {
             const amrex::Box& bx = mfi.validbox();
             const int npts = static_cast<int>(bx.numPts());
@@ -961,14 +943,11 @@ bool OpenImpala::TortuosityHypre::checkMatrixProperties() {
     const int center_stencil_index = istn_c;
     const amrex::Box& domain = m_geom.Domain();
     const int idir = static_cast<int>(m_dir);
-    std::vector<double> matrix_buffer;
-    std::vector<double> rhs_buffer;
+    // No OMP: HYPRE GetBoxValues is not thread-safe for the same matrix/vector.
+    std::vector<HYPRE_Real> matrix_buffer;
+    std::vector<HYPRE_Real> rhs_buffer;
     m_mf_active_mask.FillBoundary(m_geom.periodicity());
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())                                          \
-    reduction(& : checks_passed_local) private(matrix_buffer, rhs_buffer)
-#endif
-    for (amrex::MFIter mfi(m_mf_active_mask, true); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(m_mf_active_mask, false); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.tilebox();
         const int npts = static_cast<int>(bx.numPts());
         if (npts == 0)
@@ -1134,10 +1113,8 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
     // Solution copy logic remains the same...
     amrex::MultiFab mf_soln_temp(m_ba, m_dm, 1, 1);
     mf_soln_temp.setVal(0.0);
-    std::vector<double> soln_buffer;
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion()) private(soln_buffer)
-#endif
+    // No OMP: HYPRE_StructVectorGetBoxValues is not thread-safe for the same vector.
+    std::vector<HYPRE_Real> soln_buffer;
     for (amrex::MFIter mfi(mf_soln_temp, false); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();
         const int npts = static_cast<int>(bx.numPts());

@@ -21,6 +21,10 @@ SpecificSurfaceArea::SpecificSurfaceArea(const amrex::Geometry& geom, const amre
 }
 
 void SpecificSurfaceArea::value(long long& face_count, long long& total_count, bool local) const {
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        m_mf.nGrow() >= 1,
+        "SpecificSurfaceArea: iMultiFab must have at least 1 ghost cell for neighbor access.");
+
     const int pa = m_phase_a;
     const int pb = m_phase_b;
     const int phase_comp = m_comp;
@@ -55,9 +59,6 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
                 amrex::IntVect offset(amrex::IntVect::TheZeroVector());
                 offset[d] = 1;
                 const int od0 = offset[0], od1 = offset[1], od2 = offset[2];
-                // For the first direction, also accumulate the total count
-                const long long total_contrib = (d == 0) ? box_total : 0;
-
                 reduce_op.eval(
                     check_bx, reduce_data,
                     [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept

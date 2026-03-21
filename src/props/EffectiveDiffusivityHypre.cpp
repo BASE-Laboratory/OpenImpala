@@ -2,6 +2,7 @@
 
 #include "EffectiveDiffusivityHypre.H"
 #include "EffDiffFillMtx.H" // For effDiffFillMatrix (replaces Fortran effdiff_fillmtx)
+#include "HypreCheck.H"
 
 #include <cstdlib>
 #include <mutex>
@@ -46,18 +47,6 @@
 
 // MPI include
 #include <mpi.h>
-
-// HYPRE_CHECK macro
-#define HYPRE_CHECK(ierr)                                                                          \
-    do {                                                                                           \
-        if ((ierr) != 0) {                                                                         \
-            char hypre_error_msg[256];                                                             \
-            HYPRE_DescribeError(ierr, hypre_error_msg);                                            \
-            amrex::Abort("HYPRE Error: " + std::string(hypre_error_msg) +                          \
-                         " - Error Code: " + std::to_string(ierr) + " File: " + __FILE__ +         \
-                         " Line: " + std::to_string(__LINE__));                                    \
-        }                                                                                          \
-    } while (0)
 
 // Constants namespace
 namespace {
@@ -477,14 +466,13 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
         HYPRE_CHECK(ierr);
     }
 #else
-    // CPU path: original implementation with OMP tiling
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion()) private(                                 \
-        matrix_values_buffer, rhs_values_buffer, initial_guess_buffer)
-#endif
-    for (amrex::MFIter mfi(m_mf_active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+    // CPU path: no OMP parallelism here because HYPRE_StructMatrixSetBoxValues
+    // and HYPRE_StructVectorSetBoxValues are not thread-safe for the same object.
+    for (amrex::MFIter mfi(m_mf_active_mask, false); mfi.isValid(); ++mfi) {
         const amrex::Box& valid_bx = mfi.validbox();
-        const int npts_valid = static_cast<int>(valid_bx.numPts());
+        const long npts_long = valid_bx.numPts();
+        AMREX_ALWAYS_ASSERT(npts_long <= static_cast<long>(std::numeric_limits<int>::max()));
+        const int npts_valid = static_cast<int>(npts_long);
         if (npts_valid == 0)
             continue;
 
@@ -636,10 +624,8 @@ void EffectiveDiffusivityHypre::getChiSolution(amrex::MultiFab& chi_field) {
     AMREX_ALWAYS_ASSERT(chi_field.boxArray() == m_ba);
     AMREX_ALWAYS_ASSERT(chi_field.DistributionMap() == m_dm);
 
+    // No OMP: HYPRE_StructVectorGetBoxValues is not thread-safe for the same vector.
     std::vector<amrex::Real> soln_buffer;
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion()) private(soln_buffer)
-#endif
     for (amrex::MFIter mfi(chi_field, false); mfi.isValid(); ++mfi) {
         const amrex::Box& bx_getsol = mfi.validbox();
         const int npts = static_cast<int>(bx_getsol.numPts());

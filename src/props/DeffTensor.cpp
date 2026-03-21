@@ -24,12 +24,12 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
         }
     }
 
-    AMREX_ASSERT(mf_chi_x.nGrow() >= 1);
-    AMREX_ASSERT(mf_chi_y.nGrow() >= 1);
+    AMREX_ALWAYS_ASSERT(mf_chi_x.nGrow() >= 1);
+    AMREX_ALWAYS_ASSERT(mf_chi_y.nGrow() >= 1);
     if (AMREX_SPACEDIM == 3) {
-        AMREX_ASSERT(mf_chi_z.isDefined() && mf_chi_z.nGrow() >= 1);
+        AMREX_ALWAYS_ASSERT(mf_chi_z.isDefined() && mf_chi_z.nGrow() >= 1);
     }
-    AMREX_ASSERT(active_mask.nGrow() == 0);
+    AMREX_ALWAYS_ASSERT(active_mask.nGrow() == 0);
 
     const amrex::Real* dx_arr = geom.CellSize();
     amrex::Real inv_2dx_0 = 1.0 / (2.0 * dx_arr[0]);
@@ -88,8 +88,9 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
                 }
 
                 // D_eff[r][c] = delta_rc + d(chi_c)/d(x_r), summed over active cells
-                return {1.0 - dchix_dx, -dchiy_dx, -dchiz_dx, -dchix_dy, 1.0 - dchiy_dy,
-                        -dchiz_dy, -dchix_dz, -dchiy_dz, 1.0 - dchiz_dz};
+                // Cell problem: div(D grad chi_k) = -div(D e_k) => plus sign
+                return {1.0 + dchix_dx, dchiy_dx, dchiz_dx, dchix_dy, 1.0 + dchiy_dy,
+                        dchiz_dy, dchix_dz, dchiy_dz, 1.0 + dchiz_dz};
             });
     }
 
