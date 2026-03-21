@@ -1,6 +1,7 @@
 // --- TortuosityHypre.cpp ---
 
 #include "TortuosityHypre.H"
+#include "FloodFill.H"
 #include "TortuosityKernels.H"   // For removeIsolatedCells (replaces tortuosity_remspot)
 #include "TortuosityHypreFill.H" // For tortuosityFillMatrix (replaces tortuosity_fillmtx)
 
@@ -356,216 +357,19 @@ void OpenImpala::TortuosityHypre::preconditionPhaseFab() {
 }
 
 
-// --- parallelFloodFill ---
-// Remains the same...
-void OpenImpala::TortuosityHypre::parallelFloodFill(
-    amrex::iMultiFab& reachabilityMask, const amrex::iMultiFab& phaseFab, int phaseID,
-    const amrex::Vector<amrex::IntVect>& seedPoints) {
-    BL_PROFILE("TortuosityHypre::parallelFloodFill");
-    AMREX_ASSERT(reachabilityMask.nGrow() >= 1);
-    AMREX_ASSERT(phaseFab.nGrow() >= 1);
-    AMREX_ASSERT(phaseFab.nComp() > 0);
-    AMREX_ASSERT(reachabilityMask.nComp() == 1);
-
-    reachabilityMask.setVal(cell_inactive);
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-    for (amrex::MFIter mfi(reachabilityMask, true); mfi.isValid(); ++mfi) {
-        const amrex::Box& tileBox = mfi.tilebox();
-        auto mask_arr = reachabilityMask.array(mfi);
-        const auto phase_arr = phaseFab.const_array(mfi, 0);
-        for (const auto& seed : seedPoints) {
-            if (tileBox.contains(seed)) {
-                if (phase_arr(seed) == phaseID) {
-                    mask_arr(seed, MaskComp) = cell_active;
-                }
-            }
-        }
-    }
-
-    int iter = 0;
-    amrex::IntVect domain_size = m_geom.Domain().size();
-    const int max_flood_iter = domain_size[0] + domain_size[1] + domain_size[2] + 2;
-    bool changed_globally = true;
-    const std::vector<amrex::IntVect> offsets = {amrex::IntVect{1, 0, 0}, amrex::IntVect{-1, 0, 0},
-                                                 amrex::IntVect{0, 1, 0}, amrex::IntVect{0, -1, 0},
-                                                 amrex::IntVect{0, 0, 1}, amrex::IntVect{0, 0, -1}};
-
-    while (changed_globally && iter < max_flood_iter) {
-        ++iter;
-        changed_globally = false;
-        reachabilityMask.FillBoundary(m_geom.periodicity());
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-        {
-            bool changed_locally = false;
-            for (amrex::MFIter mfi(reachabilityMask, true); mfi.isValid(); ++mfi) {
-                const amrex::Box& tileBox = mfi.tilebox();
-                auto mask_arr = reachabilityMask.array(mfi);
-                const auto phase_arr = phaseFab.const_array(mfi, 0);
-                const amrex::Box& grownTileBox = amrex::grow(tileBox, reachabilityMask.nGrow());
-                amrex::LoopOnCpu(tileBox, [&](int i, int j, int k) {
-                    amrex::IntVect current_cell(i, j, k);
-                    if (mask_arr(current_cell, MaskComp) == cell_active ||
-                        phase_arr(current_cell) != phaseID) {
-                        return;
-                    }
-                    bool reached_by_neighbor = false;
-                    for (const auto& offset : offsets) {
-                        amrex::IntVect neighbor_cell = current_cell + offset;
-                        if (grownTileBox.contains(neighbor_cell)) {
-                            if (mask_arr(neighbor_cell, MaskComp) == cell_active) {
-                                reached_by_neighbor = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (reached_by_neighbor) {
-                        mask_arr(current_cell, MaskComp) = cell_active;
-                        changed_locally = true;
-                    }
-                });
-            }
-#ifdef AMREX_USE_OMP
-#pragma omp critical(flood_fill_crit)
-#endif
-            {
-                if (changed_locally) {
-                    changed_globally = true;
-                }
-            }
-        }
-        amrex::ParallelDescriptor::ReduceBoolOr(changed_globally);
-    }
-
-    if (iter >= max_flood_iter && changed_globally) {
-        amrex::Warning("TortuosityHypre::parallelFloodFill reached max iterations - flood fill "
-                       "might be incomplete.");
-    }
-    if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "    Flood fill completed in " << iter << " iterations." << std::endl;
-    }
-    reachabilityMask.FillBoundary(m_geom.periodicity());
-}
-
-
 // --- Generate Activity Mask ---
-// <<< CORRECTED sum call and fixed loop warnings >>>
 void OpenImpala::TortuosityHypre::generateActivityMask(const amrex::iMultiFab& phaseFab,
                                                        int phaseID, OpenImpala::Direction dir) {
     BL_PROFILE("TortuosityHypre::generateActivityMask");
     AMREX_ASSERT(phaseFab.nGrow() >= 1);
     AMREX_ASSERT(phaseFab.nComp() > 0);
 
-    const amrex::Box& domain = m_geom.Domain();
     const int idir = static_cast<int>(dir);
 
-    // Seed finding logic remains the same...
-    amrex::iMultiFab mf_reached_inlet(m_ba, m_dm, 1, 1);
-    amrex::iMultiFab mf_reached_outlet(m_ba, m_dm, 1, 1);
-    amrex::Vector<amrex::IntVect> local_inlet_seeds;
-    amrex::Vector<amrex::IntVect> local_outlet_seeds;
-    amrex::Box domain_lo_face = domain;
-    domain_lo_face.setBig(idir, domain.smallEnd(idir));
-    amrex::Box domain_hi_face = domain;
-    domain_hi_face.setSmall(idir, domain.bigEnd(idir));
-
-    if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "    generateActivityMask: Searching for seeds on faces..." << std::endl;
-        amrex::Print() << "      Inlet Face Box: " << domain_lo_face << std::endl;
-        amrex::Print() << "      Outlet Face Box: " << domain_hi_face << std::endl;
-    }
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-    for (amrex::MFIter mfi(phaseFab); mfi.isValid(); ++mfi) {
-        const amrex::Box& validBox = mfi.validbox();
-        const auto phase_arr = phaseFab.const_array(mfi);
-        amrex::Box inlet_intersect = validBox & domain_lo_face;
-        if (!inlet_intersect.isEmpty()) {
-            amrex::LoopOnCpu(inlet_intersect, [&](int i, int j, int k) {
-                if (phase_arr(i, j, k, 0) == phaseID) {
-#ifdef AMREX_USE_OMP
-#pragma omp critical(inlet_seed_crit)
-#endif
-                    local_inlet_seeds.push_back(amrex::IntVect(i, j, k));
-                }
-            });
-        }
-        amrex::Box outlet_intersect = validBox & domain_hi_face;
-        if (!outlet_intersect.isEmpty()) {
-            amrex::LoopOnCpu(outlet_intersect, [&](int i, int j, int k) {
-                if (phase_arr(i, j, k, 0) == phaseID) {
-#ifdef AMREX_USE_OMP
-#pragma omp critical(outlet_seed_crit)
-#endif
-                    local_outlet_seeds.push_back(amrex::IntVect(i, j, k));
-                }
-            });
-        }
-    }
-    // Seed gathering logic
-    // <<< Address sign-compare warnings >>>
-    const size_t n_local_inlet_seeds = static_cast<size_t>(local_inlet_seeds.size());
-    std::vector<int> flat_local_inlet_seeds(n_local_inlet_seeds * AMREX_SPACEDIM);
-    for (size_t i = 0; i < n_local_inlet_seeds; ++i) {
-        for (int d = 0; d < AMREX_SPACEDIM; ++d)
-            flat_local_inlet_seeds[i * AMREX_SPACEDIM + d] = local_inlet_seeds[i][d];
-    }
-    const size_t n_local_outlet_seeds = static_cast<size_t>(local_outlet_seeds.size());
-    std::vector<int> flat_local_outlet_seeds(n_local_outlet_seeds * AMREX_SPACEDIM);
-    for (size_t i = 0; i < n_local_outlet_seeds; ++i) {
-        for (int d = 0; d < AMREX_SPACEDIM; ++d)
-            flat_local_outlet_seeds[i * AMREX_SPACEDIM + d] = local_outlet_seeds[i][d];
-    }
-    // MPI Allgather/v logic remains the same...
-    MPI_Comm comm = amrex::ParallelDescriptor::Communicator();
-    int mpi_size = amrex::ParallelDescriptor::NProcs();
-    int local_inlet_count = static_cast<int>(flat_local_inlet_seeds.size());
-    std::vector<int> recv_counts_inlet(mpi_size);
-    MPI_Allgather(&local_inlet_count, 1, MPI_INT, recv_counts_inlet.data(), 1, MPI_INT, comm);
-    int local_outlet_count = static_cast<int>(flat_local_outlet_seeds.size());
-    std::vector<int> recv_counts_outlet(mpi_size);
-    MPI_Allgather(&local_outlet_count, 1, MPI_INT, recv_counts_outlet.data(), 1, MPI_INT, comm);
-    std::vector<int> displacements_inlet(mpi_size, 0);
-    std::vector<int> displacements_outlet(mpi_size, 0);
-    int total_inlet_seeds = recv_counts_inlet[0];
-    int total_outlet_seeds = recv_counts_outlet[0];
-    for (int i = 1; i < mpi_size; ++i) {
-        displacements_inlet[i] = displacements_inlet[i - 1] + recv_counts_inlet[i - 1];
-        displacements_outlet[i] = displacements_outlet[i - 1] + recv_counts_outlet[i - 1];
-        total_inlet_seeds += recv_counts_inlet[i];
-        total_outlet_seeds += recv_counts_outlet[i];
-    }
-    std::vector<int> flat_inlet_seeds_gathered(total_inlet_seeds);
-    MPI_Allgatherv(flat_local_inlet_seeds.data(), local_inlet_count, MPI_INT,
-                   flat_inlet_seeds_gathered.data(), recv_counts_inlet.data(),
-                   displacements_inlet.data(), MPI_INT, comm);
-    std::vector<int> flat_outlet_seeds_gathered(total_outlet_seeds);
-    MPI_Allgatherv(flat_local_outlet_seeds.data(), local_outlet_count, MPI_INT,
-                   flat_outlet_seeds_gathered.data(), recv_counts_outlet.data(),
-                   displacements_outlet.data(), MPI_INT, comm);
+    // Collect boundary seeds (shared utility handles MPI gather + dedup)
     amrex::Vector<amrex::IntVect> inlet_seeds;
-    inlet_seeds.reserve(total_inlet_seeds / AMREX_SPACEDIM);
-    for (size_t i = 0; i < flat_inlet_seeds_gathered.size(); i += AMREX_SPACEDIM) {
-        inlet_seeds.emplace_back(flat_inlet_seeds_gathered[i], flat_inlet_seeds_gathered[i + 1],
-                                 flat_inlet_seeds_gathered[i + 2]);
-    }
     amrex::Vector<amrex::IntVect> outlet_seeds;
-    outlet_seeds.reserve(total_outlet_seeds / AMREX_SPACEDIM);
-    for (size_t i = 0; i < flat_outlet_seeds_gathered.size(); i += AMREX_SPACEDIM) {
-        outlet_seeds.emplace_back(flat_outlet_seeds_gathered[i], flat_outlet_seeds_gathered[i + 1],
-                                  flat_outlet_seeds_gathered[i + 2]);
-    }
-    // End seed gathering
-
-    // Flood fill logic remains the same...
-    std::sort(inlet_seeds.begin(), inlet_seeds.end());
-    inlet_seeds.erase(std::unique(inlet_seeds.begin(), inlet_seeds.end()), inlet_seeds.end());
-    std::sort(outlet_seeds.begin(), outlet_seeds.end());
-    outlet_seeds.erase(std::unique(outlet_seeds.begin(), outlet_seeds.end()), outlet_seeds.end());
+    OpenImpala::collectBoundarySeeds(phaseFab, phaseID, idir, m_geom, inlet_seeds, outlet_seeds);
 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "    generateActivityMask: Found " << inlet_seeds.size()
@@ -584,30 +388,37 @@ void OpenImpala::TortuosityHypre::generateActivityMask(const amrex::iMultiFab& p
         return;
     }
 
+    // GPU-compatible flood fill from inlet and outlet (shared utility)
+    amrex::iMultiFab mf_reached_inlet(m_ba, m_dm, 1, 1);
+    amrex::iMultiFab mf_reached_outlet(m_ba, m_dm, 1, 1);
+    mf_reached_inlet.setVal(OpenImpala::FLOOD_INACTIVE);
+    mf_reached_outlet.setVal(OpenImpala::FLOOD_INACTIVE);
+
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "  Performing flood fill from inlet..." << std::endl;
-    parallelFloodFill(mf_reached_inlet, phaseFab, phaseID, inlet_seeds);
+    OpenImpala::parallelFloodFill(mf_reached_inlet, phaseFab, phaseID, inlet_seeds, m_geom,
+                                   m_verbose);
 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "  Performing flood fill from outlet..." << std::endl;
-    parallelFloodFill(mf_reached_outlet, phaseFab, phaseID, outlet_seeds);
+    OpenImpala::parallelFloodFill(mf_reached_outlet, phaseFab, phaseID, outlet_seeds, m_geom,
+                                   m_verbose);
 
     m_mf_active_mask.setVal(cell_inactive);
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-    for (amrex::MFIter mfi(m_mf_active_mask, true); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(m_mf_active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const amrex::Box& tileBox = mfi.tilebox();
         auto mask_arr = m_mf_active_mask.array(mfi);
         const auto inlet_reach_arr = mf_reached_inlet.const_array(mfi);
         const auto outlet_reach_arr = mf_reached_outlet.const_array(mfi);
-        amrex::LoopOnCpu(tileBox, [&](int i, int j, int k) {
-            if (inlet_reach_arr(i, j, k, 0) == cell_active &&
-                outlet_reach_arr(i, j, k, 0) == cell_active) {
-                mask_arr(i, j, k, MaskComp) = cell_active;
-            } else {
-                mask_arr(i, j, k, MaskComp) = cell_inactive;
-            }
+        amrex::ParallelFor(tileBox, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            mask_arr(i, j, k, MaskComp) =
+                (inlet_reach_arr(i, j, k, 0) == FLOOD_ACTIVE &&
+                 outlet_reach_arr(i, j, k, 0) == FLOOD_ACTIVE)
+                    ? cell_active
+                    : cell_inactive;
         });
     }
     m_mf_active_mask.FillBoundary(m_geom.periodicity());
@@ -619,8 +430,7 @@ void OpenImpala::TortuosityHypre::generateActivityMask(const amrex::iMultiFab& p
     if (write_debug_mask) { /* ... plotfile code ... */
     }
 
-    // Manually sum active cells over valid regions only (avoids ghost cell inclusion
-    // that may occur with iMultiFab::sum() on some AMReX versions)
+    // Count active cells via manual sum (avoids ghost cell inclusion)
     long num_active_local = 0;
     for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();

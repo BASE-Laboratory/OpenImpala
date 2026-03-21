@@ -62,9 +62,6 @@ public:
 private:
     void run(const amrex::iMultiFab& mf_phase, int phase_id);
 
-    void parallelFloodFill(amrex::iMultiFab& labelMF, const amrex::iMultiFab& phaseFab, int phaseID,
-                           int label, const amrex::IntVect& seed);
-
     amrex::IntVect findNextUnlabeled(const amrex::iMultiFab& labelMF,
                                      const amrex::iMultiFab& phaseFab, int phaseID) const;
 
