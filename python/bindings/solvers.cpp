@@ -13,6 +13,7 @@
 #include <pybind11/stl.h>
 
 #include "TortuosityHypre.H"
+#include "TortuosityMLMG.H"
 #include "TortuosityDirect.H"
 #include "EffectiveDiffusivityHypre.H"
 #include "VoxelImage.H"
@@ -80,6 +81,54 @@ void init_solvers(py::module_& m) {
         .def_property_readonly("is_multi_phase", &TortuosityHypre::isMultiPhase)
         .def_property_readonly("inlet_outlet_bc_type", &TortuosityHypre::getInletOutletBCType)
         .def_property_readonly("sides_bc_type", &TortuosityHypre::getSidesBCType);
+
+    // =========================================================================
+    // TortuosityMLMG
+    // =========================================================================
+    py::class_<TortuosityMLMG>(m, "TortuosityMLMG",
+                                "Matrix-free MLMG tortuosity solver using AMReX's native geometric "
+                                "multigrid.  Lower memory and faster setup than HYPRE for "
+                                "small/medium grids.")
+
+        .def(py::init([](std::shared_ptr<VoxelImage> img, amrex::Real vf, int phase,
+                         OpenImpala::Direction dir, const std::string& results_path,
+                         amrex::Real vlo, amrex::Real vhi, int verbose, bool write_plotfile) {
+                 return new TortuosityMLMG(img->geom, img->ba, img->dm, *(img->mf), vf, phase, dir,
+                                           results_path, vlo, vhi, verbose, write_plotfile);
+             }),
+             py::arg("img"), py::arg("vf"), py::arg("phase"), py::arg("dir"),
+             py::arg("results_path"), py::arg("vlo") = 0.0, py::arg("vhi") = 1.0,
+             py::arg("verbose") = 0, py::arg("write_plotfile") = false,
+             py::keep_alive<1, 2>())
+
+        .def(
+            "value",
+            [](TortuosityMLMG& self, bool refresh) {
+                amrex::Real val = self.value(refresh);
+                if (std::isnan(val)) {
+                    std::string reason = self.getSolverConverged()
+                                             ? "converged but produced an invalid result"
+                                             : "solver did not converge";
+                    throw std::runtime_error("TortuosityMLMG.value() failed: " + reason);
+                }
+                return val;
+            },
+            py::arg("refresh") = false,
+            "Compute (or return cached) tortuosity.  Raises RuntimeError on failure.")
+
+        .def(
+            "value_raw", [](TortuosityMLMG& self, bool refresh) { return self.value(refresh); },
+            py::arg("refresh") = false, "Return tortuosity (NaN on failure, no exception).")
+
+        .def_property_readonly("solver_converged", &TortuosityMLMG::getSolverConverged)
+        .def_property_readonly("residual_norm", &TortuosityMLMG::getFinalRelativeResidualNorm)
+        .def_property_readonly("iterations", &TortuosityMLMG::getSolverIterations)
+        .def_property_readonly("flux_in", &TortuosityMLMG::getFluxIn)
+        .def_property_readonly("flux_out", &TortuosityMLMG::getFluxOut)
+        .def_property_readonly("active_volume_fraction", &TortuosityMLMG::getActiveVolumeFraction)
+        .def_property_readonly("plane_fluxes", &TortuosityMLMG::getPlaneFluxes)
+        .def_property_readonly("plane_flux_max_deviation",
+                               &TortuosityMLMG::getPlaneFluxMaxDeviation);
 
     // =========================================================================
     // TortuosityDirect
