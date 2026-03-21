@@ -505,8 +505,8 @@ bool TortuosityMLMG::solve() {
     amrex::Real res_norm = mlmg.solve({&m_mf_solution}, {&rhs}, m_eps, 0.0);
 
     m_final_res_norm = res_norm;
-    m_num_iterations = m_maxiter; // MLMG doesn't expose iteration count directly
-    m_converged = (res_norm < m_eps * 100.0); // MLMG returns final residual
+    m_num_iterations = mlmg.getNumIters();
+    m_converged = (res_norm < m_eps); // MLMG returns final residual
 
     m_mf_solution.FillBoundary(m_geom.periodicity());
 
@@ -563,7 +563,10 @@ void TortuosityMLMG::globalFluxes() {
         amrex::Array4<const amrex::Real> const soln = m_mf_solution.const_array(mfi);
         amrex::Array4<const amrex::Real> const dc = m_mf_diff_coeff.const_array(mfi);
 
-        amrex::Box lobox_face = amrex::bdryLo(domain, idir) & tileBox;
+        amrex::Box domain_lo_face = domain;
+        domain_lo_face.setSmall(idir, domain.smallEnd(idir));
+        domain_lo_face.setBig(idir, domain.smallEnd(idir));
+        amrex::Box lobox_face = domain_lo_face & tileBox;
         amrex::Box domain_hi_face = domain;
         domain_hi_face.setSmall(idir, domain.bigEnd(idir));
         domain_hi_face.setBig(idir, domain.bigEnd(idir));

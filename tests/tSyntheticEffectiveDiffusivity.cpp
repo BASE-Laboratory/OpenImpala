@@ -126,6 +126,16 @@ int main(int argc, char* argv[]) {
                 break;
             }
 
+            // Solve the cell problem
+            if (!solver->solve()) {
+                test_passed = false;
+                fail_reason =
+                    "solve() returned false for chi_" + dir_names[d] + " (iterations=" +
+                    std::to_string(solver->getSolverIterations()) +
+                    ", residual=" + std::to_string(solver->getFinalRelativeResidualNorm()) + ")";
+                break;
+            }
+
             // Check convergence
             if (!solver->getSolverConverged()) {
                 test_passed = false;

@@ -93,17 +93,17 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
                             (chi_z_arr(i, j, k + 1, 0) - chi_z_arr(i, j, k - 1, 0)) * inv_2dx[2];
                     }
 
-                    sum_thread[0][0] += (1.0 - grad_chi_x[0]);
-                    sum_thread[0][1] += (-grad_chi_y[0]);
-                    sum_thread[1][0] += (-grad_chi_x[1]);
-                    sum_thread[1][1] += (1.0 - grad_chi_y[1]);
+                    sum_thread[0][0] += (1.0 + grad_chi_x[0]);
+                    sum_thread[0][1] += (grad_chi_y[0]);
+                    sum_thread[1][0] += (grad_chi_x[1]);
+                    sum_thread[1][1] += (1.0 + grad_chi_y[1]);
 
                     if (AMREX_SPACEDIM == 3) {
-                        sum_thread[0][2] += (-grad_chi_z[0]);
-                        sum_thread[2][0] += (-grad_chi_x[2]);
-                        sum_thread[1][2] += (-grad_chi_z[1]);
-                        sum_thread[2][1] += (-grad_chi_y[2]);
-                        sum_thread[2][2] += (1.0 - grad_chi_z[2]);
+                        sum_thread[0][2] += (grad_chi_z[0]);
+                        sum_thread[2][0] += (grad_chi_x[2]);
+                        sum_thread[1][2] += (grad_chi_z[1]);
+                        sum_thread[2][1] += (grad_chi_y[2]);
+                        sum_thread[2][2] += (1.0 + grad_chi_z[2]);
                     }
                 }
             });
@@ -143,7 +143,7 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
     }
 
     if (verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  [calculateDeffTensor] Raw summed (1-dchi_x_dx): " << sum_local[0][0]
+        amrex::Print() << "  [calculateDeffTensor] Raw summed (1+dchi_x_dx): " << sum_local[0][0]
                        << ", N_total: " << N_total << std::endl;
     }
 }
