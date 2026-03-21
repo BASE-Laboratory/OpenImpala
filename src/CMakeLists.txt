@@ -48,6 +48,7 @@ add_library(openimpala_props OBJECT
     props/ThroughThicknessProfile.cpp
     props/TortuosityDirect.cpp
     props/TortuosityHypre.cpp
+    props/TortuosityMLMG.cpp
     props/VolumeFraction.cpp
 )
 
