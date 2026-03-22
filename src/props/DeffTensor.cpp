@@ -130,7 +130,7 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
     }
 
     if (verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  [calculateDeffTensor] Raw summed (1-dchi_x_dx): " << sum_local[0][0]
+        amrex::Print() << "  [calculateDeffTensor] Raw summed (1+dchi_x_dx): " << sum_local[0][0]
                        << ", N_total: " << N_total << std::endl;
     }
 }

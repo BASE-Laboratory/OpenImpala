@@ -232,7 +232,10 @@ void TortuositySolverBase::globalFluxes() {
         const amrex::IntVect sh = shift;
         const amrex::Real dxd = dx_dir;
 
-        amrex::Box lobox_face = amrex::bdryLo(domain, idir) & validBox;
+        amrex::Box domain_lo_face = domain;
+        domain_lo_face.setSmall(idir, domain.smallEnd(idir));
+        domain_lo_face.setBig(idir, domain.smallEnd(idir));
+        amrex::Box lobox_face = domain_lo_face & validBox;
         if (!lobox_face.isEmpty()) {
             flux_reduce_op.eval(
                 lobox_face, flux_reduce_data,

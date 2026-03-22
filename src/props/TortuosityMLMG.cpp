@@ -180,6 +180,11 @@ bool TortuosityMLMG::solve() {
 
     m_final_res_norm = res_norm;
     m_num_iterations = mlmg.getNumIters();
+    // Also verify residual is below tolerance (MLMG may return without exception
+    // but with residual above tolerance)
+    if (m_converged && res_norm >= m_eps) {
+        m_converged = false;
+    }
 
     m_mf_solution.FillBoundary(m_geom.periodicity());
 
