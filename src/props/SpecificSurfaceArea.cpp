@@ -30,7 +30,8 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
     const int phase_comp = m_comp;
     const amrex::Box& domain = m_geom.Domain();
 
-    const amrex::Box padded_domain = domain.grow(-m_boundary_padding);
+    amrex::Box padded_domain = domain;
+    padded_domain.grow(-m_boundary_padding);
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(padded_domain.ok(),
                                      "SpecificSurfaceArea: boundary_padding too large for domain.");
 
