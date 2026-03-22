@@ -123,10 +123,10 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     a_out[stn + STN_MX] = -D_face * inv_dx2;
                     diag_val += D_face * inv_dx2;
                 } else {
-                    // Internal Neumann: zero-flux (no diagonal contribution)
-                    // RHS correction: D * (e_k . n_hat) / h, n_hat = (-1,0,0)
+                    // Internal Neumann BC: ghost cell with dchi/dn = -(e_k . n_hat)
+                    diag_val += D_c * inv_dx2;
                     if (dir_k == 0)
-                        flux_bc_rhs -= D_c / dx;
+                        flux_bc_rhs += D_c / dx;
                 }
 
                 // +X face
@@ -136,9 +136,9 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     a_out[stn + STN_PX] = -D_face * inv_dx2;
                     diag_val += D_face * inv_dx2;
                 } else {
-                    // n_hat = (+1,0,0)
+                    diag_val += D_c * inv_dx2;
                     if (dir_k == 0)
-                        flux_bc_rhs += D_c / dx;
+                        flux_bc_rhs -= D_c / dx;
                 }
 
                 // -Y face
@@ -148,8 +148,9 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     a_out[stn + STN_MY] = -D_face * inv_dy2;
                     diag_val += D_face * inv_dy2;
                 } else {
+                    diag_val += D_c * inv_dy2;
                     if (dir_k == 1)
-                        flux_bc_rhs -= D_c / dy;
+                        flux_bc_rhs += D_c / dy;
                 }
 
                 // +Y face
@@ -159,8 +160,9 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     a_out[stn + STN_PY] = -D_face * inv_dy2;
                     diag_val += D_face * inv_dy2;
                 } else {
+                    diag_val += D_c * inv_dy2;
                     if (dir_k == 1)
-                        flux_bc_rhs += D_c / dy;
+                        flux_bc_rhs -= D_c / dy;
                 }
 
 #if (AMREX_SPACEDIM == 3)
@@ -174,8 +176,9 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     a_out[stn + STN_MZ] = -D_face * inv_dz2;
                     diag_val += D_face * inv_dz2;
                 } else {
+                    diag_val += D_c * inv_dz2;
                     if (dir_k == 2)
-                        flux_bc_rhs -= D_c / dz;
+                        flux_bc_rhs += D_c / dz;
                 }
 
                 // +Z face
@@ -185,42 +188,24 @@ inline void effDiffFillMatrix(amrex::Real* a_out, amrex::Real* rhs_out, amrex::R
                     a_out[stn + STN_PZ] = -D_face * inv_dz2;
                     diag_val += D_face * inv_dz2;
                 } else {
+                    diag_val += D_c * inv_dz2;
                     if (dir_k == 2)
-                        flux_bc_rhs += D_c / dz;
+                        flux_bc_rhs -= D_c / dz;
                 }
 #endif
 
                 a_out[stn + STN_C] = diag_val;
 
-                // === RHS: -div(D e_k) using one-sided differences at boundaries ===
+                // === RHS: -div(D e_k) using central differences ===
                 amrex::Real rhs_div_De = 0.0;
                 if (dir_k == 0) {
-                    if (mx_active && px_active) {
-                        rhs_div_De = -(dc(i + 1, j, k) - dc(i - 1, j, k)) * inv_2dx;
-                    } else if (mx_active) {
-                        rhs_div_De = -(D_c - dc(i - 1, j, k)) / dx;
-                    } else if (px_active) {
-                        rhs_div_De = -(dc(i + 1, j, k) - D_c) / dx;
-                    }
-                    // else: isolated cell, rhs_div_De = 0
+                    rhs_div_De = -(dc(i + 1, j, k) - dc(i - 1, j, k)) * inv_2dx;
                 } else if (dir_k == 1) {
-                    if (my_active && py_active) {
-                        rhs_div_De = -(dc(i, j + 1, k) - dc(i, j - 1, k)) * inv_2dy;
-                    } else if (my_active) {
-                        rhs_div_De = -(D_c - dc(i, j - 1, k)) / dy;
-                    } else if (py_active) {
-                        rhs_div_De = -(dc(i, j + 1, k) - D_c) / dy;
-                    }
+                    rhs_div_De = -(dc(i, j + 1, k) - dc(i, j - 1, k)) * inv_2dy;
                 }
 #if (AMREX_SPACEDIM == 3)
                 else if (dir_k == 2) {
-                    if (mz_active && pz_active) {
-                        rhs_div_De = -(dc(i, j, k + 1) - dc(i, j, k - 1)) * inv_2dz;
-                    } else if (mz_active) {
-                        rhs_div_De = -(D_c - dc(i, j, k - 1)) / dz;
-                    } else if (pz_active) {
-                        rhs_div_De = -(dc(i, j, k + 1) - D_c) / dz;
-                    }
+                    rhs_div_De = -(dc(i, j, k + 1) - dc(i, j, k - 1)) * inv_2dz;
                 }
 #endif
 
@@ -334,9 +319,9 @@ inline void effDiffFillMatrixGpu(const amrex::Box& bx, amrex::Real* a_out, amrex
             a_out[stn + STN_MX] = -D_face * inv_dx2;
             diag_val += D_face * inv_dx2;
         } else {
-            // Internal Neumann: zero-flux (no diagonal contribution)
+            diag_val += D_c * inv_dx2;
             if (dir_k == 0)
-                flux_bc_rhs -= D_c / dx;
+                flux_bc_rhs += D_c / dx;
         }
 
         // +X face
@@ -346,8 +331,9 @@ inline void effDiffFillMatrixGpu(const amrex::Box& bx, amrex::Real* a_out, amrex
             a_out[stn + STN_PX] = -D_face * inv_dx2;
             diag_val += D_face * inv_dx2;
         } else {
+            diag_val += D_c * inv_dx2;
             if (dir_k == 0)
-                flux_bc_rhs += D_c / dx;
+                flux_bc_rhs -= D_c / dx;
         }
 
         // -Y face
@@ -357,8 +343,9 @@ inline void effDiffFillMatrixGpu(const amrex::Box& bx, amrex::Real* a_out, amrex
             a_out[stn + STN_MY] = -D_face * inv_dy2;
             diag_val += D_face * inv_dy2;
         } else {
+            diag_val += D_c * inv_dy2;
             if (dir_k == 1)
-                flux_bc_rhs -= D_c / dy;
+                flux_bc_rhs += D_c / dy;
         }
 
         // +Y face
@@ -368,8 +355,9 @@ inline void effDiffFillMatrixGpu(const amrex::Box& bx, amrex::Real* a_out, amrex
             a_out[stn + STN_PY] = -D_face * inv_dy2;
             diag_val += D_face * inv_dy2;
         } else {
+            diag_val += D_c * inv_dy2;
             if (dir_k == 1)
-                flux_bc_rhs += D_c / dy;
+                flux_bc_rhs -= D_c / dy;
         }
 
 #if (AMREX_SPACEDIM == 3)
@@ -383,8 +371,9 @@ inline void effDiffFillMatrixGpu(const amrex::Box& bx, amrex::Real* a_out, amrex
             a_out[stn + STN_MZ] = -D_face * inv_dz2;
             diag_val += D_face * inv_dz2;
         } else {
+            diag_val += D_c * inv_dz2;
             if (dir_k == 2)
-                flux_bc_rhs -= D_c / dz;
+                flux_bc_rhs += D_c / dz;
         }
 
         // +Z face
@@ -394,41 +383,24 @@ inline void effDiffFillMatrixGpu(const amrex::Box& bx, amrex::Real* a_out, amrex
             a_out[stn + STN_PZ] = -D_face * inv_dz2;
             diag_val += D_face * inv_dz2;
         } else {
+            diag_val += D_c * inv_dz2;
             if (dir_k == 2)
-                flux_bc_rhs += D_c / dz;
+                flux_bc_rhs -= D_c / dz;
         }
 #endif
 
         a_out[stn + STN_C] = diag_val;
 
-        // RHS: -div(D e_k) using one-sided differences at boundaries
+        // RHS: -div(D e_k) using central differences
         amrex::Real rhs_div_De = 0.0;
         if (dir_k == 0) {
-            if (mx_active && px_active) {
-                rhs_div_De = -(dc_arr(i + 1, j, k) - dc_arr(i - 1, j, k)) * inv_2dx;
-            } else if (mx_active) {
-                rhs_div_De = -(D_c - dc_arr(i - 1, j, k)) / dx;
-            } else if (px_active) {
-                rhs_div_De = -(dc_arr(i + 1, j, k) - D_c) / dx;
-            }
+            rhs_div_De = -(dc_arr(i + 1, j, k) - dc_arr(i - 1, j, k)) * inv_2dx;
         } else if (dir_k == 1) {
-            if (my_active && py_active) {
-                rhs_div_De = -(dc_arr(i, j + 1, k) - dc_arr(i, j - 1, k)) * inv_2dy;
-            } else if (my_active) {
-                rhs_div_De = -(D_c - dc_arr(i, j - 1, k)) / dy;
-            } else if (py_active) {
-                rhs_div_De = -(dc_arr(i, j + 1, k) - D_c) / dy;
-            }
+            rhs_div_De = -(dc_arr(i, j + 1, k) - dc_arr(i, j - 1, k)) * inv_2dy;
         }
 #if (AMREX_SPACEDIM == 3)
         else if (dir_k == 2) {
-            if (mz_active && pz_active) {
-                rhs_div_De = -(dc_arr(i, j, k + 1) - dc_arr(i, j, k - 1)) * inv_2dz;
-            } else if (mz_active) {
-                rhs_div_De = -(D_c - dc_arr(i, j, k - 1)) / dz;
-            } else if (pz_active) {
-                rhs_div_De = -(dc_arr(i, j, k + 1) - D_c) / dz;
-            }
+            rhs_div_De = -(dc_arr(i, j, k + 1) - dc_arr(i, j, k - 1)) * inv_2dz;
         }
 #endif
 

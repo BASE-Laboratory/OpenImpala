@@ -54,7 +54,7 @@ amrex::IntVect ConnectedComponents::findNextUnlabeled(const amrex::iMultiFab& la
     int flat[3] = {local_seed[0], local_seed[1], local_seed[2]};
 
     int mpi_size = amrex::ParallelDescriptor::NProcs();
-    std::vector<int> all_seeds(mpi_size * 3);
+    std::vector<int> all_seeds(static_cast<size_t>(mpi_size) * 3);
     MPI_Allgather(flat, 3, MPI_INT, all_seeds.data(), 3, MPI_INT, comm);
 
     // Find the smallest valid seed across all ranks

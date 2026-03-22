@@ -622,11 +622,8 @@ bool EffectiveDiffusivityHypre::solve() {
         return m_converged;
     }
 
-    // Delegate solver dispatch to base class.
-    // SMG is used instead of PFMG because the periodic cell problem with a
-    // pinned null-space cell can cause PFMG to diverge (NaN at iteration 1).
-    // SMG handles periodic structured grids more robustly.
-    runSolver(PrecondType::SMG);
+    // Delegate solver dispatch to base class (PFMG preconditioner for periodic problems).
+    runSolver(PrecondType::PFMG);
 
     if (m_converged) {
         getChiSolution(m_mf_chi);
