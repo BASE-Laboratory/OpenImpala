@@ -512,6 +512,76 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
     }
 #endif
 
+    // --- Pin one active cell to remove the constant null space ---
+    // The periodic cell problem div(D grad(chi)) = -div(D e_k) has a singular
+    // matrix (any constant can be added to chi). Pinning one active cell to
+    // chi=0 makes the system non-singular without affecting D_eff.
+    {
+        // Find the globally first active cell (lowest index in domain order).
+        // Each rank checks its own boxes; we reduce to find the global minimum.
+        amrex::IntVect local_pin(-1, -1, -1);
+        long local_pin_rank_idx = std::numeric_limits<long>::max(); // linearized index
+
+        for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+            const amrex::Box& vbx = mfi.validbox();
+            auto mask_arr = m_mf_active_mask.const_array(mfi);
+            const auto& domain = m_geom.Domain();
+            bool found = false;
+            amrex::LoopOnCpu(vbx, [&](int i, int j, int k) {
+                if (!found && mask_arr(i, j, k, MaskComp) == cell_active) {
+                    long lin = static_cast<long>(i - domain.smallEnd(0)) +
+                               static_cast<long>(domain.length(0)) *
+                                   (static_cast<long>(j - domain.smallEnd(1)) +
+                                    static_cast<long>(domain.length(1)) *
+                                        static_cast<long>(k - domain.smallEnd(2)));
+                    if (lin < local_pin_rank_idx) {
+                        local_pin_rank_idx = lin;
+                        local_pin = amrex::IntVect(i, j, k);
+                        found = true;
+                    }
+                }
+            });
+            if (found)
+                break;
+        }
+
+        // Find the globally minimum linearized index across all ranks
+        struct {
+            long idx;
+            int rank;
+        } local_val, global_val;
+        local_val.idx = local_pin_rank_idx;
+        local_val.rank = amrex::ParallelDescriptor::MyProc();
+        MPI_Allreduce(&local_val, &global_val, 1, MPI_LONG_INT, MPI_MINLOC,
+                      amrex::ParallelDescriptor::Communicator());
+
+        // The rank that owns the pinned cell overwrites its HYPRE row
+        if (amrex::ParallelDescriptor::MyProc() == global_val.rank && local_pin[0] >= 0) {
+            amrex::Box pin_box(local_pin, local_pin);
+            auto lo = EffectiveDiffusivityHypre::loV(pin_box);
+            auto hi = EffectiveDiffusivityHypre::hiV(pin_box);
+
+            std::vector<amrex::Real> pin_mtx(stencil_size, 0.0);
+            pin_mtx[0] = 1.0; // center diagonal = 1
+            amrex::Real pin_rhs = 0.0;
+            amrex::Real pin_x = 0.0;
+
+            ierr = HYPRE_StructMatrixSetBoxValues(m_A, lo.data(), hi.data(), stencil_size,
+                                                  stencil_indices_hypre, pin_mtx.data());
+            HYPRE_CHECK(ierr);
+            ierr = HYPRE_StructVectorSetBoxValues(m_b, lo.data(), hi.data(), &pin_rhs);
+            HYPRE_CHECK(ierr);
+            ierr = HYPRE_StructVectorSetBoxValues(m_x, lo.data(), hi.data(), &pin_x);
+            HYPRE_CHECK(ierr);
+
+            if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << "  setupMatrixEquation: Pinned active cell (" << local_pin[0]
+                               << "," << local_pin[1] << "," << local_pin[2]
+                               << ") to chi=0 (removes null space)." << std::endl;
+            }
+        }
+    }
+
     // Assemble via base class
     assembleSystem();
 
