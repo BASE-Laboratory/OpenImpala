@@ -17,7 +17,7 @@ cmake_minimum_required(VERSION 3.18)
 
 project(OpenImpala
     VERSION 0.1.0
-    LANGUAGES C CXX
+    LANGUAGES C CXX Fortran
     DESCRIPTION "Image-based simulation of transport properties in porous media"
 )
 
