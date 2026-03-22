@@ -174,7 +174,7 @@ int main(int argc, char* argv[]) {
 
             // Check that active mask marks all cells as active
             const amrex::iMultiFab& active_mask = solver->getActiveMask();
-            long long total_active = 0;
+            long total_active = 0;
             for (amrex::MFIter mfi(active_mask); mfi.isValid(); ++mfi) {
                 const amrex::Box& bx = mfi.validbox();
                 amrex::Array4<const int> const mask_arr = active_mask.const_array(mfi);
@@ -184,8 +184,8 @@ int main(int argc, char* argv[]) {
                     }
                 });
             }
-            amrex::ParallelDescriptor::ReduceLongLongSum(total_active);
-            long long expected_active = domain_box.numPts();
+            amrex::ParallelDescriptor::ReduceLongSum(total_active);
+            long expected_active = domain_box.numPts();
             if (total_active != expected_active) {
                 test_passed = false;
                 fail_reason = "Active mask count mismatch for " + dir_names[d] + ": got " +
