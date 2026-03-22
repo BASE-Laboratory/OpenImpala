@@ -86,7 +86,7 @@ int main(int argc, char* argv[]) {
         // Test 1: SSA — Uniform domain → SSA = 0
         // ================================================================
         if (status.passed) {
-            amrex::iMultiFab mf(ba, dm, 1, 0);
+            amrex::iMultiFab mf(ba, dm, 1, 1);
             mf.setVal(0);
 
             OpenImpala::SpecificSurfaceArea ssa(geom, mf, 0, 1);
@@ -105,7 +105,8 @@ int main(int argc, char* argv[]) {
         // Test 2: SSA — Half-and-half split along X → SSA = N^2 / N^3 = 1/N
         // ================================================================
         if (status.passed) {
-            amrex::iMultiFab mf(ba, dm, 1, 0);
+            amrex::iMultiFab mf(ba, dm, 1, 1);
+            mf.setVal(0);
             int half = N / 2;
 
 #ifdef AMREX_USE_OMP
@@ -117,6 +118,7 @@ int main(int argc, char* argv[]) {
                 amrex::LoopOnCpu(
                     bx, [&](int i, int j, int k) { arr(i, j, k, 0) = (i < half) ? 0 : 1; });
             }
+            mf.FillBoundary();
 
             OpenImpala::SpecificSurfaceArea ssa(geom, mf, 0, 1);
             long long face_count = 0, total_count = 0;
@@ -147,7 +149,8 @@ int main(int argc, char* argv[]) {
         // Test 2b: SSA — Corrected SSA = (2/3) * raw for half-split
         // ================================================================
         if (status.passed) {
-            amrex::iMultiFab mf(ba, dm, 1, 0);
+            amrex::iMultiFab mf(ba, dm, 1, 1);
+            mf.setVal(0);
             int half = N / 2;
 
 #ifdef AMREX_USE_OMP
@@ -159,6 +162,7 @@ int main(int argc, char* argv[]) {
                 amrex::LoopOnCpu(
                     bx, [&](int i, int j, int k) { arr(i, j, k, 0) = (i < half) ? 0 : 1; });
             }
+            mf.FillBoundary();
 
             OpenImpala::SpecificSurfaceArea ssa(geom, mf, 0, 1);
             amrex::Real raw_ssa = ssa.value_ssa(false);
@@ -180,7 +184,7 @@ int main(int argc, char* argv[]) {
         // Test 2c: SSA boundary padding — cube touching domain face
         // ================================================================
         if (status.passed) {
-            amrex::iMultiFab mf(ba, dm, 1, 0);
+            amrex::iMultiFab mf(ba, dm, 1, 1);
             mf.setVal(0); // all phase 0
 
             // Place a small cube of phase 1 touching the low-X domain face
@@ -199,6 +203,7 @@ int main(int argc, char* argv[]) {
                     }
                 });
             }
+            mf.FillBoundary();
 
             // With padding=0, the cube touching the boundary has interface faces
             OpenImpala::SpecificSurfaceArea ssa_no_pad(geom, mf, 0, 1, 0, 0);
@@ -233,7 +238,8 @@ int main(int argc, char* argv[]) {
         // Test 2d: SSA — Diagonal plane (i+j+k < N) demonstrates laddering
         // ================================================================
         if (status.passed) {
-            amrex::iMultiFab mf(ba, dm, 1, 0);
+            amrex::iMultiFab mf(ba, dm, 1, 1);
+            mf.setVal(0);
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
@@ -244,6 +250,7 @@ int main(int argc, char* argv[]) {
                 amrex::LoopOnCpu(
                     bx, [&](int i, int j, int k) { arr(i, j, k, 0) = (i + j + k < N) ? 0 : 1; });
             }
+            mf.FillBoundary();
 
             OpenImpala::SpecificSurfaceArea ssa(geom, mf, 0, 1);
             amrex::Real raw_ssa = ssa.value_ssa(false);
