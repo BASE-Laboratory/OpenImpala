@@ -26,11 +26,11 @@ namespace OpenImpala {
 
 // --- Constructor ---
 TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArray& ba,
-                                const amrex::DistributionMapping& dm,
-                                const amrex::iMultiFab& mf_phase_input, const amrex::Real vf,
-                                const int phase, const OpenImpala::Direction dir,
-                                const std::string& resultspath, const amrex::Real vlo,
-                                const amrex::Real vhi, int verbose, bool write_plotfile)
+                               const amrex::DistributionMapping& dm,
+                               const amrex::iMultiFab& mf_phase_input, const amrex::Real vf,
+                               const int phase, const OpenImpala::Direction dir,
+                               const std::string& resultspath, const amrex::Real vlo,
+                               const amrex::Real vhi, int verbose, bool write_plotfile)
     : TortuositySolverBase(geom, ba, dm, mf_phase_input, vf, phase, dir, resultspath, vlo, vhi,
                            verbose, write_plotfile) {
     // Parse MLMG-specific solver parameters
@@ -44,8 +44,8 @@ TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArra
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "TortuosityMLMG: Initialized with eps=" << m_eps
-                       << ", maxiter=" << m_maxiter
-                       << ", max_coarsening=" << m_max_coarsening_level << std::endl;
+                       << ", maxiter=" << m_maxiter << ", max_coarsening=" << m_max_coarsening_level
+                       << std::endl;
     }
 }
 

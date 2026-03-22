@@ -50,9 +50,8 @@ constexpr int FLOOD_ACTIVE = 1;
  *                                passes a unique label per component.
  */
 void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFab& phaseFab,
-                        int phaseID, const amrex::Vector<amrex::IntVect>& seedPoints,
-                        const amrex::Geometry& geom, int verbose = 0,
-                        int label = FLOOD_ACTIVE);
+                       int phaseID, const amrex::Vector<amrex::IntVect>& seedPoints,
+                       const amrex::Geometry& geom, int verbose = 0, int label = FLOOD_ACTIVE);
 
 /** @brief Collect boundary seeds on inlet/outlet faces of a phase.
  *
@@ -68,9 +67,8 @@ void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFa
  *  @param[out] outletSeeds   Seeds on the high face (populated on return).
  */
 void collectBoundarySeeds(const amrex::iMultiFab& phaseFab, int phaseID, int dir,
-                           const amrex::Geometry& geom,
-                           amrex::Vector<amrex::IntVect>& inletSeeds,
-                           amrex::Vector<amrex::IntVect>& outletSeeds);
+                          const amrex::Geometry& geom, amrex::Vector<amrex::IntVect>& inletSeeds,
+                          amrex::Vector<amrex::IntVect>& outletSeeds);
 
 } // namespace OpenImpala
 

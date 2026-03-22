@@ -23,9 +23,8 @@ namespace OpenImpala {
 // collectBoundarySeeds
 // =========================================================================
 void collectBoundarySeeds(const amrex::iMultiFab& phaseFab, int phaseID, int dir,
-                           const amrex::Geometry& geom,
-                           amrex::Vector<amrex::IntVect>& inletSeeds,
-                           amrex::Vector<amrex::IntVect>& outletSeeds) {
+                          const amrex::Geometry& geom, amrex::Vector<amrex::IntVect>& inletSeeds,
+                          amrex::Vector<amrex::IntVect>& outletSeeds) {
     const amrex::Box& domain = geom.Domain();
 
     amrex::Box domain_lo_face = domain;
@@ -98,7 +97,7 @@ void collectBoundarySeeds(const amrex::iMultiFab& phaseFab, int phaseID, int dir
 
         std::vector<int> flat_gathered(total);
         MPI_Allgatherv(flat_local.data(), local_count, MPI_INT, flat_gathered.data(),
-                        recv_counts.data(), displacements.data(), MPI_INT, comm);
+                       recv_counts.data(), displacements.data(), MPI_INT, comm);
 
         amrex::Vector<amrex::IntVect> seeds;
         seeds.reserve(total / AMREX_SPACEDIM);
@@ -118,8 +117,8 @@ void collectBoundarySeeds(const amrex::iMultiFab& phaseFab, int phaseID, int dir
 // parallelFloodFill
 // =========================================================================
 void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFab& phaseFab,
-                        int phaseID, const amrex::Vector<amrex::IntVect>& seedPoints,
-                        const amrex::Geometry& geom, int verbose, int label) {
+                       int phaseID, const amrex::Vector<amrex::IntVect>& seedPoints,
+                       const amrex::Geometry& geom, int verbose, int label) {
     BL_PROFILE("OpenImpala::parallelFloodFill");
     AMREX_ASSERT(reachabilityMask.nGrow() >= 1);
     AMREX_ASSERT(phaseFab.nGrow() >= 1);
@@ -191,8 +190,8 @@ void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFa
                     return;
                 }
                 // Check 6-connected neighbors for matching label
-                const amrex::IntVect offsets[6] = {
-                    {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+                const amrex::IntVect offsets[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
+                                                   {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
                 amrex::IntVect iv(i, j, k);
                 for (int n = 0; n < 6; ++n) {
                     amrex::IntVect nb = iv + offsets[n];

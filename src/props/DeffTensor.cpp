@@ -37,9 +37,9 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
     amrex::Real inv_2dx_2 = (AMREX_SPACEDIM == 3) ? 1.0 / (2.0 * dx_arr[2]) : 0.0;
 
     // GPU-compatible 9-component reduction for the full D_eff tensor
-    amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum,
-                     amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum,
-                     amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum>
+    amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum,
+                     amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum,
+                     amrex::ReduceOpSum>
         reduce_op;
     amrex::ReduceData<amrex::Real, amrex::Real, amrex::Real, amrex::Real, amrex::Real, amrex::Real,
                       amrex::Real, amrex::Real, amrex::Real>
@@ -52,13 +52,13 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
         amrex::Array4<const amrex::Real> const chi_y_arr = mf_chi_y.const_array(mfi);
         amrex::Array4<const amrex::Real> const chi_z_arr =
             (AMREX_SPACEDIM == 3 && mf_chi_z.isDefined()) ? mf_chi_z.const_array(mfi)
-                                                           : mf_chi_x.const_array(mfi);
+                                                          : mf_chi_x.const_array(mfi);
 
         reduce_op.eval(
             bx, reduce_data,
             [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real, amrex::Real,
-                                   amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
+            -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real, amrex::Real,
+                               amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
                 if (mask_arr(i, j, k, 0) != 1) {
                     return {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
                 }
@@ -75,22 +75,17 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
                 amrex::Real dchix_dz = 0.0, dchiy_dz = 0.0;
                 amrex::Real dchiz_dx = 0.0, dchiz_dy = 0.0, dchiz_dz = 0.0;
                 if (AMREX_SPACEDIM == 3) {
-                    dchix_dz =
-                        (chi_x_arr(i, j, k + 1, 0) - chi_x_arr(i, j, k - 1, 0)) * inv_2dx_2;
-                    dchiy_dz =
-                        (chi_y_arr(i, j, k + 1, 0) - chi_y_arr(i, j, k - 1, 0)) * inv_2dx_2;
-                    dchiz_dx =
-                        (chi_z_arr(i + 1, j, k, 0) - chi_z_arr(i - 1, j, k, 0)) * inv_2dx_0;
-                    dchiz_dy =
-                        (chi_z_arr(i, j + 1, k, 0) - chi_z_arr(i, j - 1, k, 0)) * inv_2dx_1;
-                    dchiz_dz =
-                        (chi_z_arr(i, j, k + 1, 0) - chi_z_arr(i, j, k - 1, 0)) * inv_2dx_2;
+                    dchix_dz = (chi_x_arr(i, j, k + 1, 0) - chi_x_arr(i, j, k - 1, 0)) * inv_2dx_2;
+                    dchiy_dz = (chi_y_arr(i, j, k + 1, 0) - chi_y_arr(i, j, k - 1, 0)) * inv_2dx_2;
+                    dchiz_dx = (chi_z_arr(i + 1, j, k, 0) - chi_z_arr(i - 1, j, k, 0)) * inv_2dx_0;
+                    dchiz_dy = (chi_z_arr(i, j + 1, k, 0) - chi_z_arr(i, j - 1, k, 0)) * inv_2dx_1;
+                    dchiz_dz = (chi_z_arr(i, j, k + 1, 0) - chi_z_arr(i, j, k - 1, 0)) * inv_2dx_2;
                 }
 
                 // D_eff[r][c] = delta_rc + d(chi_c)/d(x_r), summed over active cells
                 // Cell problem: div(D grad chi_k) = -div(D e_k) => plus sign
-                return {1.0 + dchix_dx, dchiy_dx, dchiz_dx, dchix_dy, 1.0 + dchiy_dy,
-                        dchiz_dy, dchix_dz, dchiy_dz, 1.0 + dchiz_dz};
+                return {1.0 + dchix_dx, dchiy_dx, dchiz_dx, dchix_dy,      1.0 + dchiy_dy,
+                        dchiz_dy,       dchix_dz, dchiy_dz, 1.0 + dchiz_dz};
             });
     }
 

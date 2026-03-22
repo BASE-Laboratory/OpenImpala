@@ -323,8 +323,8 @@ void TortuosityDirect::advance(amrex::MultiFab& phi_old, amrex::MultiFab& phi_ne
             const auto& fz_arr = m_flux[2].const_array(mfi);
 
             // Only diffuse comp_phi (component 0), NOT comp_ct (component 1).
-            OpenImpala::forwardEulerUpdate(bx, p_arr, n_arr, fx_arr, fy_arr, fz_arr,
-                                           m_dxinv.data(), dt);
+            OpenImpala::forwardEulerUpdate(bx, p_arr, n_arr, fx_arr, fy_arr, fz_arr, m_dxinv.data(),
+                                           dt);
 
             // Ensure cell type remains unchanged in phi_new (copy from phi_old)
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {

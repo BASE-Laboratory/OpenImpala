@@ -396,12 +396,12 @@ void OpenImpala::TortuosityHypre::generateActivityMask(const amrex::iMultiFab& p
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "  Performing flood fill from inlet..." << std::endl;
     OpenImpala::parallelFloodFill(mf_reached_inlet, phaseFab, phaseID, inlet_seeds, m_geom,
-                                   m_verbose);
+                                  m_verbose);
 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "  Performing flood fill from outlet..." << std::endl;
     OpenImpala::parallelFloodFill(mf_reached_outlet, phaseFab, phaseID, outlet_seeds, m_geom,
-                                   m_verbose);
+                                  m_verbose);
 
     m_mf_active_mask.setVal(cell_inactive);
 #ifdef AMREX_USE_OMP
@@ -413,11 +413,10 @@ void OpenImpala::TortuosityHypre::generateActivityMask(const amrex::iMultiFab& p
         const auto inlet_reach_arr = mf_reached_inlet.const_array(mfi);
         const auto outlet_reach_arr = mf_reached_outlet.const_array(mfi);
         amrex::ParallelFor(tileBox, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-            mask_arr(i, j, k, MaskComp) =
-                (inlet_reach_arr(i, j, k, 0) == FLOOD_ACTIVE &&
-                 outlet_reach_arr(i, j, k, 0) == FLOOD_ACTIVE)
-                    ? cell_active
-                    : cell_inactive;
+            mask_arr(i, j, k, MaskComp) = (inlet_reach_arr(i, j, k, 0) == FLOOD_ACTIVE &&
+                                           outlet_reach_arr(i, j, k, 0) == FLOOD_ACTIVE)
+                                              ? cell_active
+                                              : cell_inactive;
         });
     }
     m_mf_active_mask.FillBoundary(m_geom.periodicity());
@@ -1155,8 +1154,7 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
     }
 
     // GPU-compatible reduction for inlet/outlet flux and active cell counts
-    amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum,
-                     amrex::ReduceOpSum>
+    amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum>
         flux_reduce_op;
     amrex::ReduceData<amrex::Real, amrex::Real, amrex::Real, amrex::Real> flux_reduce_data(
         flux_reduce_op);
@@ -1177,7 +1175,7 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
             flux_reduce_op.eval(
                 lobox_face, flux_reduce_data,
                 [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                    -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
+                -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
                     amrex::Real fxin = 0.0, cells_in = 0.0;
                     if (mask(i, j, k) == cell_active) {
                         cells_in = 1.0;
@@ -1185,9 +1183,8 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
                         if (mask(si, sj, sk) == cell_active) {
                             amrex::Real D_bnd = dc(i, j, k);
                             amrex::Real D_inn = dc(si, sj, sk);
-                            amrex::Real D_face = (D_bnd + D_inn > 0.0)
-                                                     ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn)
-                                                     : 0.0;
+                            amrex::Real D_face =
+                                (D_bnd + D_inn > 0.0) ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn) : 0.0;
                             amrex::Real grad = (soln(si, sj, sk) - soln(i, j, k)) / dx_dir;
                             fxin = -D_face * grad;
                         }
@@ -1201,7 +1198,7 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
             flux_reduce_op.eval(
                 hibox_face, flux_reduce_data,
                 [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                    -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
+                -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
                     amrex::Real fxout = 0.0, cells_out = 0.0;
                     if (mask(i, j, k) == cell_active) {
                         cells_out = 1.0;
@@ -1209,9 +1206,8 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
                         if (mask(si, sj, sk) == cell_active) {
                             amrex::Real D_bnd = dc(i, j, k);
                             amrex::Real D_inn = dc(si, sj, sk);
-                            amrex::Real D_face = (D_bnd + D_inn > 0.0)
-                                                     ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn)
-                                                     : 0.0;
+                            amrex::Real D_face =
+                                (D_bnd + D_inn > 0.0) ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn) : 0.0;
                             amrex::Real grad = (soln(i, j, k) - soln(si, sj, sk)) / dx_dir;
                             fxout = -D_face * grad;
                         }
@@ -1323,8 +1319,7 @@ void OpenImpala::TortuosityHypre::computePlaneFluxes(const amrex::MultiFab& mf_s
             if (mask(i, j, k) == cell_active && mask(si, sj, sk) == cell_active) {
                 amrex::Real D_lo = dc(i, j, k);
                 amrex::Real D_hi = dc(si, sj, sk);
-                amrex::Real D_face =
-                    (D_lo + D_hi > 0.0) ? 2.0 * D_lo * D_hi / (D_lo + D_hi) : 0.0;
+                amrex::Real D_face = (D_lo + D_hi > 0.0) ? 2.0 * D_lo * D_hi / (D_lo + D_hi) : 0.0;
                 amrex::Real grad = (soln(si, sj, sk) - soln(i, j, k)) / dx_dir;
                 amrex::Real flux = -D_face * grad * face_area_element;
                 amrex::IntVect iv(i, j, k);

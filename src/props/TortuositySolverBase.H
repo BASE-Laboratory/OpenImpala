@@ -81,16 +81,36 @@ public:
     amrex::Real value(const bool refresh = false) override;
 
     // --- Public getters ---
-    bool getSolverConverged() const { return m_converged; }
-    amrex::Real getFinalRelativeResidualNorm() const { return m_final_res_norm; }
-    int getSolverIterations() const { return m_num_iterations; }
-    amrex::Real getFluxIn() const { return m_flux_in; }
-    amrex::Real getFluxOut() const { return m_flux_out; }
-    amrex::Real getActiveVolumeFraction() const { return m_active_vf; }
-    const std::vector<amrex::Real>& getPlaneFluxes() const { return m_plane_fluxes; }
-    amrex::Real getPlaneFluxMaxDeviation() const { return m_plane_flux_max_dev; }
-    bool isMultiPhase() const { return m_is_multi_phase; }
-    const std::map<int, amrex::Real>& getPhaseCoeffMap() const { return m_phase_coeff_map; }
+    bool getSolverConverged() const {
+        return m_converged;
+    }
+    amrex::Real getFinalRelativeResidualNorm() const {
+        return m_final_res_norm;
+    }
+    int getSolverIterations() const {
+        return m_num_iterations;
+    }
+    amrex::Real getFluxIn() const {
+        return m_flux_in;
+    }
+    amrex::Real getFluxOut() const {
+        return m_flux_out;
+    }
+    amrex::Real getActiveVolumeFraction() const {
+        return m_active_vf;
+    }
+    const std::vector<amrex::Real>& getPlaneFluxes() const {
+        return m_plane_fluxes;
+    }
+    amrex::Real getPlaneFluxMaxDeviation() const {
+        return m_plane_flux_max_dev;
+    }
+    bool isMultiPhase() const {
+        return m_is_multi_phase;
+    }
+    const std::map<int, amrex::Real>& getPhaseCoeffMap() const {
+        return m_phase_coeff_map;
+    }
 
 protected:
     /** @brief Run the linear solver, populating m_mf_solution.

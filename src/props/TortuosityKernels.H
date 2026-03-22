@@ -183,8 +183,8 @@ inline void forwardEulerUpdate(const amrex::Box& bx, const amrex::Array4<const a
                                const amrex::Array4<amrex::Real>& n_arr,
                                const amrex::Array4<const amrex::Real>& fx,
                                const amrex::Array4<const amrex::Real>& fy,
-                               const amrex::Array4<const amrex::Real>& fz,
-                               const amrex::Real* dxinv, amrex::Real dt) {
+                               const amrex::Array4<const amrex::Real>& fz, const amrex::Real* dxinv,
+                               amrex::Real dt) {
     const amrex::Real dtdx = dt * dxinv[0];
     const amrex::Real dtdy = dt * dxinv[1];
     const amrex::Real dtdz = dt * dxinv[2];
@@ -232,31 +232,37 @@ inline void integrateBoundaryFluxes(const amrex::Box& cell_bx,
         // X-direction: sum fx on low-X and high-X faces
         if (fxbox.smallEnd(0) <= lo[0]) {
             for (int k = lo[2]; k <= hi[2]; ++k)
-                for (int j = lo[1]; j <= hi[1]; ++j) flux_in += fx(lo[0], j, k);
+                for (int j = lo[1]; j <= hi[1]; ++j)
+                    flux_in += fx(lo[0], j, k);
         }
         if (fxbox.bigEnd(0) >= hi[0] + 1) {
             for (int k = lo[2]; k <= hi[2]; ++k)
-                for (int j = lo[1]; j <= hi[1]; ++j) flux_out += fx(hi[0] + 1, j, k);
+                for (int j = lo[1]; j <= hi[1]; ++j)
+                    flux_out += fx(hi[0] + 1, j, k);
         }
     } else if (dir == 1) {
         // Y-direction
         if (fybox.smallEnd(1) <= lo[1]) {
             for (int k = lo[2]; k <= hi[2]; ++k)
-                for (int i = lo[0]; i <= hi[0]; ++i) flux_in += fy(i, lo[1], k);
+                for (int i = lo[0]; i <= hi[0]; ++i)
+                    flux_in += fy(i, lo[1], k);
         }
         if (fybox.bigEnd(1) >= hi[1] + 1) {
             for (int k = lo[2]; k <= hi[2]; ++k)
-                for (int i = lo[0]; i <= hi[0]; ++i) flux_out += fy(i, hi[1] + 1, k);
+                for (int i = lo[0]; i <= hi[0]; ++i)
+                    flux_out += fy(i, hi[1] + 1, k);
         }
     } else {
         // Z-direction
         if (fzbox.smallEnd(2) <= lo[2]) {
             for (int j = lo[1]; j <= hi[1]; ++j)
-                for (int i = lo[0]; i <= hi[0]; ++i) flux_in += fz(i, j, lo[2]);
+                for (int i = lo[0]; i <= hi[0]; ++i)
+                    flux_in += fz(i, j, lo[2]);
         }
         if (fzbox.bigEnd(2) >= hi[2] + 1) {
             for (int j = lo[1]; j <= hi[1]; ++j)
-                for (int i = lo[0]; i <= hi[0]; ++i) flux_out += fz(i, j, hi[2] + 1);
+                for (int i = lo[0]; i <= hi[0]; ++i)
+                    flux_out += fz(i, j, hi[2] + 1);
         }
     }
 }

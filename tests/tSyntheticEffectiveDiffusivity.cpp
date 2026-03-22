@@ -117,8 +117,8 @@ int main(int argc, char* argv[]) {
             try {
                 solver = std::make_unique<OpenImpala::EffectiveDiffusivityHypre>(
                     geom, ba, dm, mf_phase, 0 /* phase_id */, directions[d],
-                    OpenImpala::SolverType::FlexGMRES, resultsdir,
-                    verbose, false /* write_plotfile */);
+                    OpenImpala::SolverType::FlexGMRES, resultsdir, verbose,
+                    false /* write_plotfile */);
             } catch (const std::exception& e) {
                 test_passed = false;
                 fail_reason = "EffDiffHypre construction failed for " + dir_names[d] + ": " +
@@ -130,8 +130,8 @@ int main(int argc, char* argv[]) {
             if (!solver->solve()) {
                 test_passed = false;
                 fail_reason =
-                    "solve() returned false for chi_" + dir_names[d] + " (iterations=" +
-                    std::to_string(solver->getSolverIterations()) +
+                    "solve() returned false for chi_" + dir_names[d] +
+                    " (iterations=" + std::to_string(solver->getSolverIterations()) +
                     ", residual=" + std::to_string(solver->getFinalRelativeResidualNorm()) + ")";
                 break;
             }
@@ -140,16 +140,16 @@ int main(int argc, char* argv[]) {
             if (!solver->getSolverConverged()) {
                 test_passed = false;
                 fail_reason =
-                    "Solver did not converge for chi_" + dir_names[d] + " (iterations=" +
-                    std::to_string(solver->getSolverIterations()) +
+                    "Solver did not converge for chi_" + dir_names[d] +
+                    " (iterations=" + std::to_string(solver->getSolverIterations()) +
                     ", residual=" + std::to_string(solver->getFinalRelativeResidualNorm()) + ")";
                 break;
             }
 
             if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << "   Converged in " << solver->getSolverIterations()
-                               << " iterations (residual="
-                               << solver->getFinalRelativeResidualNorm() << ")\n";
+                               << " iterations (residual=" << solver->getFinalRelativeResidualNorm()
+                               << ")\n";
             }
 
             // --- Validate chi_k ≈ 0 for uniform medium ---
@@ -166,9 +166,9 @@ int main(int argc, char* argv[]) {
 
             if (chi_max > chi_tolerance) {
                 test_passed = false;
-                fail_reason = "chi_" + dir_names[d] + " is not near zero: ||chi||_inf = " +
-                              std::to_string(chi_max) + " > tolerance " +
-                              std::to_string(chi_tolerance);
+                fail_reason = "chi_" + dir_names[d] +
+                              " is not near zero: ||chi||_inf = " + std::to_string(chi_max) +
+                              " > tolerance " + std::to_string(chi_tolerance);
                 break;
             }
 

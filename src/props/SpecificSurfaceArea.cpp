@@ -69,8 +69,8 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
                 const int od0 = offset[0], od1 = offset[1], od2 = offset[2];
                 reduce_op.eval(
                     check_bx, reduce_data,
-                    [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                        -> amrex::GpuTuple<long long, long long> {
+                    [=] AMREX_GPU_DEVICE(int i, int j,
+                                         int k) noexcept -> amrex::GpuTuple<long long, long long> {
                         int val = fab(i, j, k);
                         int nbr = fab(i + od0, j + od1, k + od2);
                         long long fc =

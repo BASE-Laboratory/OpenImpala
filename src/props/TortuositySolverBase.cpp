@@ -43,8 +43,7 @@ TortuositySolverBase::TortuositySolverBase(const amrex::Geometry& geom, const am
                                            const amrex::Real vf, const int phase,
                                            const OpenImpala::Direction dir,
                                            const std::string& resultspath, const amrex::Real vlo,
-                                           const amrex::Real vhi, int verbose,
-                                           bool write_plotfile)
+                                           const amrex::Real vhi, int verbose, bool write_plotfile)
     : m_geom(geom), m_ba(ba), m_dm(dm),
       m_mf_phase(ba, dm, mf_phase_input.nComp(), mf_phase_input.nGrow()), m_phase(phase), m_vf(vf),
       m_dir(dir), m_vlo(vlo), m_vhi(vhi), m_resultspath(resultspath),
@@ -239,17 +238,16 @@ void TortuositySolverBase::globalFluxes() {
         if (!lobox_face.isEmpty()) {
             flux_reduce_op.eval(
                 lobox_face, flux_reduce_data,
-                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                    -> amrex::GpuTuple<amrex::Real, amrex::Real> {
+                [=] AMREX_GPU_DEVICE(int i, int j,
+                                     int k) noexcept -> amrex::GpuTuple<amrex::Real, amrex::Real> {
                     amrex::IntVect iv(i, j, k);
                     if (mask(iv) == cell_active) {
                         amrex::IntVect iv_inner = iv + sh;
                         if (mask(iv_inner) == cell_active) {
                             amrex::Real D_bnd = dc(iv);
                             amrex::Real D_inn = dc(iv_inner);
-                            amrex::Real D_face = (D_bnd + D_inn > 0.0)
-                                                     ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn)
-                                                     : 0.0;
+                            amrex::Real D_face =
+                                (D_bnd + D_inn > 0.0) ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn) : 0.0;
                             amrex::Real grad = (soln(iv_inner) - soln(iv)) / dxd;
                             return {-D_face * grad, 0.0};
                         }
@@ -265,17 +263,16 @@ void TortuositySolverBase::globalFluxes() {
         if (!hibox_face.isEmpty()) {
             flux_reduce_op.eval(
                 hibox_face, flux_reduce_data,
-                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                    -> amrex::GpuTuple<amrex::Real, amrex::Real> {
+                [=] AMREX_GPU_DEVICE(int i, int j,
+                                     int k) noexcept -> amrex::GpuTuple<amrex::Real, amrex::Real> {
                     amrex::IntVect iv(i, j, k);
                     if (mask(iv) == cell_active) {
                         amrex::IntVect iv_inner = iv - sh;
                         if (mask(iv_inner) == cell_active) {
                             amrex::Real D_bnd = dc(iv);
                             amrex::Real D_inn = dc(iv_inner);
-                            amrex::Real D_face = (D_bnd + D_inn > 0.0)
-                                                     ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn)
-                                                     : 0.0;
+                            amrex::Real D_face =
+                                (D_bnd + D_inn > 0.0) ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn) : 0.0;
                             amrex::Real grad = (soln(iv) - soln(iv_inner)) / dxd;
                             return {0.0, -D_face * grad};
                         }
@@ -350,8 +347,7 @@ void TortuositySolverBase::computePlaneFluxes(const amrex::MultiFab& mf_soln) {
             if (mask(i, j, k) == cell_active && mask(si, sj, sk) == cell_active) {
                 amrex::Real D_lo = dc(i, j, k);
                 amrex::Real D_hi = dc(si, sj, sk);
-                amrex::Real D_face =
-                    (D_lo + D_hi > 0.0) ? 2.0 * D_lo * D_hi / (D_lo + D_hi) : 0.0;
+                amrex::Real D_face = (D_lo + D_hi > 0.0) ? 2.0 * D_lo * D_hi / (D_lo + D_hi) : 0.0;
                 amrex::Real grad = (soln(si, sj, sk) - soln(i, j, k)) / dx_dir;
                 amrex::Real flux = -D_face * grad * face_area_element;
                 amrex::IntVect iv(i, j, k);

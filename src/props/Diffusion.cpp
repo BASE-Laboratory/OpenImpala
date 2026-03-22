@@ -101,8 +101,8 @@ void runMicrostructureParams(const amrex::Geometry& geom, const amrex::BoxArray&
     // Always compute macro geometry (trivial)
     {
         std::string upper_profile_dir = profile_dir_str;
-        std::transform(upper_profile_dir.begin(), upper_profile_dir.end(), upper_profile_dir.begin(),
-                       ::toupper);
+        std::transform(upper_profile_dir.begin(), upper_profile_dir.end(),
+                       upper_profile_dir.begin(), ::toupper);
         int flow_dir_idx = 2; // default Z
         if (upper_profile_dir == "X")
             flow_dir_idx = 0;
@@ -317,8 +317,8 @@ void runHomogenization(const amrex::Geometry& geom, const amrex::BoxArray& ba,
                        const amrex::Box& domain_box, int phase_id,
                        OpenImpala::SolverType solver_type, const std::string& solver_str,
                        const std::filesystem::path& results_path,
-                       const OpenImpala::PhysicsConfig& physics_config,
-                       const std::string& filename, int verbose, bool write_plotfiles) {
+                       const OpenImpala::PhysicsConfig& physics_config, const std::string& filename,
+                       int verbose, bool write_plotfiles) {
     if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "\n--- Effective Diffusivity via Homogenization (Full Domain) ---\n";
     }
@@ -751,13 +751,12 @@ int main(int argc, char* argv[]) {
                     std::filesystem::create_directories(main_results_path);
                     if (main_verbose >= 1) {
                         amrex::Print()
-                            << "Created results directory: " << main_results_path.string()
-                            << "\n";
+                            << "Created results directory: " << main_results_path.string() << "\n";
                     }
                 }
             } catch (const std::filesystem::filesystem_error& e) {
-                amrex::Abort("Failed to create results directory '" +
-                             main_results_path.string() + "': " + e.what());
+                amrex::Abort("Failed to create results directory '" + main_results_path.string() +
+                             "': " + e.what());
             }
         }
         amrex::ParallelDescriptor::Barrier();
@@ -814,8 +813,8 @@ int main(int argc, char* argv[]) {
             if (main_calc_method == "homogenization") {
                 runHomogenization(img.geom, img.ba, img.dm, img.mf_phase, img.domain_box,
                                   main_phase_id, OpenImpala::parseSolverType(main_solver_str),
-                                  main_solver_str, main_results_path, physics_config,
-                                  main_filename, main_verbose, (main_write_plotfile != 0));
+                                  main_solver_str, main_results_path, physics_config, main_filename,
+                                  main_verbose, (main_write_plotfile != 0));
             } else if (main_calc_method == "flow_through") {
                 runFlowThrough(img.geom, img.ba, img.dm, img.mf_phase, img.domain_box,
                                main_phase_id, main_solver_str, main_results_path, physics_config,
