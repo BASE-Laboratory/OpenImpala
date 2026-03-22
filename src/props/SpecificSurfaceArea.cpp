@@ -41,7 +41,6 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
 
     for (amrex::MFIter mfi(m_mf); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();
-        const amrex::Box& vbx = mfi.validbox();
         const auto& fab = m_mf.const_array(mfi, phase_comp);
 
         // Count total cells in padded interior
@@ -59,9 +58,10 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
             if (!check_bx.ok()) {
                 continue;
             }
-            // The +d neighbor must be in padded_domain and in the valid box
+            // The +d neighbor must be in padded_domain; clamp so cell+1 is also valid.
+            // The +d neighbor accesses a ghost cell at the FAB boundary, which is
+            // correctly filled via FillBoundary (asserted nGrow >= 1 above).
             int hi_limit = std::min(check_bx.bigEnd(d), padded_domain.bigEnd(d) - 1);
-            hi_limit = std::min(hi_limit, vbx.bigEnd(d) - 1);
             check_bx.setBig(d, hi_limit);
 
             if (check_bx.ok()) {
