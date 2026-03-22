@@ -162,15 +162,26 @@ void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFa
     bool changed_globally = true;
 
     // Device-accessible flag: 0 = no change, 1 = something changed
+    int h_changed = 0;
+    int* d_flag_ptr = nullptr;
+#ifdef AMREX_USE_GPU
     amrex::Gpu::DeviceScalar<int> d_changed(0);
+    d_flag_ptr = d_changed.dataPtr();
+#else
+    d_flag_ptr = &h_changed;
+#endif
 
     while (changed_globally && iter < max_flood_iter) {
         ++iter;
         reachabilityMask.FillBoundary(geom.periodicity());
 
         // Reset device flag
-        d_changed.setVal(0);
-        int* d_flag_ptr = d_changed.dataPtr();
+#ifdef AMREX_USE_GPU
+        d_changed = amrex::Gpu::DeviceScalar<int>(0);
+        d_flag_ptr = d_changed.dataPtr();
+#else
+        h_changed = 0;
+#endif
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
@@ -207,7 +218,11 @@ void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFa
         }
 
         // Read back the device flag
+#ifdef AMREX_USE_GPU
         changed_globally = (d_changed.dataValue() != 0);
+#else
+        changed_globally = (h_changed != 0);
+#endif
         amrex::ParallelDescriptor::ReduceBoolOr(changed_globally);
     }
 
