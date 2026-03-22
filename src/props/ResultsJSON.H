@@ -32,6 +32,7 @@
 
 #include "PhysicsConfig.H"
 
+#include <AMReX_SPACE.H>
 #include <nlohmann/json.hpp>
 
 #include <cmath>
