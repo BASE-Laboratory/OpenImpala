@@ -32,7 +32,17 @@
 
 #include "PhysicsConfig.H"
 
+#ifndef OPENIMPALA_UNIT_TEST
 #include <AMReX_SPACE.H>
+#else
+#ifndef AMREX_SPACEDIM
+#define AMREX_SPACEDIM 3
+#endif
+#ifndef AMREX_D_DECL
+#define AMREX_D_DECL(a, b, c) a, b, c
+#endif
+#endif
+
 #include <nlohmann/json.hpp>
 
 #include <cmath>
