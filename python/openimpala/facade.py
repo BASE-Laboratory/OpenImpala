@@ -113,10 +113,16 @@ def _parse_solver(s):
     The special value ``"auto"`` selects PCG — the optimal solver for
     single-phase steady-state diffusion (the Laplacian with harmonic-mean
     face coefficients is symmetric positive-definite).
+
+    The value ``"mlmg"`` selects the matrix-free AMReX MLMG solver,
+    which avoids explicit matrix assembly and uses less memory.
     """
     _core = _get_core()
     if isinstance(s, _core.SolverType):
         return s
+    # "mlmg" is handled as a special string, not a SolverType enum
+    if isinstance(s, str) and s.strip().lower() == "mlmg":
+        return "mlmg"
     solver_map = {
         "jacobi": _core.SolverType.Jacobi,
         "gmres": _core.SolverType.GMRES,
@@ -130,7 +136,7 @@ def _parse_solver(s):
     }
     key = s.strip().lower()
     if key not in solver_map:
-        raise ValueError(f"Unknown solver '{s}'. Options: {list(solver_map)}")
+        raise ValueError(f"Unknown solver '{s}'. Options: {list(solver_map) + ['mlmg']}")
     return solver_map[key]
 
 
@@ -277,10 +283,12 @@ def tortuosity(
     direction : str or Direction
         Flow direction ('x', 'y', 'z').
     solver : str or SolverType
-        HYPRE solver algorithm.  ``'auto'`` (default) selects PCG, which is
+        Solver algorithm.  ``'auto'`` (default) selects HYPRE PCG, which is
         optimal for the symmetric positive-definite single-phase diffusion
-        problem.  Other options: ``'flexgmres'``, ``'gmres'``, ``'bicgstab'``,
-        ``'pcg'``, ``'smg'``, ``'pfmg'``, ``'jacobi'``.
+        problem.  ``'mlmg'`` uses AMReX's native matrix-free geometric
+        multigrid (lower memory, no matrix assembly).  Other HYPRE options:
+        ``'flexgmres'``, ``'gmres'``, ``'bicgstab'``, ``'pcg'``, ``'smg'``,
+        ``'pfmg'``, ``'jacobi'``.
     max_grid_size : int or str
         AMReX box decomposition size.  ``'auto'`` picks a value based on the
         domain dimensions.
@@ -312,15 +320,19 @@ def tortuosity(
     vf_calc = _core.VolumeFraction(img, phase, 0)
     vf_val = vf_calc.value_vf()
 
-    # Construct the solver — TortuosityHypre internally runs a flood-fill
-    # to build its activity mask.  We deliberately skip the separate
-    # PercolationCheck call that was here previously: it performed the
-    # *same* flood-fill algorithm, so removing it halves the pre-solve
-    # overhead (from 4 flood fills down to 2).
-    solver_obj = _core.TortuosityHypre(
-        img, vf_val, phase, d, st, results_path,
-        0.0, 1.0, verbose, False,
-    )
+    # Route to the appropriate solver backend
+    if st == "mlmg":
+        # Matrix-free AMReX MLMG solver — no HYPRE, lower memory
+        solver_obj = _core.TortuosityMLMG(
+            img, vf_val, phase, d, results_path,
+            0.0, 1.0, verbose, False,
+        )
+    else:
+        # HYPRE-based solver (PCG, FlexGMRES, etc.)
+        solver_obj = _core.TortuosityHypre(
+            img, vf_val, phase, d, st, results_path,
+            0.0, 1.0, verbose, False,
+        )
 
     # If no cells are reachable from both inlet and outlet, the constructor
     # sets active_volume_fraction = 0 and skips matrix setup.  Detect this
@@ -337,8 +349,9 @@ def tortuosity(
         raise ConvergenceError(str(exc)) from exc
 
     if not solver_obj.solver_converged:
+        solver_name = "MLMG" if st == "mlmg" else "HYPRE"
         raise ConvergenceError(
-            f"HYPRE solver did not converge after {solver_obj.iterations} "
+            f"{solver_name} solver did not converge after {solver_obj.iterations} "
             f"iterations (residual={solver_obj.residual_norm:.2e})"
         )
 

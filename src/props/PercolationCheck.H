@@ -59,12 +59,9 @@ public:
 private:
     void run(const amrex::iMultiFab& mf_phase, int phase_id, OpenImpala::Direction dir);
 
-    void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFab& phaseFab,
-                           int phaseID, const amrex::Vector<amrex::IntVect>& seedPoints);
-
-    const amrex::Geometry& m_geom;
-    const amrex::BoxArray& m_ba;
-    const amrex::DistributionMapping& m_dm;
+    amrex::Geometry m_geom;
+    amrex::BoxArray m_ba;
+    amrex::DistributionMapping m_dm;
     int m_verbose;
 
     bool m_percolates = false;

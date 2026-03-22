@@ -1,0 +1,25 @@
+# Diffusion.cpp Integration Test: HDF5 File Path
+#
+# Exercises the HDF5 reader branch in Diffusion.cpp.
+# Uses the same sample data in HDF5 format.
+
+filename = SampleData_2Phase_3d.hdf5
+data_path = ./data/
+results_path = ./tDiffusion_hdf5_results/
+hdf5_dataset = image
+threshold_val = 0.5
+phase_id = 1
+box_size = 32
+verbose = 1
+dry_run = 0
+write_plotfile = 0
+calculation_method = homogenization
+solver_type = FlexGMRES
+
+# --- Solver Controls ---
+hypre.maxiter = 500
+hypre.eps = 1e-9
+
+# --- Physics Configuration ---
+physics.type = diffusion
+physics.bulk_property = 1.0

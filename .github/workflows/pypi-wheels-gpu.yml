@@ -1,21 +1,21 @@
-name: Build and Publish OpenImpala Wheels
+name: "Build and Publish OpenImpala GPU Wheels (CUDA)"
 
 on:
   release:
     types:
       - published
-  workflow_dispatch: # Allows you to trigger it manually from the Actions tab for testing
+  workflow_dispatch:
 
 jobs:
-  build_wheels:
-    name: Build manylinux wheels on ubuntu-latest
+  build_gpu_wheels:
+    name: Build CUDA GPU wheels
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive # Fetches Catch2, nlohmann/json, or pybind11 if needed
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -25,50 +25,42 @@ jobs:
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel==2.16.5
 
-      # Cache the compiled C/C++ dependencies (HDF5, libtiff, HYPRE, AMReX)
-      # inside the manylinux container. cibuildwheel runs CIBW_BEFORE_ALL only
-      # once per container launch, so we tar /usr/local after the first build
-      # and restore it on subsequent runs to skip the ~5-minute dep compile.
-      - name: Cache native dependencies
+      # Cache the compiled GPU dependencies (HDF5, libtiff, HYPRE+CUDA, AMReX+CUDA)
+      # These take ~15-20 minutes to build from source with CUDA support.
+      - name: Cache native GPU dependencies
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v3
+          key: cibw-deps-gpu-cuda12-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v1
 
-      - name: Build wheels
+      - name: Build GPU wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
-          # Target modern 64-bit Python versions
           CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-*"
           CIBW_SKIP: "*musllinux* *i686*"
           CIBW_ARCHS_LINUX: "x86_64"
 
-          # Explicitly use AlmaLinux 8 (matches your Rocky 8 environment)
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          # Use NVIDIA's CUDA-enabled manylinux image (CUDA 12.6, AlmaLinux 8)
+          # This provides nvcc, CUDA runtime, and cuBLAS/cuSPARSE out of the box.
+          CIBW_MANYLINUX_X86_64_IMAGE: sameli/manylinux_2_28_x86_64_cuda_12.6
 
-          # Install all build dependencies inside the manylinux container.
-          # Key points:
-          #   - gcc-gfortran is explicitly installed for Fortran kernel compilation
-          #   - HDF5 and libtiff are built from source as static libraries so they
-          #     get linked into the wheel without auditwheel needing to vendor them
-          #   - HYPRE is built static (--enable-shared=no)
-          #   - AMReX is built static (-DBUILD_SHARED_LIBS=OFF)
-          # Install system packages, then restore cached deps or build from source.
-          # The cache tarball (.cibw-deps-cache/deps.tar.gz) is mounted into the
-          # container via the project bind-mount. On cache hit we just untar it;
-          # on miss we build everything and create the tarball for next time.
+          # Build all dependencies with CUDA support.
+          # HDF5 and libtiff are CPU-only (no GPU path needed).
+          # HYPRE is built with --with-cuda for GPU-accelerated solves.
+          # AMReX is built with -DAMReX_GPU_BACKEND=CUDA for device kernels.
           CIBW_BEFORE_ALL_LINUX: >
             dnf install -y epel-release &&
             dnf --enablerepo=powertools install -y
             openmpi-devel gcc-gfortran gcc-c++ wget git
             zlib-devel libjpeg-turbo-devel python3-pip &&
             pip3 install "cmake>=3.28,<4" &&
-            export PATH=/usr/lib64/openmpi/bin:$PATH &&
+            export PATH=/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH &&
+            export CUDA_HOME=/usr/local/cuda &&
             if [ -f /project/.cibw-deps-cache/deps.tar.gz ]; then
-            echo "=== Restoring cached dependencies ===" &&
+            echo "=== Restoring cached GPU dependencies ===" &&
             tar xzf /project/.cibw-deps-cache/deps.tar.gz -C / ;
             else
-            echo "=== Building dependencies from source ===" &&
+            echo "=== Building GPU dependencies from source ===" &&
             wget -q https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.6/hdf5-1.14.6.tar.gz &&
             tar xzf hdf5-1.14.6.tar.gz &&
             cd hdf5-1.14.6 &&
@@ -96,9 +88,11 @@ jobs:
             wget -q https://github.com/hypre-space/hypre/archive/v2.31.0.tar.gz &&
             tar xzf v2.31.0.tar.gz &&
             cd hypre-2.31.0/src &&
-            ./configure --prefix=/usr/local --with-MPI --enable-shared=no
+            ./configure --prefix=/usr/local --with-MPI --with-cuda
+            --with-cuda-home=/usr/local/cuda --enable-shared=no
             CC=mpicc CXX=mpicxx FC=mpif90
-            CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" FFLAGS="-O2 -fPIC" &&
+            CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" FFLAGS="-O2 -fPIC"
+            CUDA_HOME=/usr/local/cuda &&
             make -j$(nproc) &&
             make install &&
             cd ../.. &&
@@ -112,29 +106,30 @@ jobs:
             -DAMReX_SPACEDIM=3
             -DAMReX_FORTRAN=ON
             -DAMReX_PARTICLES=OFF
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON &&
+            -DAMReX_GPU_BACKEND=CUDA
+            -DAMReX_CUDA_ARCH=60;70;75;80;86;89;90
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+            -DCMAKE_CUDA_ARCHITECTURES="60;70;75;80;86;89;90" &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
             mkdir -p /project/.cibw-deps-cache &&
             tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
             fi
 
-          # Ensure each Python version has cmake >= 3.28 (needed by AMReX)
           CIBW_BEFORE_BUILD: pip install "cmake>=3.28,<4"
 
-          # Point scikit-build-core to our newly compiled dependencies and MPI compilers.
+          # Point to MPI, CUDA, and our compiled GPU dependencies.
           CIBW_ENVIRONMENT_LINUX: >
-            PATH="/usr/lib64/openmpi/bin:$PATH"
+            PATH="/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH"
+            CUDA_HOME="/usr/local/cuda"
             CMAKE_C_COMPILER="mpicc"
             CMAKE_CXX_COMPILER="mpicxx"
-            CMAKE_Fortran_COMPILER="mpif90"
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
+            CMAKE_ARGS="-DGPU_BACKEND=CUDA -DCMAKE_CUDA_ARCHITECTURES=60;70;75;80;86;89;90"
 
-          # Vendor libraries into the wheel, but exclude host-specific MPI and
-          # runtime libraries that users must provide on their system.
-          # With all C/C++ deps statically linked, the only external shared libs
-          # left are MPI, OpenMP runtime (libgomp), and Fortran runtime.
+          # Vendor libraries but exclude host-specific MPI, OpenMP, Fortran runtime,
+          # and CUDA runtime libraries (users must have CUDA toolkit installed).
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel}
             --exclude libmpi.so
@@ -152,18 +147,31 @@ jobs:
             --exclude libgomp.so.1
             --exclude libgfortran.so.5
             --exclude libquadmath.so.0
+            --exclude libcuda.so
+            --exclude libcuda.so.1
+            --exclude libcudart.so
+            --exclude libcudart.so.12
+            --exclude libcublas.so
+            --exclude libcublas.so.12
+            --exclude libcublasLt.so
+            --exclude libcublasLt.so.12
+            --exclude libcusparse.so
+            --exclude libcusparse.so.12
+            --exclude libcurand.so
+            --exclude libcurand.so.10
+            --exclude libnvJitLink.so
+            --exclude libnvJitLink.so.12
 
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cibw-wheels
+          name: cibw-wheels-gpu
           path: ./wheelhouse/*.whl
 
   publish_to_pypi:
-    name: Publish wheels to PyPI
-    needs: build_wheels
+    name: Publish GPU wheels to PyPI
+    needs: build_gpu_wheels
     runs-on: ubuntu-latest
-    # Required for PyPI's Trusted Publishing
     environment: pypi
     permissions:
       id-token: write
@@ -172,7 +180,7 @@ jobs:
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
         with:
-          name: cibw-wheels
+          name: cibw-wheels-gpu
           path: dist/
 
       - name: Publish to PyPI
