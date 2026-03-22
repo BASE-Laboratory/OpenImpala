@@ -199,8 +199,7 @@ public:
             const char* labels[AMREX_SPACEDIM] = {AMREX_D_DECL("X", "Y", "Z")};
             for (int r = 0; r < AMREX_SPACEDIM; ++r) {
                 for (int c = 0; c < AMREX_SPACEDIM; ++c) {
-                    std::string key =
-                        std::string(labels[r]) + std::string(labels[c]);
+                    std::string key = std::string(labels[r]) + std::string(labels[c]);
                     tensor_obj[key] = m_deff_tensor[r][c];
                 }
             }

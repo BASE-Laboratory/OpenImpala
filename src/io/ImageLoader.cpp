@@ -86,9 +86,8 @@ ImageData loadImage(const std::filesystem::path& filepath, const std::string& hd
         amrex::Copy(result.mf_phase, mf_temp, 0, 0, 1, 0);
 
     } else if (ext == ".raw") {
-        throw std::runtime_error(
-            "RAW format requires dimensions and data type at construction. "
-            "Use RawReader directly instead of ImageLoader for .raw files.");
+        throw std::runtime_error("RAW format requires dimensions and data type at construction. "
+                                 "Use RawReader directly instead of ImageLoader for .raw files.");
     } else {
         throw std::runtime_error("Unsupported file extension: " + ext +
                                  ". Supported: .tif, .tiff, .dat, .h5, .hdf5, .raw (via "

@@ -25,8 +25,8 @@
 namespace OpenImpala {
 
 void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_full,
-                 const amrex::DistributionMapping& dm_full,
-                 const amrex::iMultiFab& mf_phase_full, const REVConfig& config) {
+                 const amrex::DistributionMapping& dm_full, const amrex::iMultiFab& mf_phase_full,
+                 const REVConfig& config) {
     BL_PROFILE("OpenImpala::runREVStudy");
 
     const amrex::Box& domain_box_full = geom_full.Domain();
@@ -101,10 +101,10 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
             domain_rev.shift(-bx_rev.smallEnd());
 
             amrex::Geometry geom_rev;
-            amrex::RealBox rb_rev({AMREX_D_DECL(0.0, 0.0, 0.0)},
-                                  {AMREX_D_DECL(amrex::Real(domain_rev.length(0)),
-                                                amrex::Real(domain_rev.length(1)),
-                                                amrex::Real(domain_rev.length(2)))});
+            amrex::RealBox rb_rev(
+                {AMREX_D_DECL(0.0, 0.0, 0.0)},
+                {AMREX_D_DECL(amrex::Real(domain_rev.length(0)), amrex::Real(domain_rev.length(1)),
+                              amrex::Real(domain_rev.length(2)))});
             amrex::Array<int, AMREX_SPACEDIM> is_periodic = {AMREX_D_DECL(1, 1, 1)};
             geom_rev.define(domain_rev, &rb_rev, 0, is_periodic.data());
 

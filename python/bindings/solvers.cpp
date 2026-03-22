@@ -86,9 +86,9 @@ void init_solvers(py::module_& m) {
     // TortuosityMLMG
     // =========================================================================
     py::class_<TortuosityMLMG>(m, "TortuosityMLMG",
-                                "Matrix-free MLMG tortuosity solver using AMReX's native geometric "
-                                "multigrid.  Lower memory and faster setup than HYPRE for "
-                                "small/medium grids.")
+                               "Matrix-free MLMG tortuosity solver using AMReX's native geometric "
+                               "multigrid.  Lower memory and faster setup than HYPRE for "
+                               "small/medium grids.")
 
         .def(py::init([](std::shared_ptr<VoxelImage> img, amrex::Real vf, int phase,
                          OpenImpala::Direction dir, const std::string& results_path,
@@ -98,8 +98,7 @@ void init_solvers(py::module_& m) {
              }),
              py::arg("img"), py::arg("vf"), py::arg("phase"), py::arg("dir"),
              py::arg("results_path"), py::arg("vlo") = 0.0, py::arg("vhi") = 1.0,
-             py::arg("verbose") = 0, py::arg("write_plotfile") = false,
-             py::keep_alive<1, 2>())
+             py::arg("verbose") = 0, py::arg("write_plotfile") = false, py::keep_alive<1, 2>())
 
         .def(
             "value",

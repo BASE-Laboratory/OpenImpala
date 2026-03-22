@@ -28,8 +28,8 @@ namespace OpenImpala {
 
 /** @brief Preconditioner type for HYPRE Krylov solvers. */
 enum class PrecondType {
-    SMG,  /**< Semicoarsening multigrid — robust, good for anisotropic grids */
-    PFMG  /**< Parallel semicoarsening multigrid — more scalable for large problems */
+    SMG, /**< Semicoarsening multigrid — robust, good for anisotropic grids */
+    PFMG /**< Parallel semicoarsening multigrid — more scalable for large problems */
 };
 
 /** @brief Base class for HYPRE structured-grid solvers.
@@ -46,7 +46,8 @@ enum class PrecondType {
  */
 class HypreStructSolver {
 public:
-    /** @brief Virtual destructor. Cleans up HYPRE resources safely (guards against post-MPI_Finalize). */
+    /** @brief Virtual destructor. Cleans up HYPRE resources safely (guards against
+     * post-MPI_Finalize). */
     virtual ~HypreStructSolver();
 
     // Non-copyable
@@ -54,9 +55,15 @@ public:
     HypreStructSolver& operator=(const HypreStructSolver&) = delete;
 
     // --- Solver statistics getters ---
-    bool getSolverConverged() const { return m_converged; }
-    amrex::Real getFinalRelativeResidualNorm() const { return m_final_res_norm; }
-    int getSolverIterations() const { return m_num_iterations; }
+    bool getSolverConverged() const {
+        return m_converged;
+    }
+    amrex::Real getFinalRelativeResidualNorm() const {
+        return m_final_res_norm;
+    }
+    int getSolverIterations() const {
+        return m_num_iterations;
+    }
 
     // --- Static utilities ---
 
@@ -73,8 +80,8 @@ protected:
      *  constructors after initializing their physics-specific members.
      */
     HypreStructSolver(const amrex::Geometry& geom, const amrex::BoxArray& ba,
-                      const amrex::DistributionMapping& dm, SolverType solvertype,
-                      amrex::Real eps, int maxiter, int verbose);
+                      const amrex::DistributionMapping& dm, SolverType solvertype, amrex::Real eps,
+                      int maxiter, int verbose);
 
     // --- HYPRE setup methods (called by derived classes) ---
 

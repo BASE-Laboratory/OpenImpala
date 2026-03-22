@@ -25,14 +25,14 @@ namespace OpenImpala {
 
 /** @brief Configuration for an REV study. */
 struct REVConfig {
-    int num_samples = 3;                ///< Number of random sub-volumes per size
-    std::vector<int> sizes;             ///< Target sub-volume edge lengths
-    int phase_id = 1;                   ///< Phase ID to analyze
-    int box_size = 32;                  ///< Max AMReX box size
-    int verbose = 1;                    ///< Verbosity level
-    bool write_plotfiles = false;       ///< Write plotfiles for each chi_k solve
+    int num_samples = 3;          ///< Number of random sub-volumes per size
+    std::vector<int> sizes;       ///< Target sub-volume edge lengths
+    int phase_id = 1;             ///< Phase ID to analyze
+    int box_size = 32;            ///< Max AMReX box size
+    int verbose = 1;              ///< Verbosity level
+    bool write_plotfiles = false; ///< Write plotfiles for each chi_k solve
     SolverType solver_type = SolverType::FlexGMRES;
-    std::filesystem::path results_path; ///< Directory for output files
+    std::filesystem::path results_path;              ///< Directory for output files
     std::string csv_filename = "rev_study_Deff.csv"; ///< CSV output filename
 };
 
@@ -49,8 +49,8 @@ struct REVConfig {
  *  @param config          REV study configuration.
  */
 void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_full,
-                 const amrex::DistributionMapping& dm_full,
-                 const amrex::iMultiFab& mf_phase_full, const REVConfig& config);
+                 const amrex::DistributionMapping& dm_full, const amrex::iMultiFab& mf_phase_full,
+                 const REVConfig& config);
 
 } // namespace OpenImpala
 

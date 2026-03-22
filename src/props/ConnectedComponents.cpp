@@ -98,7 +98,7 @@ void ConnectedComponents::run(const amrex::iMultiFab& mf_phase, int phase_id) {
         // Use shared flood fill with a single-seed vector and custom label
         amrex::Vector<amrex::IntVect> seedVec = {seed};
         OpenImpala::parallelFloodFill(m_labels, mf_phase, phase_id, seedVec, m_geom, m_verbose,
-                                       label);
+                                      label);
     }
 
     if (m_verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {

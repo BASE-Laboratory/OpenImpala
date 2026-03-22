@@ -27,11 +27,11 @@ namespace OpenImpala {
  *  physics calculations: geometry, grid decomposition, and phase field.
  */
 struct ImageData {
-    amrex::Box domain_box;              ///< Domain bounding box
-    amrex::Geometry geom;               ///< Geometry (periodic by default)
-    amrex::BoxArray ba;                 ///< Grid decomposition
-    amrex::DistributionMapping dm;      ///< MPI distribution
-    amrex::iMultiFab mf_phase;          ///< Phase field (1 component, 1 ghost cell)
+    amrex::Box domain_box;         ///< Domain bounding box
+    amrex::Geometry geom;          ///< Geometry (periodic by default)
+    amrex::BoxArray ba;            ///< Grid decomposition
+    amrex::DistributionMapping dm; ///< MPI distribution
+    amrex::iMultiFab mf_phase;     ///< Phase field (1 component, 1 ghost cell)
 };
 
 /** @brief Loads a 3D image from file and thresholds it into a binary phase field.

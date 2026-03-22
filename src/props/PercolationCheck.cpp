@@ -67,12 +67,12 @@ void PercolationCheck::run(const amrex::iMultiFab& mf_phase, int phase_id,
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "    PercolationCheck: Flood fill from inlet...\n";
     OpenImpala::parallelFloodFill(mf_reached_inlet, mf_phase, phase_id, inlet_seeds, m_geom,
-                                   m_verbose);
+                                  m_verbose);
 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "    PercolationCheck: Flood fill from outlet...\n";
     OpenImpala::parallelFloodFill(mf_reached_outlet, mf_phase, phase_id, outlet_seeds, m_geom,
-                                   m_verbose);
+                                  m_verbose);
 
     // Build active mask: cells reachable from BOTH inlet and outlet (GPU-compatible)
     amrex::iMultiFab mf_active_mask(m_ba, m_dm, 1, 0);

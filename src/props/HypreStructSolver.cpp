@@ -74,7 +74,8 @@ HypreStructSolver::~HypreStructSolver() {
 // ---------------------------------------------------------------------------
 void HypreStructSolver::setupGrid(bool periodic) {
     HYPRE_Int ierr = 0;
-    ierr = HYPRE_StructGridCreate(amrex::ParallelDescriptor::Communicator(), AMREX_SPACEDIM, &m_grid);
+    ierr =
+        HYPRE_StructGridCreate(amrex::ParallelDescriptor::Communicator(), AMREX_SPACEDIM, &m_grid);
     HYPRE_CHECK(ierr);
 
     for (int i = 0; i < m_ba.size(); ++i) {
@@ -157,7 +158,8 @@ void HypreStructSolver::createMatrixAndVectors() {
 
     HYPRE_Int ierr = 0;
 
-    ierr = HYPRE_StructMatrixCreate(amrex::ParallelDescriptor::Communicator(), m_grid, m_stencil, &m_A);
+    ierr = HYPRE_StructMatrixCreate(amrex::ParallelDescriptor::Communicator(), m_grid, m_stencil,
+                                    &m_A);
     HYPRE_CHECK(ierr);
 
     ierr = HYPRE_StructVectorCreate(amrex::ParallelDescriptor::Communicator(), m_grid, &m_b);

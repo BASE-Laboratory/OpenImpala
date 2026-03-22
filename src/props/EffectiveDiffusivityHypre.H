@@ -146,7 +146,6 @@ private:
 };
 
 
-
 } // namespace OpenImpala
 
 #endif // EFFECTIVEDIFFUSIVITYHYPRE_H
