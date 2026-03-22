@@ -11,6 +11,7 @@
 [![GitHub contributors](https://img.shields.io/github/contributors/BASE-Laboratory/OpenImpala)](https://github.com/BASE-Laboratory/OpenImpala/graphs/contributors)
 [![Build and Test Status](https://github.com/BASE-Laboratory/OpenImpala/actions/workflows/build-test.yml/badge.svg?branch=master)](https://github.com/BASE-Laboratory/OpenImpala/actions/workflows/build-test.yml)
 [![codecov](https://codecov.io/gh/BASE-Laboratory/OpenImpala/branch/master/graph/badge.svg)](https://codecov.io/gh/BASE-Laboratory/OpenImpala)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/02_digital_twin.ipynb)
 
 OpenImpala is a high-performance computing framework for image-based modelling, built upon the [AMReX library](https://github.com/AMReX-Codes/amrex) for massive parallelism using MPI. It tackles the challenge posed by large 3D imaging datasets (often billions of voxels) common in materials science and tomography.
 

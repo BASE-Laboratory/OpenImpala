@@ -19,9 +19,8 @@
 #include <HYPRE.h>
 #include <HYPRE_struct_ls.h>
 
-// Assuming OpenImpala::Direction is defined in a shared header like "Tortuosity.H" or a new
-// "Common.H"
-#include "Tortuosity.H" // Or your common enum definitions header
+#include "HypreStructSolver.H"
+#include "Tortuosity.H" // For OpenImpala::Direction, SolverType
 
 /** @file EffectiveDiffusivityHypre.H
  * @brief Defines a class to solve the cell problem for effective diffusivity calculation using
@@ -41,13 +40,11 @@ namespace OpenImpala {
  * The full effective diffusivity tensor D_eff calculation, which requires
  * all three χ_k fields, is intended to be performed outside this class.
  */
-class EffectiveDiffusivityHypre {
+class EffectiveDiffusivityHypre : public HypreStructSolver {
 
 public:
-    /** @brief Specifies the HYPRE structured solver algorithm to use.
-     *  (Identical to TortuosityHypre::SolverType, could be a shared enum)
-     */
-    enum class SolverType { Jacobi, GMRES, FlexGMRES, PCG, BiCGSTAB, SMG, PFMG };
+    /** @brief Alias for the shared HYPRE solver type enum (defined in Tortuosity.H). */
+    using SolverType = OpenImpala::SolverType;
 
     /** @brief Construct new solver for the effective diffusivity cell problem.
      *
@@ -73,8 +70,8 @@ public:
                               const SolverType solver_type, const std::string& resultspath,
                               int verbose_level = 1, bool write_plotfile_flag = false);
 
-    /** @brief Destructor. Cleans up allocated HYPRE resources. */
-    ~EffectiveDiffusivityHypre();
+    /** @brief Destructor. Base class handles HYPRE resource cleanup. */
+    ~EffectiveDiffusivityHypre() override = default;
 
     // Deleted Copy Operations
     EffectiveDiffusivityHypre(const EffectiveDiffusivityHypre&) = delete;
@@ -103,15 +100,9 @@ public:
 
 
     // --- Public Getters for Status and Solver Information ---
-    bool getSolverConverged() const {
-        return m_converged;
-    }
-    amrex::Real getFinalRelativeResidualNorm() const {
-        return m_final_res_norm;
-    }
-    int getSolverIterations() const {
-        return m_num_iterations;
-    }
+    // Solver statistics are inherited from HypreStructSolver:
+    //   getSolverConverged(), getFinalRelativeResidualNorm(), getSolverIterations()
+
     const amrex::iMultiFab& getActiveMask() const {
         return m_mf_active_mask;
     }
@@ -119,34 +110,29 @@ public:
         return m_mf_diff_coeff;
     }
 
-    // Static Helper Functions for HYPRE box conversion (can be shared if moved to a common utility)
-    static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> loV(const amrex::Box& b);
-    static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> hiV(const amrex::Box& b);
+    // Static Helper Functions (delegate to base class)
+    static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> loV(const amrex::Box& b) {
+        return HypreStructSolver::loV(b);
+    }
+    static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> hiV(const amrex::Box& b) {
+        return HypreStructSolver::hiV(b);
+    }
 
 
 private:
     // --- Private Methods ---
-    void setupGrids();
-    void setupStencil();
     void setupMatrixEquation();
     void generateActiveMask(); // Simpler version for D=0/1 based on phase_id
 
     // --- Member Variables ---
-    // Configuration
-    const SolverType m_solvertype;
+    // Configuration (solver config m_solvertype/m_eps/m_maxiter/m_verbose are in base class)
     std::string m_resultspath;
     const int m_phase_id;                    // Phase ID where D=D_material
     const OpenImpala::Direction m_dir_solve; // Direction k for current chi_k
-    amrex::Real m_eps;                       // Solver tolerance
-    int m_maxiter;                           // Max solver iterations
-    int m_verbose;
     bool m_write_plotfile;
     amrex::RealVect m_dx; // Cell sizes [dx, dy, dz]
 
-    // AMReX Data
-    const amrex::Geometry& m_geom;
-    const amrex::BoxArray& m_ba;
-    const amrex::DistributionMapping& m_dm;
+    // AMReX Data (m_geom/m_ba/m_dm are in base class)
     amrex::iMultiFab m_mf_phase_original; // Stores the input phase data
     amrex::iMultiFab m_mf_active_mask;    // Binary mask (1 for active phase, 0 otherwise)
     amrex::MultiFab m_mf_diff_coeff;      // Spatially varying transport coefficient D(x)
@@ -156,48 +142,9 @@ private:
     std::map<int, amrex::Real> m_phase_coeff_map; // Maps phase ID -> transport coefficient
     bool m_is_multi_phase = false;
 
-    // Solver Statistics
-    HYPRE_Int m_num_iterations;
-    amrex::Real m_final_res_norm;
-    bool m_converged;
-
-    // HYPRE Data Structures
-    HYPRE_StructGrid m_grid;
-    HYPRE_StructStencil m_stencil;
-    HYPRE_StructMatrix m_A;
-    HYPRE_StructVector m_b;
-    HYPRE_StructVector m_x; // Stores the solution chi_k
+    // Solver statistics and HYPRE Data Structures are in base class
 };
 
-
-// --- Fortran Interface Declaration ---
-// This will be for your new Fortran kernel for the cell problem
-extern "C" {
-/**
- * @brief Fills HYPRE matrix (A) and RHS (b) for the cell problem:
- *        ∇_ξ ⋅ (D ∇_ξ χ_k) = -∇_ξ ⋅ (D ê_k)
- * @param a Output buffer for matrix stencil coefficients.
- * @param rhs Output buffer for RHS values.
- * @param xinit Output buffer for initial guess of chi_k (typically zero).
- * @param npts_valid Number of points in the valid_bx region to fill.
- * @param active_mask_ptr Pointer to the active_mask data (1 for D=D_material, 0 otherwise).
- * @param mask_lo Lower bounds of the active_mask FAB.
- * @param mask_hi Upper bounds of the active_mask FAB.
- * @param valid_bx_lo Lower bounds of the current valid region to fill.
- * @param valid_bx_hi Upper bounds of the current valid region to fill.
- * @param domain_lo Lower bounds of the overall simulation domain.
- * @param domain_hi Upper bounds of the overall simulation domain.
- * @param cell_sizes Array of cell sizes [dx, dy, dz].
- * @param dir_k Integer representing the direction of ê_k (0 for X, 1 for Y, 2 for Z).
- * @param verbose_level Verbosity level for debugging in Fortran.
- */
-void effdiff_fillmtx(amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, const int* npts_valid,
-                     const int* active_mask_ptr, const int* mask_lo, const int* mask_hi,
-                     const amrex::Real* diff_coeff_ptr, const int* dc_lo, const int* dc_hi,
-                     const int* valid_bx_lo, const int* valid_bx_hi, const int* domain_lo,
-                     const int* domain_hi, const amrex::Real* cell_sizes, const int* dir_k,
-                     const int* verbose_level);
-}
 
 
 } // namespace OpenImpala

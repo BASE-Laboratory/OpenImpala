@@ -2,7 +2,8 @@
 
 #include "TiffReader.H"
 #include "EffectiveDiffusivityHypre.H"
-#include "Tortuosity.H" // For OpenImpala::Direction enum
+#include "Tortuosity.H"
+#include "SolverConfig.H"
 
 #include <AMReX.H>
 #include <AMReX_ParmParse.H>
@@ -27,43 +28,6 @@
 #include <map>       // For std::map (multi-phase coefficient map)
 
 namespace { // Anonymous namespace for test-local helpers
-
-OpenImpala::Direction stringToDirection(const std::string& dir_str) {
-    std::string lower_dir_str = dir_str;
-    std::transform(lower_dir_str.begin(), lower_dir_str.end(), lower_dir_str.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    if (lower_dir_str == "x")
-        return OpenImpala::Direction::X;
-    if (lower_dir_str == "y")
-        return OpenImpala::Direction::Y;
-    if (lower_dir_str == "z")
-        return OpenImpala::Direction::Z;
-    amrex::Abort("Invalid direction string: " + dir_str + ". Use X, Y, or Z.");
-    return OpenImpala::Direction::X;
-}
-
-OpenImpala::EffectiveDiffusivityHypre::SolverType
-stringToSolverType(const std::string& solver_str) {
-    std::string lower_solver_str = solver_str;
-    std::transform(lower_solver_str.begin(), lower_solver_str.end(), lower_solver_str.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    if (lower_solver_str == "jacobi")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::Jacobi;
-    if (lower_solver_str == "gmres")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::GMRES;
-    if (lower_solver_str == "flexgmres")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::FlexGMRES;
-    if (lower_solver_str == "pcg")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::PCG;
-    if (lower_solver_str == "bicgstab")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::BiCGSTAB;
-    if (lower_solver_str == "smg")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::SMG;
-    if (lower_solver_str == "pfmg")
-        return OpenImpala::EffectiveDiffusivityHypre::SolverType::PFMG;
-    amrex::Abort("Invalid solver string: '" + solver_str + "'.");
-    return OpenImpala::EffectiveDiffusivityHypre::SolverType::GMRES;
-}
 
 void calculate_Deff_tensor_homogenization(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM],
                                           const amrex::MultiFab& mf_chi_x_in,
@@ -332,8 +296,7 @@ int main(int argc, char* argv[]) {
 
 
         // --- Actual Simulation Setup ---
-        OpenImpala::EffectiveDiffusivityHypre::SolverType solver_type =
-            stringToSolverType(solver_str);
+        OpenImpala::SolverType solver_type = OpenImpala::parseSolverType(solver_str);
         amrex::Geometry geom_main_sim;
         amrex::BoxArray ba_main_sim;
         amrex::DistributionMapping dm_main_sim;

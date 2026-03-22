@@ -1,6 +1,7 @@
 #ifndef TortuosityHypre_H
 #define TortuosityHypre_H
 
+#include <memory> // Needed for std::unique_ptr
 #include <string> // Needed for std::string
 #include <vector> // Needed for Vector<IntVect> in helper functions
 #include <limits> // Needed for std::numeric_limits
@@ -18,7 +19,9 @@
 #include <HYPRE.h>           // Main HYPRE header
 #include <HYPRE_struct_ls.h> // Struct interface header (should provide HYPRE_Int)
 
-#include "Tortuosity.H" // Assumed to define OpenImpala::Tortuosity and OpenImpala::Direction
+#include "BoundaryCondition.H"
+#include "HypreStructSolver.H"
+#include "Tortuosity.H" // Defines OpenImpala::Tortuosity and OpenImpala::Direction
 
 /** @file TortuosityHypre.H
  * @brief Defines a class to compute tortuosity using HYPRE solvers.
@@ -31,22 +34,16 @@ namespace OpenImpala {
  * Solves a diffusion equation (-Div(Grad(phi)) = 0 with Dirichlet BCs)
  * on a masked subset of the domain derived from phase data, using HYPRE's
  * structured-grid solvers (PFMG, SMG, Krylov methods) to find the potential field.
- * Tortuosity is calculated from the resulting flux and **active** volume fraction, // <-- Doc
- * update including checks for solver convergence and flux conservation.
+ * Tortuosity is calculated from the resulting flux and **active** volume fraction,
+ * including checks for solver convergence and flux conservation.
+ *
+ * Inherits HYPRE grid/stencil/solver infrastructure from HypreStructSolver.
  */
-class TortuosityHypre : public OpenImpala::Tortuosity {
+class TortuosityHypre : public OpenImpala::Tortuosity, public HypreStructSolver {
 
 public:
-    /** @brief Specifies the HYPRE structured solver algorithm to use. */
-    enum class SolverType {
-        Jacobi,    /**< HYPRE_StructJacobi */
-        GMRES,     /**< HYPRE_StructGMRES */
-        FlexGMRES, /**< HYPRE_StructFlexGMRES */
-        PCG,       /**< HYPRE_StructPCG */
-        BiCGSTAB,  /**< HYPRE_StructBiCGSTAB */
-        SMG,       /**< HYPRE_StructSMG */
-        PFMG       /**< HYPRE_StructPFMG */
-    };
+    /** @brief Alias for the shared HYPRE solver type enum (defined in Tortuosity.H). */
+    using SolverType = OpenImpala::SolverType;
 
     /** Construct new Tortuosity solver using HYPRE.
      *
@@ -56,7 +53,7 @@ public:
      * @param mf_phase_input Input iMultiFab containing phase IDs (expects 1 component, >=1 ghost
      * cell).
      * @param vf Volume fraction of the phase of interest (*total* VF, passed for potential
-     * reference). // <-- Doc update
+     * reference).
      * @param phase Phase ID to calculate tortuosity for.
      * @param dir Direction across which to apply potential difference (X, Y, or Z).
      * @param solvertype Solver type to use (from SolverType enum).
@@ -76,8 +73,8 @@ public:
                     const amrex::Real vlo = 0.0, const amrex::Real vhi = 1.0, int verbose = 0,
                     bool write_plotfile = false);
 
-    /** Destructor. Cleans up allocated HYPRE resources. */
-    virtual ~TortuosityHypre() override;
+    /** Destructor. Base class handles HYPRE resource cleanup. */
+    virtual ~TortuosityHypre() override = default;
 
     // Deleted Copy Operations
     TortuosityHypre(const TortuosityHypre&) = delete;
@@ -88,58 +85,41 @@ public:
      * Solves the underlying diffusion equation using HYPRE if not already solved
      * or if refresh is requested. Checks solver convergence and flux conservation.
      * Calculates flux and computes tortuosity using the average flux magnitude
-     * and the *active* volume fraction if checks pass.                    // <-- Doc update
+     * and the *active* volume fraction if checks pass.
      * Returns NaN if the solver fails to converge, if flux is not conserved,
      * or if calculation leads to invalid states (e.g., zero active VF or Deff).
      *
      * @param refresh If true, forces recalculation by running the solver again. Default false.
-     * @return Tortuosity value (ActiveVF / (Deff/D0)), or NaN on failure. // <-- Doc update
+     * @return Tortuosity value (ActiveVF / (Deff/D0)), or NaN on failure.
      */
     amrex::Real value(const bool refresh = false) override;
 
     /**
      * @brief Performs mathematical checks on the assembled HYPRE matrix and RHS vector.
-     * @details Iterates over local cells, retrieves matrix/vector values using HYPRE
-     * functions, and verifies properties like NaN/Inf absence, expected diagonal
-     * values based on cell activity/BCs, and row sums for interior nodes.
-     * Intended for use in testing/debugging *after* object construction but *before* calling
-     * value() or solve().
      * @return True if all checks pass on all ranks, False otherwise.
      */
     bool checkMatrixProperties();
 
     // --- Public Getters for Status and Results ---
-    bool getSolverConverged() const {
-        return m_converged;
-    }
-    amrex::Real getFinalRelativeResidualNorm() const {
-        return m_final_res_norm;
-    }
-    int getSolverIterations() const {
-        return m_num_iterations;
-    }
+    // Solver statistics are inherited from HypreStructSolver:
+    //   getSolverConverged(), getFinalRelativeResidualNorm(), getSolverIterations()
+
     amrex::Real getFluxIn() const {
         return m_flux_in;
     }
     amrex::Real getFluxOut() const {
         return m_flux_out;
     }
-    // --- ADDED Getter for Active VF ---
     amrex::Real getActiveVolumeFraction() const {
         return m_active_vf;
     }
-    // --- END ADD ---
 
-    /** @brief Returns the per-plane flux profile computed after solving.
-     *  Element i holds the total flux through the face between cell-plane i and i+1
-     *  in the flow direction.  The vector has (N-1) entries where N is the number
-     *  of cells in the flow direction.  Empty until value() has been called. */
+    /** @brief Returns the per-plane flux profile computed after solving. */
     const std::vector<amrex::Real>& getPlaneFluxes() const {
         return m_plane_fluxes;
     }
 
-    /** @brief Maximum relative deviation across interior plane fluxes.
-     *  Defined as max(|F_i - F_mean|) / |F_mean|.  Returns 0 if not yet computed. */
+    /** @brief Maximum relative deviation across interior plane fluxes. */
     amrex::Real getPlaneFluxMaxDeviation() const {
         return m_plane_flux_max_dev;
     }
@@ -154,46 +134,53 @@ public:
         return m_phase_coeff_map;
     }
 
+    /** @brief Returns the inlet/outlet BC type. */
+    BCType getInletOutletBCType() const {
+        return m_bc_inlet_outlet_type;
+    }
+    /** @brief Returns the lateral (sides) BC type. */
+    BCType getSidesBCType() const {
+        return m_bc_sides_type;
+    }
 
-    // Static Helper Functions
-    static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> loV(const amrex::Box& b);
-    static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> hiV(const amrex::Box& b);
+    // Static Helper Functions (delegate to base class)
+    static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> loV(const amrex::Box& b) {
+        return HypreStructSolver::loV(b);
+    }
+    static amrex::Array<HYPRE_Int, AMREX_SPACEDIM> hiV(const amrex::Box& b) {
+        return HypreStructSolver::hiV(b);
+    }
 
 
 private:
     // --- Private Methods ---
     bool solve();
-    void setupGrids();
-    void setupStencil();
     void setupMatrixEquation();
     void preconditionPhaseFab();
     void generateActivityMask(const amrex::iMultiFab& phaseFab, int phaseID,
                               OpenImpala::Direction dir);
-    void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFab& phaseFab,
-                           int phaseID, const amrex::Vector<amrex::IntVect>& seedPoints);
     void getSolution(amrex::MultiFab& soln, int ncomp = 0); // Not implemented
     void getCellTypes(amrex::MultiFab& phi, int ncomp = 1); // Not implemented
     void global_fluxes();
     void computePlaneFluxes(const amrex::MultiFab& mf_soln);
 
     // --- Member Variables ---
-    // Configuration
-    const SolverType m_solvertype;
+    // Configuration (solver config m_solvertype/m_eps/m_maxiter/m_verbose are in base class)
     std::string m_resultspath;
     const int m_phase;
     const OpenImpala::Direction m_dir;
-    const amrex::Real m_vlo;
-    const amrex::Real m_vhi;
-    amrex::Real m_eps;
-    int m_maxiter;
-    int m_verbose;
+    amrex::Real m_vlo;
+    amrex::Real m_vhi;
     const amrex::Real m_vf; // Original total VF (kept for reference if needed)
     bool m_write_plotfile;
 
-    // AMReX Data
-    const amrex::Geometry& m_geom;
-    const amrex::BoxArray& m_ba;
-    const amrex::DistributionMapping& m_dm;
+    // Boundary condition configuration
+    BCType m_bc_inlet_outlet_type = BCType::DirichletExternal;
+    BCType m_bc_sides_type = BCType::Neumann;
+    std::unique_ptr<BoundaryCondition> m_bc_inlet_outlet;
+    std::unique_ptr<BoundaryCondition> m_bc_sides;
+
+    // AMReX Data (m_geom/m_ba/m_dm are in base class)
     amrex::iMultiFab m_mf_phase;
     amrex::MultiFab m_mf_phi;
     amrex::iMultiFab m_mf_active_mask;
@@ -207,46 +194,17 @@ private:
     amrex::Real m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
     bool m_first_call = true;
 
-    // Solver Statistics and Results
-    HYPRE_Int m_num_iterations = -1;
-    amrex::Real m_final_res_norm = std::numeric_limits<amrex::Real>::quiet_NaN();
-    bool m_converged = false;
+    // Results (solver stats m_num_iterations/m_final_res_norm/m_converged are in base class)
     amrex::Real m_flux_in = 0.0;
     amrex::Real m_flux_out = 0.0;
-    // --- ADDED: Active Volume Fraction ---
     amrex::Real m_active_vf = 0.0; // Volume fraction of the percolating phase
-    // --- END ADD ---
 
     // Interior plane flux profile (one entry per inter-cell face along flow direction)
     std::vector<amrex::Real> m_plane_fluxes;
     amrex::Real m_plane_flux_max_dev = 0.0; ///< max |F_i - F_mean| / |F_mean|
 
-
-    // HYPRE Data Structures
-    HYPRE_StructGrid m_grid = nullptr;
-    HYPRE_StructStencil m_stencil = nullptr;
-    HYPRE_StructMatrix m_A = nullptr;
-    HYPRE_StructVector m_b = nullptr;
-    HYPRE_StructVector m_x = nullptr;
+    // HYPRE Data Structures are in base class (m_grid, m_stencil, m_A, m_b, m_x)
 };
-
-
-// --- Fortran Interface Declarations ---
-// (Remain the same as in your provided file)
-extern "C" {
-void tortuosity_fillmtx(amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, const int* nval,
-                        const int* p, const int* p_lo, const int* p_hi, const int* active_mask,
-                        const int* mask_lo, const int* mask_hi, const amrex::Real* diff_coeff,
-                        const int* dc_lo, const int* dc_hi, const int* bxlo, const int* bxhi,
-                        const int* domlo, const int* domhi, const amrex::Real* dxinv,
-                        const amrex::Real* vlo, const amrex::Real* vhi, const int* phase_unused,
-                        const int* dir, const int* debug_print_level);
-
-void tortuosity_remspot(int* q, const int* q_lo, const int* q_hi, const int* ncomp, const int* bxlo,
-                        const int* bxhi, const int* domlo, const int* domhi);
-
-// Add others if needed...
-}
 
 
 } // namespace OpenImpala

@@ -44,11 +44,11 @@ public:
     /** @brief Deleted copy assignment operator (due to reference member). */
     VolumeFraction& operator=(const VolumeFraction&) = delete;
 
-    /** @brief Default move constructor. */
-    VolumeFraction(VolumeFraction&&) = default;
+    /** @brief Deleted move constructor. */
+    VolumeFraction(VolumeFraction&&) = delete;
 
-    /** @brief Default move assignment operator. */
-    VolumeFraction& operator=(VolumeFraction&&) = default;
+    /** @brief Deleted move assignment operator. */
+    VolumeFraction& operator=(VolumeFraction&&) = delete;
 
     /** @brief Default virtual destructor (safer if inherited from). */
     virtual ~VolumeFraction() = default;

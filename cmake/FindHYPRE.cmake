@@ -7,6 +7,7 @@
 #
 # The following variables influence the search:
 #   HYPRE_ROOT / HYPRE_HOME / ENV{HYPRE_HOME}
+#   GPU_BACKEND (from parent CMakeLists.txt) — selects GPU variant if available
 #
 # This module defines:
 #   HYPRE_FOUND        - True if HYPRE was found
@@ -28,9 +29,21 @@ find_path(HYPRE_INCLUDE_DIR
     PATH_SUFFIXES include
 )
 
+# When a GPU backend is enabled, try the GPU-specific HYPRE library first.
+# HYPRE builds with --with-cuda produce libHYPRE.so that is GPU-enabled,
+# but some installations provide a separate libHYPRE_cuda or libHYPRE_hip.
+set(_hypre_lib_names HYPRE)
+if(DEFINED GPU_BACKEND)
+    if(GPU_BACKEND STREQUAL "CUDA")
+        list(PREPEND _hypre_lib_names HYPRE_cuda)
+    elseif(GPU_BACKEND STREQUAL "HIP")
+        list(PREPEND _hypre_lib_names HYPRE_hip)
+    endif()
+endif()
+
 # Look for the library
 find_library(HYPRE_LIBRARY
-    NAMES HYPRE
+    NAMES ${_hypre_lib_names}
     HINTS
         ${HYPRE_ROOT}
         ${HYPRE_HOME}
