@@ -31,7 +31,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-gpu-cuda12-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v1
+          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v1
 
       - name: Build GPU wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -42,7 +42,7 @@ jobs:
 
           # Use NVIDIA's CUDA-enabled manylinux image (CUDA 12.6, AlmaLinux 8)
           # This provides nvcc, CUDA runtime, and cuBLAS/cuSPARSE out of the box.
-          CIBW_MANYLINUX_X86_64_IMAGE: sameli/manylinux_2_28_x86_64_cuda_12.6
+          CIBW_MANYLINUX_X86_64_IMAGE: sameli/manylinux_2_34_x86_64_cuda_12.6
 
           # Build all dependencies with CUDA support.
           # HDF5 and libtiff are CPU-only (no GPU path needed).
@@ -50,7 +50,7 @@ jobs:
           # AMReX is built with -DAMReX_GPU_BACKEND=CUDA for device kernels.
           CIBW_BEFORE_ALL_LINUX: >
             dnf install -y epel-release &&
-            dnf --enablerepo=powertools install -y
+            dnf --enablerepo=crb install -y
             openmpi-devel gcc-gfortran gcc-c++ wget git
             zlib-devel libjpeg-turbo-devel python3-pip &&
             pip3 install "cmake>=3.28,<4" &&
