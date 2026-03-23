@@ -7,7 +7,7 @@
 # IO Library
 # ==============================================================================
 # Library sources (exclude test drivers that start with 't')
-add_library(openimpala_io OBJECT
+set(IO_SOURCES
     io/CathodeWrite.cpp
     io/DatReader.cpp
     io/HDF5Reader.cpp
@@ -15,6 +15,7 @@ add_library(openimpala_io OBJECT
     io/RawReader.cpp
     io/TiffReader.cpp
 )
+add_library(openimpala_io OBJECT ${IO_SOURCES})
 
 target_include_directories(openimpala_io PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/io
@@ -36,7 +37,7 @@ target_include_directories(openimpala_io PUBLIC
 # ==============================================================================
 # Props Library (C++ only — Fortran kernels migrated to native C++)
 # ==============================================================================
-add_library(openimpala_props OBJECT
+set(PROPS_SOURCES
     props/ConnectedComponents.cpp
     props/DeffTensor.cpp
     props/EffectiveDiffusivityHypre.cpp
@@ -53,6 +54,7 @@ add_library(openimpala_props OBJECT
     props/TortuositySolverBase.cpp
     props/VolumeFraction.cpp
 )
+add_library(openimpala_props OBJECT ${PROPS_SOURCES})
 
 target_include_directories(openimpala_props PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/props
@@ -100,6 +102,20 @@ target_include_directories(Diffusion PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/props
     ${HDF5_INCLUDE_DIRS}
 )
+
+# ==============================================================================
+# CUDA: compile all C++ sources as CUDA when GPU backend is enabled
+# ==============================================================================
+# AMReX headers use __host__/__device__ attributes (AMREX_GPU_HOST_DEVICE)
+# when built with CUDA. Any translation unit that includes AMReX headers must
+# therefore be compiled by nvcc. We achieve this by setting the LANGUAGE
+# property to CUDA on all .cpp source files.
+if(GPU_BACKEND STREQUAL "CUDA")
+    set_source_files_properties(
+        ${IO_SOURCES} ${PROPS_SOURCES} props/Diffusion.cpp
+        PROPERTIES LANGUAGE CUDA
+    )
+endif()
 
 # Install the main executable
 install(TARGETS Diffusion RUNTIME DESTINATION bin)
