@@ -21,7 +21,7 @@ find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
 find_package(pybind11 2.11 CONFIG REQUIRED)
 
 # --- Build the extension module ---
-pybind11_add_module(_core
+set(BINDING_SOURCES
     bindings/module.cpp
     bindings/enums.cpp
     bindings/io.cpp
@@ -29,6 +29,13 @@ pybind11_add_module(_core
     bindings/solvers.cpp
     bindings/config.cpp
 )
+pybind11_add_module(_core ${BINDING_SOURCES})
+
+# When CUDA is enabled, AMReX headers contain __host__/__device__ attributes
+# that require compilation by nvcc.
+if(GPU_BACKEND STREQUAL "CUDA")
+    set_source_files_properties(${BINDING_SOURCES} PROPERTIES LANGUAGE CUDA)
+endif()
 
 target_link_libraries(_core PRIVATE
     openimpala_io

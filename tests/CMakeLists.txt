@@ -29,6 +29,10 @@ set(OPENIMPALA_TEST_INCLUDES
 # Helper: define a test executable and register it with CTest.
 # If an inputs file exists in tests/inputs/<name>.inputs, it is passed as an argument.
 function(openimpala_add_test TEST_NAME SOURCE_FILE)
+    # When CUDA is enabled, AMReX headers require nvcc compilation
+    if(GPU_BACKEND STREQUAL "CUDA")
+        set_source_files_properties(${SOURCE_FILE} PROPERTIES LANGUAGE CUDA)
+    endif()
     add_executable(${TEST_NAME} ${SOURCE_FILE})
     target_link_libraries(${TEST_NAME} PRIVATE ${OPENIMPALA_TEST_LIBS})
     target_include_directories(${TEST_NAME} PRIVATE ${OPENIMPALA_TEST_INCLUDES})
