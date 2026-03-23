@@ -1,0 +1,21 @@
+# TortuosityMLMG Test: Y Direction
+#
+# Same as uniform test but in Y direction — validates directional symmetry.
+
+domain_size = 32
+box_size = 16
+verbose = 2
+num_phases_fill = 1
+direction = Y
+
+expected_tau = 0.96875
+tau_tolerance = 0.001
+
+resultsdir = ./tTortuosityMLMG_dirY_results
+
+mlmg.eps = 1e-9
+mlmg.maxiter = 200
+
+tortuosity.active_phases = 0
+tortuosity.phase_diffusivities = 1.0
+tortuosity.remspot_passes = 0
