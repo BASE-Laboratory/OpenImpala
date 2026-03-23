@@ -116,8 +116,8 @@ int main(int argc, char* argv[]) {
         std::unique_ptr<OpenImpala::TortuosityMLMG> tort;
         try {
             tort = std::make_unique<OpenImpala::TortuosityMLMG>(
-                geom, ba, dm, mf_phase, vf, 0 /* phase_id */, direction, resultsdir,
-                0.0 /* vlo */, 1.0 /* vhi */, verbose, false /* write_plotfile */);
+                geom, ba, dm, mf_phase, vf, 0 /* phase_id */, direction, resultsdir, 0.0 /* vlo */,
+                1.0 /* vhi */, verbose, false /* write_plotfile */);
         } catch (const std::exception& e) {
             test_passed = false;
             fail_reason = "TortuosityMLMG construction failed: " + std::string(e.what());
@@ -186,8 +186,8 @@ int main(int argc, char* argv[]) {
 
             if (!plane_fluxes.empty() && max_dev > plane_flux_tol) {
                 test_passed = false;
-                fail_reason = "Plane flux conservation failed. Max deviation: " +
-                              std::to_string(max_dev);
+                fail_reason =
+                    "Plane flux conservation failed. Max deviation: " + std::to_string(max_dev);
             } else if (verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << " Plane flux conservation:  PASS (" << plane_fluxes.size()
                                << " faces, max_dev=" << std::scientific << max_dev

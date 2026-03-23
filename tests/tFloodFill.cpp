@@ -157,7 +157,8 @@ int main(int argc, char* argv[]) {
             }
             amrex::ParallelAllReduce::Sum(reached, amrex::ParallelContext::CommunicatorSub());
 
-            long long expected_block_vol = static_cast<long long>(cube_size) * cube_size * cube_size;
+            long long expected_block_vol =
+                static_cast<long long>(cube_size) * cube_size * cube_size;
             if (reached != expected_block_vol) {
                 status.recordFail("Test 2 (partial flood): reached=" + std::to_string(reached) +
                                   ", expected=" + std::to_string(expected_block_vol));
@@ -205,9 +206,9 @@ int main(int argc, char* argv[]) {
             // Verify all outlet seeds have i=N-1
             for (const auto& s : outletSeeds) {
                 if (s[0] != N - 1) {
-                    status.recordFail("Test 3 (boundary seeds): outlet seed with i=" +
-                                      std::to_string(s[0]) + " (expected " + std::to_string(N - 1) +
-                                      ")");
+                    status.recordFail(
+                        "Test 3 (boundary seeds): outlet seed with i=" + std::to_string(s[0]) +
+                        " (expected " + std::to_string(N - 1) + ")");
                     break;
                 }
             }
@@ -263,8 +264,10 @@ int main(int argc, char* argv[]) {
                 const amrex::Box& bx = mfi.validbox();
                 const auto arr = mask.const_array(mfi);
                 amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
-                    if (arr(i, j, k, 0) == 1) count_1++;
-                    if (arr(i, j, k, 0) == 2) count_2++;
+                    if (arr(i, j, k, 0) == 1)
+                        count_1++;
+                    if (arr(i, j, k, 0) == 2)
+                        count_2++;
                 });
             }
             amrex::ParallelAllReduce::Sum(count_1, amrex::ParallelContext::CommunicatorSub());

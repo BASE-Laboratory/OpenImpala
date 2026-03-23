@@ -8,7 +8,7 @@ verbose = 2
 num_phases_fill = 1
 direction = Y
 
-expected_tau = 0.96875
+expected_tau = 1.0
 tau_tolerance = 0.001
 
 resultsdir = ./tTortuosityMLMG_dirY_results
