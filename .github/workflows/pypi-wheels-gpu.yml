@@ -116,7 +116,11 @@ jobs:
             tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
             fi
 
-          CIBW_BEFORE_BUILD: pip install "cmake>=3.28,<4"
+          # Rename the package to openimpala-cuda for the GPU wheel.
+          # The import name stays 'openimpala' — only the PyPI distribution name changes.
+          CIBW_BEFORE_BUILD: >
+            pip install "cmake>=3.28,<4" &&
+            sed -i 's/^name = "openimpala"/name = "openimpala-cuda"/' /project/pyproject.toml
 
           # Point to MPI, CUDA, and our compiled GPU dependencies.
           CIBW_ENVIRONMENT_LINUX: >
