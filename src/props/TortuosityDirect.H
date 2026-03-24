@@ -116,73 +116,15 @@ public:
     }
 
 
-private:
-    /** @brief Executes the iterative solver loop until convergence or max iterations. Returns true
-     * if converged. */
+    // --- Implementation methods (public for CUDA __device__ lambda compatibility) ---
     bool solve();
-
-    /**
-     * @brief Computes the global fluxes entering and exiting the domain boundaries.
-     * Expected to be called after solve() has successfully completed.
-     * @param fxin Output: Total flux entering the domain through the low boundary face.
-     * @param fxout Output: Total flux exiting the domain through the high boundary face.
-     */
     void global_fluxes(amrex::Real& fxin, amrex::Real& fxout) const;
-
-    /**
-     * @brief Computes a residual norm (e.g., L1 norm of change) between two solution states.
-     * Used as a convergence check in the iterative solver.
-     * @param phiold MultiFab containing the solution from the previous iteration.
-     * @param phinew MultiFab containing the solution from the current iteration.
-     * @return The calculated residual norm.
-     */
     amrex::Real residual(const amrex::MultiFab& phiold, const amrex::MultiFab& phinew) const;
-
-    /** @brief Sets up the m_bc member variable describing boundary condition types (e.g.,
-     * Dirichlet, Neumann). */
-    // void initializeBoundaryConditions() ; // FIX 2: Corrected spelling
-    void initializeBoundaryConditions(); // <<< FIX 2: Corrected spelling >>>
-
-    /** @brief Creates and initializes the m_flux MultiFab array for storing face fluxes. */
-    // void initializeFluxMultiFabs();    // FIX 2: Corrected spelling
-    void initializeFluxMultiFabs(); // <<< FIX 2: Corrected spelling >>>
-
-    /**
-     * @brief Applies boundary conditions to the ghost cells of the potential MultiFab for a
-     * specific component. Uses the geometry and m_bc settings. Primarily handles external
-     * Dirichlet.
-     * @param phi The MultiFab whose ghost cells need filling based on BCs.
-     * @param comp The component index to fill boundary conditions for.
-     */
+    void initializeBoundaryConditions();
+    void initializeFluxMultiFabs();
     void fillDomainBoundary(amrex::MultiFab& phi, int comp);
-
-
-    /**
-     * @brief Fills a component of a MultiFab with CellType information (e.g., 0=blocked, 1=free).
-     * Based on the input phase data (m_mf_phase).
-     * @param phi The MultiFab to fill (typically fills component comp_ct).
-     * Requires at least 2 components.
-     */
-    void fillCellTypes(amrex::MultiFab& phi); // Fills component comp_ct
-
-    /**
-     * @brief Sets the initial guess for the potential field (phi component).
-     * Often a linear interpolation between boundary values (m_vlo, m_vhi) in the specified
-     * direction.
-     * @param phi The MultiFab to fill with the initial state (modifies comp_phi).
-     */
-    void fillInitialState(amrex::MultiFab& phi); // Fills component comp_phi
-
-
-    /**
-     * @brief Performs one iteration of the Finite Volume solver (e.g., Jacobi, SOR).
-     * Calculates face fluxes (updates m_flux) based on phi_old.
-     * Updates the potential field phi_new based on conservation laws using calculated fluxes.
-     * @param phi_old Input: Potential field from the previous iteration (requires filled ghost
-     * cells).
-     * @param phi_new Output: Updated potential field for the current iteration.
-     * @param dt Timestep or relaxation parameter used in the update.
-     */
+    void fillCellTypes(amrex::MultiFab& phi);
+    void fillInitialState(amrex::MultiFab& phi);
     void advance(amrex::MultiFab& phi_old, amrex::MultiFab& phi_new, const amrex::Real& dt);
 
 
