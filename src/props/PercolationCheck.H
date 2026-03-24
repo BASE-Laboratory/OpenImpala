@@ -56,9 +56,10 @@ public:
     /** @brief Returns a human-readable direction string ("X", "Y", or "Z"). */
     static std::string directionString(OpenImpala::Direction dir);
 
-private:
+    // --- Implementation methods (public for CUDA __device__ lambda compatibility) ---
     void run(const amrex::iMultiFab& mf_phase, int phase_id, OpenImpala::Direction dir);
 
+private:
     amrex::Geometry m_geom;
     amrex::BoxArray m_ba;
     amrex::DistributionMapping m_dm;

@@ -112,7 +112,9 @@ public:
         return m_phase_coeff_map;
     }
 
-protected:
+    // --- Implementation methods (public for CUDA __device__ lambda compatibility) ---
+    // These methods contain GPU device lambdas and must be publicly accessible for nvcc.
+
     /** @brief Run the linear solver, populating m_mf_solution.
      *
      *  Subclasses must:
@@ -137,6 +139,7 @@ protected:
     void computePlaneFluxes(const amrex::MultiFab& mf_soln);
     void writeSolutionPlotfile(const std::string& label);
 
+protected:
     // --- Grid data (stored by value to avoid dangling references) ---
     amrex::Geometry m_geom;
     amrex::BoxArray m_ba;

@@ -152,8 +152,7 @@ public:
     }
 
 
-private:
-    // --- Private Methods ---
+    // --- Implementation methods (public for CUDA __device__ lambda compatibility) ---
     bool solve();
     void setupMatrixEquation();
     void preconditionPhaseFab();
@@ -164,6 +163,7 @@ private:
     void global_fluxes();
     void computePlaneFluxes(const amrex::MultiFab& mf_soln);
 
+private:
     // --- Member Variables ---
     // Configuration (solver config m_solvertype/m_eps/m_maxiter/m_verbose are in base class)
     std::string m_resultspath;
