@@ -155,6 +155,8 @@ public:
     // --- Implementation methods (public for CUDA __device__ lambda compatibility) ---
     bool solve();
     void setupMatrixEquation();
+    void initializeDiffCoeff();
+    amrex::iMultiFab buildTraversableMask();
     void preconditionPhaseFab();
     void generateActivityMask(const amrex::iMultiFab& phaseFab, int phaseID,
                               OpenImpala::Direction dir);

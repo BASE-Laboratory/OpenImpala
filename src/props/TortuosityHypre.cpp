@@ -216,32 +216,7 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor())
         amrex::Print() << "TortuosityHypre: Building diffusion coefficient field..." << std::endl;
     m_mf_diff_coeff.setVal(0.0);
-    // Flatten phase coefficient map to a device-accessible lookup table
-    {
-        int max_pid = 0;
-        for (const auto& kv : m_phase_coeff_map) {
-            max_pid = std::max(max_pid, kv.first);
-        }
-        amrex::Gpu::DeviceVector<amrex::Real> d_coeff_lut(max_pid + 1, 0.0);
-        amrex::Gpu::HostVector<amrex::Real> h_coeff_lut(max_pid + 1, 0.0);
-        for (const auto& kv : m_phase_coeff_map) {
-            h_coeff_lut[kv.first] = kv.second;
-        }
-        amrex::Gpu::copy(amrex::Gpu::hostToDevice, h_coeff_lut.begin(), h_coeff_lut.end(),
-                         d_coeff_lut.begin());
-        const amrex::Real* lut_ptr = d_coeff_lut.data();
-        const int lut_size = max_pid + 1;
-
-        for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-            const amrex::Box& bx = mfi.growntilebox();
-            amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
-            amrex::Array4<const int> const phase_arr = m_mf_phase.const_array(mfi);
-            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-                int pid = phase_arr(i, j, k, 0);
-                dc_arr(i, j, k, 0) = (pid >= 0 && pid < lut_size) ? lut_ptr[pid] : 0.0;
-            });
-        }
-    }
+    initializeDiffCoeff();
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
     // --- For multi-phase: create binary traversable mask for flood fill ---
@@ -252,19 +227,7 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
                        << std::endl;
 
     if (m_is_multi_phase) {
-        // Create a temporary binary phase fab: 1 where D > 0, 0 otherwise
-        amrex::iMultiFab mf_binary_traversable(m_ba, m_dm, 1, m_mf_phase.nGrow());
-        mf_binary_traversable.setVal(0);
-        for (amrex::MFIter mfi(mf_binary_traversable, amrex::TilingIfNotGPU()); mfi.isValid();
-             ++mfi) {
-            const amrex::Box& bx = mfi.growntilebox();
-            amrex::Array4<int> const trav_arr = mf_binary_traversable.array(mfi);
-            amrex::Array4<const amrex::Real> const dc_arr = m_mf_diff_coeff.const_array(mfi);
-            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-                trav_arr(i, j, k, 0) = (dc_arr(i, j, k, 0) > 0.0) ? 1 : 0;
-            });
-        }
-        mf_binary_traversable.FillBoundary(m_geom.periodicity());
+        amrex::iMultiFab mf_binary_traversable = buildTraversableMask();
         // Flood through all traversable cells (phase ID = 1 in binary fab)
         generateActivityMask(mf_binary_traversable, 1, m_dir);
     } else {
@@ -303,6 +266,48 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
 
 // Destructor is defaulted — HypreStructSolver base class handles HYPRE cleanup.
 
+void TortuosityHypre::initializeDiffCoeff() {
+    // Flatten phase coefficient map to a device-accessible lookup table
+    int max_pid = 0;
+    for (const auto& kv : m_phase_coeff_map) {
+        max_pid = std::max(max_pid, kv.first);
+    }
+    amrex::Gpu::DeviceVector<amrex::Real> d_coeff_lut(max_pid + 1, 0.0);
+    amrex::Gpu::HostVector<amrex::Real> h_coeff_lut(max_pid + 1, 0.0);
+    for (const auto& kv : m_phase_coeff_map) {
+        h_coeff_lut[kv.first] = kv.second;
+    }
+    amrex::Gpu::copy(amrex::Gpu::hostToDevice, h_coeff_lut.begin(), h_coeff_lut.end(),
+                     d_coeff_lut.begin());
+    const amrex::Real* lut_ptr = d_coeff_lut.data();
+    const int lut_size = max_pid + 1;
+
+    for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.growntilebox();
+        amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
+        amrex::Array4<const int> const phase_arr = m_mf_phase.const_array(mfi);
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            int pid = phase_arr(i, j, k, 0);
+            dc_arr(i, j, k, 0) = (pid >= 0 && pid < lut_size) ? lut_ptr[pid] : 0.0;
+        });
+    }
+}
+
+amrex::iMultiFab TortuosityHypre::buildTraversableMask() {
+    // Create a temporary binary phase fab: 1 where D > 0, 0 otherwise
+    amrex::iMultiFab mf_binary_traversable(m_ba, m_dm, 1, m_mf_phase.nGrow());
+    mf_binary_traversable.setVal(0);
+    for (amrex::MFIter mfi(mf_binary_traversable, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.growntilebox();
+        amrex::Array4<int> const trav_arr = mf_binary_traversable.array(mfi);
+        amrex::Array4<const amrex::Real> const dc_arr = m_mf_diff_coeff.const_array(mfi);
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            trav_arr(i, j, k, 0) = (dc_arr(i, j, k, 0) > 0.0) ? 1 : 0;
+        });
+    }
+    mf_binary_traversable.FillBoundary(m_geom.periodicity());
+    return mf_binary_traversable;
+}
 
 // setupGrid() and setupStencil() are now provided by HypreStructSolver base class.
 
