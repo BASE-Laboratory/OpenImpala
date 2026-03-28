@@ -54,6 +54,10 @@ public:
         return static_cast<int>(m_vf_profile.size());
     }
 
+    /** @brief Compute the profile (public for CUDA __device__ lambda compatibility). */
+    void compute(const amrex::Geometry& geom, const amrex::iMultiFab& mf_phase, int phase_id,
+                 OpenImpala::Direction dir, int comp);
+
 private:
     std::vector<amrex::Real> m_vf_profile;
 };
