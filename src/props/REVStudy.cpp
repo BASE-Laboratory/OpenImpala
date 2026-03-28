@@ -131,7 +131,7 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
                 const amrex::Box& dest_box = mfi.validbox();
                 amrex::Box src_box = dest_box;
                 src_box.shift(bx_rev.smallEnd());
-                dest_fab.copy(src_fab, src_box, 0, dest_box, 0, 1);
+                dest_fab.template copy<amrex::RunOn::Host>(src_fab, src_box, 0, dest_box, 0, 1);
             }
             mf_phase_rev.FillBoundary(geom_rev.periodicity());
 
