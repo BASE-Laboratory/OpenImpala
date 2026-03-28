@@ -99,6 +99,9 @@ public:
     void getChiSolution(amrex::MultiFab& chi_field);
 
 
+    // --- Public for CUDA __device__ lambda compatibility ---
+    void initializeDiffCoeff();
+
     // --- Public Getters for Status and Solver Information ---
     // Solver statistics are inherited from HypreStructSolver:
     //   getSolverConverged(), getFinalRelativeResidualNorm(), getSolverIterations()
@@ -122,7 +125,6 @@ public:
 private:
     // --- Private Methods ---
     void setupMatrixEquation();
-    void initializeDiffCoeff();
     void generateActiveMask(); // Simpler version for D=0/1 based on phase_id
 
     // --- Member Variables ---
