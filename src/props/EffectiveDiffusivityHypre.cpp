@@ -164,31 +164,7 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
 
     // Build coefficient MultiFab using a device-accessible lookup table
     m_mf_diff_coeff.setVal(0.0);
-    {
-        int max_pid = 0;
-        for (const auto& kv : m_phase_coeff_map) {
-            max_pid = std::max(max_pid, kv.first);
-        }
-        amrex::Gpu::DeviceVector<amrex::Real> d_coeff_lut(max_pid + 1, 0.0);
-        amrex::Gpu::HostVector<amrex::Real> h_coeff_lut(max_pid + 1, 0.0);
-        for (const auto& kv : m_phase_coeff_map) {
-            h_coeff_lut[kv.first] = kv.second;
-        }
-        amrex::Gpu::copy(amrex::Gpu::hostToDevice, h_coeff_lut.begin(), h_coeff_lut.end(),
-                         d_coeff_lut.begin());
-        const amrex::Real* lut_ptr = d_coeff_lut.data();
-        const int lut_size = max_pid + 1;
-
-        for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-            const amrex::Box& bx = mfi.growntilebox();
-            amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
-            amrex::Array4<const int> const phase_arr = m_mf_phase_original.const_array(mfi);
-            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-                int pid = phase_arr(i, j, k, 0);
-                dc_arr(i, j, k, 0) = (pid >= 0 && pid < lut_size) ? lut_ptr[pid] : 0.0;
-            });
-        }
-    }
+    initializeDiffCoeff();
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
     m_mf_active_mask.setVal(cell_inactive);
@@ -234,6 +210,32 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
 }
 
 // Destructor is defaulted in the header — base class handles HYPRE cleanup.
+
+void EffectiveDiffusivityHypre::initializeDiffCoeff() {
+    int max_pid = 0;
+    for (const auto& kv : m_phase_coeff_map) {
+        max_pid = std::max(max_pid, kv.first);
+    }
+    amrex::Gpu::DeviceVector<amrex::Real> d_coeff_lut(max_pid + 1, 0.0);
+    amrex::Gpu::HostVector<amrex::Real> h_coeff_lut(max_pid + 1, 0.0);
+    for (const auto& kv : m_phase_coeff_map) {
+        h_coeff_lut[kv.first] = kv.second;
+    }
+    amrex::Gpu::copy(amrex::Gpu::hostToDevice, h_coeff_lut.begin(), h_coeff_lut.end(),
+                     d_coeff_lut.begin());
+    const amrex::Real* lut_ptr = d_coeff_lut.data();
+    const int lut_size = max_pid + 1;
+
+    for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.growntilebox();
+        amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
+        amrex::Array4<const int> const phase_arr = m_mf_phase_original.const_array(mfi);
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            int pid = phase_arr(i, j, k, 0);
+            dc_arr(i, j, k, 0) = (pid >= 0 && pid < lut_size) ? lut_ptr[pid] : 0.0;
+        });
+    }
+}
 
 void EffectiveDiffusivityHypre::generateActiveMask() {
     BL_PROFILE("EffectiveDiffusivityHypre::generateActiveMask");
@@ -711,7 +713,8 @@ void EffectiveDiffusivityHypre::getChiSolution(amrex::MultiFab& chi_field) {
                                                             soln_buffer.data());
         if (get_ierr != 0) {
             amrex::Warning("HYPRE_StructVectorGetBoxValues failed during getChiSolution!");
-            chi_field[mfi].setVal(0.0, bx_getsol, ChiComp, numComponentsChi);
+            chi_field[mfi].setVal(0.0, bx_getsol, amrex::DestComp{ChiComp},
+                                   amrex::NumComps{numComponentsChi});
             continue;
         }
 

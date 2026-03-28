@@ -122,6 +122,7 @@ public:
 private:
     // --- Private Methods ---
     void setupMatrixEquation();
+    void initializeDiffCoeff();
     void generateActiveMask(); // Simpler version for D=0/1 based on phase_id
 
     // --- Member Variables ---
