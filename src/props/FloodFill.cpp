@@ -177,7 +177,10 @@ void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFa
 
         // Reset device flag
 #ifdef AMREX_USE_GPU
-        d_changed = amrex::Gpu::DeviceScalar<int>(0);
+        {
+            int zero = 0;
+            amrex::Gpu::htod_memcpy(d_changed.dataPtr(), &zero, sizeof(int));
+        }
         d_flag_ptr = d_changed.dataPtr();
 #else
         h_changed = 0;
