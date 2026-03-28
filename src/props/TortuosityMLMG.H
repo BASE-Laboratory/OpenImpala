@@ -70,11 +70,11 @@ public:
     TortuosityMLMG(const TortuosityMLMG&) = delete;
     TortuosityMLMG& operator=(const TortuosityMLMG&) = delete;
 
-protected:
     /** @brief Run the MLMG solver, populating m_mf_solution.
      *
      *  Sets up MLABecLaplacian with appropriate BCs and B-coefficients,
      *  runs MLMG V-cycle solve, and optionally writes a plotfile.
+     *  Public for CUDA __device__ lambda compatibility.
      *
      *  @return true if solver converged.
      */
