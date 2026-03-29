@@ -714,7 +714,7 @@ void EffectiveDiffusivityHypre::getChiSolution(amrex::MultiFab& chi_field) {
         if (get_ierr != 0) {
             amrex::Warning("HYPRE_StructVectorGetBoxValues failed during getChiSolution!");
             chi_field[mfi].template setVal<amrex::RunOn::Host>(0.0, bx_getsol, ChiComp,
-                                                                numComponentsChi);
+                                                               numComponentsChi);
             continue;
         }
 

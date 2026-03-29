@@ -15,9 +15,8 @@ ThroughThicknessProfile::ThroughThicknessProfile(const amrex::Geometry& geom,
     compute(geom, mf_phase, phase_id, dir, comp);
 }
 
-void ThroughThicknessProfile::compute(const amrex::Geometry& geom,
-                                      const amrex::iMultiFab& mf_phase, int phase_id,
-                                      OpenImpala::Direction dir, int comp) {
+void ThroughThicknessProfile::compute(const amrex::Geometry& geom, const amrex::iMultiFab& mf_phase,
+                                      int phase_id, OpenImpala::Direction dir, int comp) {
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(comp >= 0 && comp < mf_phase.nComp(),
                                      "ThroughThicknessProfile: Component index out of bounds.");
 
