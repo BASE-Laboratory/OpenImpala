@@ -15,8 +15,37 @@
 
 cmake_minimum_required(VERSION 3.18)
 
+# ---------------------------------------------------------------------------
+# Derive project version from the latest Git tag (e.g. v4.0.1 → 4.0.1).
+# Falls back to 0.0.0 when building outside a Git repository or when no
+# tag is reachable (e.g. shallow clone without --tags).
+# ---------------------------------------------------------------------------
+set(OPENIMPALA_FALLBACK_VERSION "4.0.1")
+
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" describe --tags --match "v[0-9]*" --abbrev=0
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE _git_tag
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _git_result
+    )
+    if(_git_result EQUAL 0 AND _git_tag MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)")
+        set(_detected_version "${CMAKE_MATCH_1}")
+    endif()
+endif()
+
+if(NOT _detected_version)
+    set(_detected_version "${OPENIMPALA_FALLBACK_VERSION}")
+    message(STATUS "Git tag not found — using fallback version ${_detected_version}")
+else()
+    message(STATUS "Version from Git tag: ${_detected_version}")
+endif()
+
 project(OpenImpala
-    VERSION 0.1.0
+    VERSION ${_detected_version}
     LANGUAGES C CXX Fortran
     DESCRIPTION "Image-based simulation of transport properties in porous media"
 )
