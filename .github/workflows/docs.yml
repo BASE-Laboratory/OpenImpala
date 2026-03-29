@@ -1,11 +1,12 @@
 # .github/workflows/docs.yml
-name: Deploy Doxygen Documentation
+name: Deploy Documentation
 
 on:
   push:
     branches: [master]
     paths:
       - 'src/**'
+      - 'python/**'
       - 'Doxyfile'
       - 'docs/**'
       - '.github/workflows/docs.yml'
@@ -24,7 +25,7 @@ concurrency:
 
 jobs:
   build-docs:
-    name: Build Doxygen Documentation
+    name: Build Documentation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -35,15 +36,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y doxygen graphviz
           echo "Doxygen version: $(doxygen --version)"
-          echo "Dot version: $(dot -V 2>&1)"
 
-      - name: Generate documentation
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Sphinx and dependencies
+        run: pip install -r docs/requirements.txt
+
+      - name: Generate Doxygen XML and HTML
         run: doxygen Doxyfile
+
+      - name: Build Sphinx documentation
+        run: sphinx-build -b html docs/ docs/_build/html
+
+      - name: Copy Doxygen HTML into Sphinx output
+        run: cp -r docs/doxygen/html docs/_build/html/doxygen
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/doxygen/html
+          path: docs/_build/html
 
   deploy:
     name: Deploy to GitHub Pages
