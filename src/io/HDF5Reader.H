@@ -160,6 +160,14 @@ public:
     }
 
 
+    // --- Implementation methods (public for CUDA __device__ lambda compatibility) ---
+    // Template function to read a hyperslab and apply thresholding
+    // Needed because the native type read from file varies.
+    template <typename T_Native>
+    void readAndThresholdFab(H5::DataSet& dataset, double raw_threshold, int value_if_true,
+                             int value_if_false, const amrex::Box& box,
+                             amrex::IArrayBox& fab) const;
+
 private:
     /**
      * @brief Internal implementation for reading HDF5 metadata only.
@@ -168,13 +176,6 @@ private:
      * @return true on success (sets members), false on failure (prints errors).
      */
     bool readMetadataInternal();
-
-    // Template function to read a hyperslab and apply thresholding
-    // Needed because the native type read from file varies.
-    template <typename T_Native>
-    void readAndThresholdFab(H5::DataSet& dataset, double raw_threshold, int value_if_true,
-                             int value_if_false, const amrex::Box& box,
-                             amrex::IArrayBox& fab) const;
 
     // --- Member Variables ---
     std::string m_filename;     /**< Filename of the source HDF5 file */

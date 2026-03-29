@@ -59,12 +59,13 @@ public:
         return m_labels;
     }
 
-private:
+    // --- Implementation methods (public for CUDA __device__ lambda compatibility) ---
     void run(const amrex::iMultiFab& mf_phase, int phase_id);
 
     amrex::IntVect findNextUnlabeled(const amrex::iMultiFab& labelMF,
                                      const amrex::iMultiFab& phaseFab, int phaseID) const;
 
+private:
     amrex::Geometry m_geom;
     amrex::BoxArray m_ba;
     amrex::DistributionMapping m_dm;

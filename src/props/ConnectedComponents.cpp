@@ -108,8 +108,8 @@ void ConnectedComponents::run(const amrex::iMultiFab& mf_phase, int phase_id) {
     // Compute volume of each component using GPU-compatible atomic scatter-add
     m_volumes.resize(m_num_components, 0);
 
-    amrex::Gpu::DeviceVector<long long> d_volumes(m_num_components, 0);
-    long long* d_vol_ptr = d_volumes.data();
+    amrex::Gpu::DeviceVector<int> d_volumes(m_num_components, 0);
+    int* d_vol_ptr = d_volumes.data();
     const int num_comp = m_num_components;
 
     for (amrex::MFIter mfi(m_labels); mfi.isValid(); ++mfi) {
@@ -119,12 +119,12 @@ void ConnectedComponents::run(const amrex::iMultiFab& mf_phase, int phase_id) {
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
             int lbl = label_arr(i, j, k, 0);
             if (lbl > 0 && lbl <= num_comp) {
-                amrex::Gpu::Atomic::Add(&d_vol_ptr[lbl - 1], 1LL);
+                amrex::Gpu::Atomic::Add(&d_vol_ptr[lbl - 1], 1);
             }
         });
     }
 
-    std::vector<long long> local_volumes(m_num_components);
+    std::vector<int> local_volumes(m_num_components);
     amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_volumes.begin(), d_volumes.end(),
                      local_volumes.begin());
 
@@ -132,7 +132,7 @@ void ConnectedComponents::run(const amrex::iMultiFab& mf_phase, int phase_id) {
         amrex::ParallelAllReduce::Sum(local_volumes.data(), m_num_components,
                                       amrex::ParallelContext::CommunicatorSub());
     }
-    m_volumes = local_volumes;
+    m_volumes.assign(local_volumes.begin(), local_volumes.end());
 }
 
 } // namespace OpenImpala

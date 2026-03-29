@@ -29,6 +29,10 @@ set(OPENIMPALA_TEST_INCLUDES
 # Helper: define a test executable and register it with CTest.
 # If an inputs file exists in tests/inputs/<name>.inputs, it is passed as an argument.
 function(openimpala_add_test TEST_NAME SOURCE_FILE)
+    # When CUDA is enabled, AMReX headers require nvcc compilation
+    if(GPU_BACKEND STREQUAL "CUDA")
+        set_source_files_properties(${SOURCE_FILE} PROPERTIES LANGUAGE CUDA)
+    endif()
     add_executable(${TEST_NAME} ${SOURCE_FILE})
     target_link_libraries(${TEST_NAME} PRIVATE ${OPENIMPALA_TEST_LIBS})
     target_include_directories(${TEST_NAME} PRIVATE ${OPENIMPALA_TEST_INCLUDES})
@@ -419,6 +423,49 @@ add_test(
 set_tests_properties(tDiffusion_hdf5 PROPERTIES
     ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
     TIMEOUT 600
+)
+
+# ==============================================================================
+# FloodFill Tests (Issue #170 — shared GPU-compatible flood fill utility)
+# ==============================================================================
+openimpala_add_test(tFloodFill  "${CMAKE_CURRENT_SOURCE_DIR}/tFloodFill.cpp")
+
+# ==============================================================================
+# TortuosityMLMG Tests (Issue #171 — matrix-free MLMG solver)
+#
+# Validates the AMReX-native MLMG solver against the same analytical
+# solutions used for the HYPRE-based solver.
+# ==============================================================================
+openimpala_add_test(tTortuosityMLMG  "${CMAKE_CURRENT_SOURCE_DIR}/tTortuosityMLMG.cpp")
+
+# MLMG uniform block: tau = (N-1)/N = 0.96875
+add_test(
+    NAME tTortuosityMLMG_uniform
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tTortuosityMLMG>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tTortuosityMLMG_uniform.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tTortuosityMLMG_uniform PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# MLMG Y-direction symmetry: same tau as X
+add_test(
+    NAME tTortuosityMLMG_dirY
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tTortuosityMLMG>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tTortuosityMLMG_dirY.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tTortuosityMLMG_dirY PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
 )
 
 # ==============================================================================

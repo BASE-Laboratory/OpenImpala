@@ -31,7 +31,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-gpu-cuda12-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v1
+          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-v2
 
       - name: Build GPU wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -42,7 +42,7 @@ jobs:
 
           # Use NVIDIA's CUDA-enabled manylinux image (CUDA 12.6, AlmaLinux 8)
           # This provides nvcc, CUDA runtime, and cuBLAS/cuSPARSE out of the box.
-          CIBW_MANYLINUX_X86_64_IMAGE: sameli/manylinux_2_28_x86_64_cuda_12.6
+          CIBW_MANYLINUX_X86_64_IMAGE: sameli/manylinux_2_34_x86_64_cuda_12.6
 
           # Build all dependencies with CUDA support.
           # HDF5 and libtiff are CPU-only (no GPU path needed).
@@ -50,11 +50,16 @@ jobs:
           # AMReX is built with -DAMReX_GPU_BACKEND=CUDA for device kernels.
           CIBW_BEFORE_ALL_LINUX: >
             dnf install -y epel-release &&
-            dnf --enablerepo=powertools install -y
+            dnf --enablerepo=crb install -y
             openmpi-devel gcc-gfortran gcc-c++ wget git
-            zlib-devel libjpeg-turbo-devel python3-pip &&
+            zlib-devel libjpeg-turbo-devel python3-pip
+            gcc-toolset-13 gcc-toolset-13-gcc gcc-toolset-13-gcc-c++
+            gcc-toolset-13-gcc-gfortran &&
             pip3 install "cmake>=3.28,<4" &&
-            export PATH=/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH &&
+            export PATH=/opt/rh/gcc-toolset-13/root/usr/bin:/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH &&
+            export CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc &&
+            export CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++ &&
+            export FC=/opt/rh/gcc-toolset-13/root/usr/bin/gfortran &&
             export CUDA_HOME=/usr/local/cuda &&
             if [ -f /project/.cibw-deps-cache/deps.tar.gz ]; then
             echo "=== Restoring cached GPU dependencies ===" &&
@@ -92,7 +97,8 @@ jobs:
             --with-cuda-home=/usr/local/cuda --enable-shared=no
             CC=mpicc CXX=mpicxx FC=mpif90
             CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" FFLAGS="-O2 -fPIC"
-            CUDA_HOME=/usr/local/cuda &&
+            CUDA_HOME=/usr/local/cuda
+            CUDAFLAGS="-allow-unsupported-compiler" &&
             make -j$(nproc) &&
             make install &&
             cd ../.. &&
@@ -107,26 +113,35 @@ jobs:
             -DAMReX_FORTRAN=ON
             -DAMReX_PARTICLES=OFF
             -DAMReX_GPU_BACKEND=CUDA
-            -DAMReX_CUDA_ARCH=60;70;75;80;86;89;90
+            '-DAMReX_CUDA_ARCH=60;70;75;80;86;89;90'
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-            -DCMAKE_CUDA_ARCHITECTURES="60;70;75;80;86;89;90" &&
+            '-DCMAKE_CUDA_ARCHITECTURES=60;70;75;80;86;89;90'
+            -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++ &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
             mkdir -p /project/.cibw-deps-cache &&
             tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
             fi
 
-          CIBW_BEFORE_BUILD: pip install "cmake>=3.28,<4"
+          # Rename the package to openimpala-cuda for the GPU wheel.
+          # The import name stays 'openimpala' — only the PyPI distribution name changes.
+          CIBW_BEFORE_BUILD: >
+            pip install "cmake>=3.28,<4" &&
+            sed -i 's/^name = "openimpala"/name = "openimpala-cuda"/' /project/pyproject.toml
 
           # Point to MPI, CUDA, and our compiled GPU dependencies.
           CIBW_ENVIRONMENT_LINUX: >
-            PATH="/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH"
+            PATH="/opt/rh/gcc-toolset-13/root/usr/bin:/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH"
+            CC="/opt/rh/gcc-toolset-13/root/usr/bin/gcc"
+            CXX="/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+            FC="/opt/rh/gcc-toolset-13/root/usr/bin/gfortran"
             CUDA_HOME="/usr/local/cuda"
+            CUDAHOSTCXX="/opt/rh/gcc-toolset-13/root/usr/bin/g++"
             CMAKE_C_COMPILER="mpicc"
             CMAKE_CXX_COMPILER="mpicxx"
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
-            CMAKE_ARGS="-DGPU_BACKEND=CUDA -DCMAKE_CUDA_ARCHITECTURES=60;70;75;80;86;89;90"
+            CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=60;70;75;80;86;89;90' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
 
           # Vendor libraries but exclude host-specific MPI, OpenMP, Fortran runtime,
           # and CUDA runtime libraries (users must have CUDA toolkit installed).

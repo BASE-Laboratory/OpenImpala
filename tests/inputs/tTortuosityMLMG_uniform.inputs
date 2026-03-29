@@ -1,0 +1,27 @@
+# TortuosityMLMG Test: Uniform Dense Block
+#
+# Geometry:  32^3 domain, all voxels = single conducting phase (D=1.0)
+# Analytical: MLMG applies Dirichlet BCs at the domain face (external boundary),
+#             not at cell centers like HYPRE. For a uniform medium this gives
+#             tau = 1.0 exactly.
+# Validates: TortuosityMLMG solver + TortuositySolverBase infrastructure
+
+domain_size = 32
+box_size = 16
+verbose = 2
+num_phases_fill = 1
+direction = X
+
+expected_tau = 1.0
+tau_tolerance = 0.001
+
+resultsdir = ./tTortuosityMLMG_uniform_results
+
+# --- MLMG Solver Controls ---
+mlmg.eps = 1e-9
+mlmg.maxiter = 200
+
+# --- Multi-phase configuration ---
+tortuosity.active_phases = 0
+tortuosity.phase_diffusivities = 1.0
+tortuosity.remspot_passes = 0

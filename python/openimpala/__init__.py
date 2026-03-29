@@ -27,7 +27,10 @@ from importlib.metadata import version, PackageNotFoundError
 try:
     __version__ = version("openimpala")
 except PackageNotFoundError:
-    __version__ = "unknown"
+    try:
+        __version__ = version("openimpala-cuda")
+    except PackageNotFoundError:
+        __version__ = "unknown"
 
 # Session context manager (pure Python — always available)
 from .session import Session
