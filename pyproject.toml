@@ -25,6 +25,13 @@ test = [
     "pytest>=7",
     "numpy",
 ]
+docs = [
+    "sphinx>=7.0",
+    "furo",
+    "breathe",
+    "myst-parser",
+    "sphinx-autodoc-typehints",
+]
 all = [
     "mpi4py",
     "tqdm",
