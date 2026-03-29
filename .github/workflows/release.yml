@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Apptainer
         uses: eWaterCycle/setup-apptainer@v2
@@ -121,10 +123,14 @@ jobs:
           sudo apptainer build "$SIF_FILENAME" Singularity.final.def
           echo "SIF_FILENAME=$SIF_FILENAME" >> $GITHUB_ENV
           
-      - name: Create GitHub Release and Upload SIF
+      - name: Upload SIF to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.SIF_FILENAME }}
+          # Release notes are pre-populated by Release Drafter.
+          # Only fall back to auto-generated notes if the body is empty
+          # (e.g. tag was pushed without a prior draft).
           generate_release_notes: true
+          append_body: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
