@@ -1,0 +1,133 @@
+# Configuration for Release Drafter
+# https://github.com/release-drafter/release-drafter
+#
+# Automatically drafts GitHub release notes from merged PRs.
+# PRs are categorized by their labels into changelog sections.
+
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+# Determine the next version bump from PR labels
+version-resolver:
+  major:
+    labels:
+      - 'breaking'
+  minor:
+    labels:
+      - 'enhancement'
+      - 'feature'
+      - 'physics'
+  patch:
+    labels:
+      - 'bug'
+      - 'fix'
+      - 'performance'
+      - 'documentation'
+      - 'devops'
+      - 'dependencies'
+  default: patch
+
+# Map PR labels to changelog sections
+categories:
+  - title: '🔬 Physics & Solvers'
+    labels:
+      - 'physics'
+      - 'solver'
+  - title: '🚀 New Features'
+    labels:
+      - 'feature'
+      - 'enhancement'
+  - title: '⚡ Performance'
+    labels:
+      - 'performance'
+      - 'gpu'
+  - title: '🐛 Bug Fixes'
+    labels:
+      - 'bug'
+      - 'fix'
+  - title: '📖 Documentation'
+    labels:
+      - 'documentation'
+  - title: '🔧 DevOps & CI'
+    labels:
+      - 'devops'
+      - 'ci'
+  - title: '📦 Dependencies'
+    labels:
+      - 'dependencies'
+  - title: '⚠️ Breaking Changes'
+    labels:
+      - 'breaking'
+  - title: '🧹 Maintenance'
+    labels:
+      - 'maintenance'
+      - 'refactor'
+
+# Exclude PRs with these labels from release notes
+exclude-labels:
+  - 'skip-changelog'
+
+# Template for the release body
+template: |
+  ## What's Changed
+
+  $CHANGES
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+
+# Auto-label PRs based on file paths
+autolabeler:
+  - label: 'physics'
+    files:
+      - 'src/props/**'
+    title:
+      - '/tortuosity/i'
+      - '/diffusiv/i'
+      - '/solver/i'
+      - '/HYPRE/i'
+      - '/MLMG/i'
+  - label: 'io'
+    files:
+      - 'src/io/**'
+    title:
+      - '/reader/i'
+      - '/TIFF/i'
+      - '/HDF5/i'
+  - label: 'documentation'
+    files:
+      - 'docs/**'
+      - '*.md'
+      - 'Doxyfile'
+    title:
+      - '/docs/i'
+      - '/documentation/i'
+  - label: 'devops'
+    files:
+      - '.github/**'
+      - 'containers/**'
+      - 'pyproject.toml'
+      - 'CMakeLists.txt'
+    title:
+      - '/CI/i'
+      - '/workflow/i'
+      - '/wheel/i'
+      - '/PyPI/i'
+  - label: 'gpu'
+    files:
+      - 'src/props/*GPU*'
+      - 'src/props/*CUDA*'
+    title:
+      - '/CUDA/i'
+      - '/GPU/i'
+      - '/NVCC/i'
+  - label: 'python'
+    files:
+      - 'python/**'
+    title:
+      - '/python/i'
+      - '/pybind/i'
+      - '/binding/i'
+  - label: 'tests'
+    files:
+      - 'tests/**'
+      - 'python/tests/**'

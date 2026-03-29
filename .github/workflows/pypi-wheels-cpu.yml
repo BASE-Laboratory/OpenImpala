@@ -16,6 +16,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive # Fetches Catch2, nlohmann/json, or pybind11 if needed
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
