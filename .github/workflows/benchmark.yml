@@ -1,0 +1,306 @@
+# .github/workflows/benchmark.yml
+# Performance regression tracking for OpenImpala.
+#
+# Runs a fixed set of synthetic benchmarks and posts timing results
+# as a PR comment or job summary. Triggered manually or on PRs that
+# touch solver code.
+
+name: Performance Benchmark
+
+on:
+  pull_request:
+    paths:
+      - 'src/props/**'
+      - 'python/bindings/**'
+      - 'python/openimpala/**'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+    inputs:
+      grid_sizes:
+        description: 'Comma-separated grid sizes to benchmark (e.g. 64,128)'
+        required: false
+        default: '64,128'
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: Run Benchmarks
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Apptainer
+        uses: eWaterCycle/setup-apptainer@v2
+        with:
+          apptainer-version: 1.2.5
+
+      - name: Restore Dependency SIF Cache
+        id: cache-restore-sif
+        uses: actions/cache/restore@v4
+        with:
+          path: dependency_image.sif
+          key: ${{ runner.os }}-apptainer-sif-${{ hashFiles('containers/Singularity.deps.def') }}
+          restore-keys: |
+            ${{ runner.os }}-apptainer-sif-
+
+      - name: Build Dependency SIF (if cache miss)
+        if: steps.cache-restore-sif.outputs.cache-hit != 'true'
+        run: |
+          sudo apptainer build --force dependency_image.sif containers/Singularity.deps.def
+
+      - name: Build OpenImpala with Python bindings
+        run: |
+          sudo apptainer exec \
+            --writable-tmpfs \
+            --bind $PWD:/src \
+            ./dependency_image.sif \
+            bash -c '
+              source /opt/rh/gcc-toolset-11/enable
+              cd /src
+              rm -rf cmake_build_bench && mkdir cmake_build_bench && cd cmake_build_bench
+
+              PYBIND11_DIR=$(python3.11 -m pybind11 --cmakedir)
+
+              cmake .. \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER=$(which mpicc) \
+                -DCMAKE_CXX_COMPILER=$(which mpicxx) \
+                -DPython_EXECUTABLE=/usr/bin/python3.11 \
+                -Dpybind11_DIR=${PYBIND11_DIR} \
+                -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
+                -DBUILD_TESTING=OFF \
+                -DOPENIMPALA_PYTHON=ON
+
+              make -j$(nproc)
+            '
+
+      - name: Run benchmark suite
+        id: benchmark
+        run: |
+          # Determine grid sizes
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SIZES="${{ github.event.inputs.grid_sizes }}"
+          else
+            SIZES="64,128"
+          fi
+
+          cat > /tmp/bench.py << 'BENCHEOF'
+          import sys
+          import os
+          import json
+          import time
+          import numpy as np
+
+          # Add the build directory to Python path
+          sys.path.insert(0, "/src/cmake_build_bench")
+
+          import openimpala as oi
+
+          sizes = [int(s) for s in os.environ.get("BENCH_SIZES", "64,128").split(",")]
+          solvers = ["pcg", "flexgmres", "pfmg", "mlmg"]
+          n_repeats = 3
+          results = []
+
+          with oi.Session():
+              for size in sizes:
+                  print(f"\n=== Benchmarking {size}³ ===", flush=True)
+
+                  # Generate uniform block (analytical solution: tau = (N-1)/N)
+                  data = np.zeros((size, size, size), dtype=np.int32)
+
+                  for solver_name in solvers:
+                      times = []
+                      res = None
+                      failed = False
+
+                      for trial in range(n_repeats):
+                          try:
+                              t0 = time.perf_counter()
+                              res = oi.tortuosity(
+                                  data, phase=0, direction="z",
+                                  solver=solver_name, max_grid_size=32, verbose=0
+                              )
+                              t1 = time.perf_counter()
+                              times.append(t1 - t0)
+                          except Exception as e:
+                              print(f"  {solver_name}: FAILED — {e}")
+                              failed = True
+                              break
+
+                      if not failed and res is not None:
+                          median_t = float(np.median(times))
+                          expected_tau = (size - 1) / size
+                          tau_error = abs(res.tortuosity - expected_tau) / expected_tau
+
+                          record = {
+                              "size": size,
+                              "solver": solver_name,
+                              "wall_time_s": round(median_t, 4),
+                              "tortuosity": round(res.tortuosity, 6),
+                              "expected_tau": round(expected_tau, 6),
+                              "relative_error": round(tau_error, 8),
+                              "iterations": res.iterations,
+                              "converged": res.solver_converged,
+                          }
+                          results.append(record)
+                          print(f"  {solver_name:12s}  {median_t:.4f}s  "
+                                f"τ={res.tortuosity:.6f}  "
+                                f"err={tau_error:.2e}  "
+                                f"iters={res.iterations}")
+                      else:
+                          results.append({
+                              "size": size, "solver": solver_name,
+                              "wall_time_s": None, "tortuosity": None,
+                              "expected_tau": (size - 1) / size,
+                              "relative_error": None, "iterations": None,
+                              "converged": False,
+                          })
+
+          # Write results to JSON
+          with open("/tmp/benchmark_results.json", "w") as f:
+              json.dump(results, f, indent=2)
+
+          print(f"\n{len(results)} benchmark results written.")
+          BENCHEOF
+
+          sudo apptainer exec \
+            --writable-tmpfs \
+            --bind $PWD:/src \
+            ./dependency_image.sif \
+            bash -c "
+              source /opt/rh/gcc-toolset-11/enable
+              export PYTHONPATH=/src/cmake_build_bench
+              export BENCH_SIZES=$SIZES
+              cd /src && python3.11 /tmp/bench.py
+            "
+
+          # Copy results out for the next step
+          cp /tmp/benchmark_results.json ./benchmark_results.json 2>/dev/null || true
+
+      - name: Generate benchmark report
+        id: report
+        run: |
+          python3 << 'REPORTEOF'
+          import json
+          import os
+
+          with open("benchmark_results.json") as f:
+              results = json.load(f)
+
+          # Build markdown table
+          lines = []
+          lines.append("## Performance Benchmark Results")
+          lines.append("")
+          lines.append("| Size | Solver | Wall Time (s) | Tortuosity | Expected | Rel. Error | Iters | Status |")
+          lines.append("|------|--------|--------------|------------|----------|-----------|-------|--------|")
+
+          any_failed = False
+          any_regression = False
+
+          for r in results:
+              if r["converged"]:
+                  err_str = f'{r["relative_error"]:.2e}'
+                  status = "PASS" if r["relative_error"] < 1e-4 else "WARN"
+                  if r["relative_error"] >= 1e-4:
+                      any_regression = True
+                      status = "WARN"
+              else:
+                  err_str = "N/A"
+                  status = "FAIL"
+                  any_failed = True
+
+              time_str = f'{r["wall_time_s"]:.4f}' if r["wall_time_s"] else "N/A"
+              tau_str = f'{r["tortuosity"]:.6f}' if r["tortuosity"] else "N/A"
+              exp_str = f'{r["expected_tau"]:.6f}'
+              iter_str = str(r["iterations"]) if r["iterations"] else "N/A"
+
+              lines.append(f'| {r["size"]}³ | {r["solver"]} | {time_str} | {tau_str} | {exp_str} | {err_str} | {iter_str} | {status} |')
+
+          lines.append("")
+
+          # Summary
+          converged = [r for r in results if r["converged"]]
+          if converged:
+              fastest = min(converged, key=lambda r: r["wall_time_s"])
+              lines.append(f'**Fastest solver:** {fastest["solver"]} at {fastest["size"]}³ '
+                           f'({fastest["wall_time_s"]:.4f}s)')
+          if any_failed:
+              lines.append("**Warning:** Some solvers failed to converge.")
+          if any_regression:
+              lines.append("**Warning:** Some results exceed expected error tolerance (>1e-4).")
+
+          lines.append("")
+          lines.append("*Benchmark: uniform block (analytical τ = (N-1)/N)*")
+
+          report = "\n".join(lines)
+
+          # Write to step summary
+          with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null"), "a") as f:
+              f.write(report)
+
+          # Write to file for PR comment
+          with open("benchmark_report.md", "w") as f:
+              f.write(report)
+
+          print(report)
+          REPORTEOF
+
+      - name: Post benchmark results to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let report = '';
+            try {
+              report = fs.readFileSync('benchmark_report.md', 'utf8');
+            } catch (e) {
+              report = 'Benchmark report not available.';
+            }
+
+            const marker = '<!-- benchmark-report -->';
+            const body = marker + '\n' + report;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.run_id }}
+          path: |
+            benchmark_results.json
+            benchmark_report.md
+          retention-days: 90
+          if-no-files-found: warn
