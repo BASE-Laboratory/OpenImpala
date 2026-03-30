@@ -18,6 +18,13 @@ jobs:
           submodules: recursive # Fetches Catch2, nlohmann/json, or pybind11 if needed
           fetch-depth: 0
 
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Strip leading 'v' from tag (e.g. v4.0.2 -> 4.0.2)
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -130,6 +137,7 @@ jobs:
             CMAKE_CXX_COMPILER="mpicxx"
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
+            SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
 
           # Vendor libraries into the wheel, but exclude host-specific MPI and
           # runtime libraries that users must provide on their system.
