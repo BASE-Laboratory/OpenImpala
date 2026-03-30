@@ -33,37 +33,37 @@ bibliography: paper.bib
 
 # Summary
 
-`OpenImpala` is a high-performance computing (HPC) framework for evaluating effective transport properties—such as tortuosity, effective diffusivity tensors, and effective electrical conductivity—directly from three-dimensional microstructural imaging data (e.g., X-ray CT reconstructions [@withers2021xray]). Built upon the AMReX adaptive mesh refinement library [@amrex2019], `OpenImpala` formulates the governing partial differential equations directly on the Cartesian voxel grid, eliminating the computationally prohibitive mesh-generation bottleneck that limits conventional finite element approaches. The framework couples a scalable, distributed-memory C++ backend with the HYPRE linear solver library [@falgout2002hypre] and a Python interface via pybind11 [@jakob2017pybind11], enabling automated microstructural parameterisation for downstream continuum modelling.
+`OpenImpala` is a high-performance computing framework for evaluating effective transport properties — tortuosity, effective diffusivity tensors, and effective conductivity — directly from three-dimensional microstructural imaging data such as X-ray CT reconstructions [@withers2021xray]. Built upon the AMReX adaptive mesh refinement library [@amrex2019], `OpenImpala` formulates the governing partial differential equations on the Cartesian voxel grid, eliminating the mesh-generation step that limits conventional finite element approaches. The framework couples a scalable, distributed-memory C++ backend with the HYPRE linear solver library [@falgout2002hypre] and a Python interface via pybind11 [@jakob2017pybind11], enabling automated microstructural parameterisation for downstream continuum modelling.
 
-An earlier version of the software was described in @LeHoux2021OpenImpala. Since that publication, the framework has been substantially rewritten to support GPU acceleration via CUDA, a native AMReX matrix-free multigrid solver, full effective diffusivity tensor computation via homogenisation, multi-phase transport, and a high-level Python API distributed through PyPI.
+An earlier version of the software was described in @LeHoux2021OpenImpala. Since that publication the codebase has been redesigned with the following major additions: GPU acceleration via CUDA, a matrix-free geometric multigrid solver (AMReX MLMG), full effective diffusivity tensor computation via homogenisation, multi-phase transport, microstructural characterisation modules, and a high-level Python API distributed through PyPI.
 
 # Statement of Need
 
-High-resolution three-dimensional microstructural imaging is increasingly utilised across battery research, geosciences, and materials engineering to characterise internal transport phenomena [@withers2021xray]. Extracting bulk effective physical parameters—particularly the tortuosity factor [@epstein1989tortuosity; @tjaden2016origin]—from billion-voxel datasets represents a significant computational challenge.
+High-resolution three-dimensional microstructural imaging is increasingly utilised across battery research, geosciences, and materials engineering to characterise internal transport phenomena [@withers2021xray]. Extracting bulk effective physical parameters — particularly the tortuosity factor [@epstein1989tortuosity; @tjaden2016origin] — from billion-voxel datasets represents a significant computational challenge.
 
-Several open-source tools address this problem. TauFactor [@cooper2016taufactor] pioneered accessible tortuosity computation through an intuitive MATLAB interface and has seen widespread adoption in the battery community. However, TauFactor operates on a single compute node with an iterative relaxation scheme that does not leverage distributed-memory parallelism. PoreSpy [@gostick2019porespy] provides a comprehensive Python toolkit for morphological image analysis but does not include PDE-based transport solvers. PuMA [@ferguson2018puma] offers voxel-based effective property computation in C++ with multi-threading support, but lacks MPI scalability for out-of-core datasets and does not provide a Python API for integration with modern scientific workflows.
+Several open-source tools address this problem. TauFactor [@cooper2016taufactor] pioneered accessible tortuosity computation through an intuitive MATLAB interface and has seen widespread adoption in the battery community. However, TauFactor operates on a single compute node with an iterative relaxation scheme that does not leverage distributed-memory parallelism. PoreSpy [@gostick2019porespy] provides a comprehensive Python toolkit for morphological image analysis but does not include PDE-based transport solvers. PuMA [@ferguson2018puma] offers voxel-based effective property computation in C++ with multi-threading support, but lacks distributed-memory (MPI) scalability for out-of-core datasets.
 
-`OpenImpala` addresses this gap by providing a natively parallelised (MPI, OpenMP, and CUDA) solver backend capable of scaling across hundreds of compute cores and GPU accelerators. Through its Python API (`import openimpala`), the framework serves as an upstream microstructural parameterisation engine: it ingests raw or segmented tomographic data and exports computed effective macroscopic properties to downstream continuum models such as PyBaMM [@sulzer2021python]. The methodology has been validated in synchrotron imaging workflows for statistical effective diffusivity estimation [@le2023statistical], and the AMReX-based adaptive mesh refinement infrastructure opens a pathway toward multi-scale battery simulation approaches [@lu2025immersed].
+`OpenImpala` addresses these limitations by combining MPI, OpenMP, and CUDA parallelism in a single solver backend capable of scaling across hundreds of compute cores and GPU accelerators. Through its Python API (`import openimpala`), the framework serves as an upstream microstructural parameterisation engine: it ingests raw or segmented tomographic data and exports computed effective properties to downstream continuum models such as PyBaMM [@sulzer2021python]. The methodology has been validated in synchrotron imaging workflows for statistical effective diffusivity estimation [@le2023statistical], and the AMReX-based infrastructure opens a pathway toward multi-scale battery simulation approaches [@lu2025immersed].
 
 # Software Architecture and Capabilities
 
-\autoref{fig:architecture} illustrates the high-level architecture of `OpenImpala`. The framework is organised into three layers: an I/O layer that reads TIFF, HDF5, and raw binary volumetric images into AMReX distributed data structures; a physics solver layer that computes transport properties on the voxel grid; and an output layer that exports structured results in JSON format compatible with battery parameterisation standards (BPX, BattINFO).
+\autoref{fig:architecture} illustrates the architecture of `OpenImpala`. The framework is organised into three layers: an I/O layer that reads TIFF, HDF5, and raw binary volumetric images into AMReX distributed data structures; a physics solver layer that computes transport properties on the voxel grid; and an output layer that exports structured results in JSON format compatible with battery parameterisation standards such as BPX and BattINFO.
 
 ![High-level architecture of OpenImpala. The I/O layer reads 3D voxel images into AMReX distributed data structures. The physics layer solves steady-state diffusion equations via HYPRE (Krylov + algebraic multigrid) or AMReX MLMG (geometric multigrid). The output layer exports tortuosity, effective diffusivity tensors, and microstructural metrics in structured JSON format.\label{fig:architecture}](figure.png)
 
 ## Solver Infrastructure
 
-The primary physics solver discretises the steady-state diffusion equation $\nabla \cdot (D \nabla \phi) = 0$ on a 7-point finite difference stencil, with Dirichlet boundary conditions at the inlet and outlet faces and zero-flux Neumann conditions on the lateral boundaries. Inter-cell face diffusivities are computed as the harmonic mean of adjacent cell values, which is physically correct for the series resistance analogy. Two solver backends are available:
+The primary physics solver discretises the steady-state diffusion equation $\nabla \cdot (D \nabla \phi) = 0$ on a seven-point finite difference stencil, with Dirichlet boundary conditions at the inlet and outlet faces and zero-flux Neumann conditions on the lateral boundaries. Inter-cell face diffusivities are computed as the harmonic mean of adjacent cell values, which is physically correct for the series resistance analogy. Two solver backends are available:
 
-- **HYPRE** [@falgout2002hypre]: Krylov solvers (PCG, FlexGMRES, BiCGSTAB) with algebraic multigrid preconditioning (SMG, PFMG). Supports CUDA-accelerated solves via HYPRE's device memory interface.
-- **AMReX MLMG**: A matrix-free geometric multigrid solver that operates without explicit matrix assembly, reducing memory consumption by approximately 3$\times$ compared to the HYPRE structured matrix approach.
+- **HYPRE** [@falgout2002hypre]: Krylov solvers (PCG, FlexGMRES, BiCGSTAB) with algebraic multigrid preconditioning (SMG, PFMG). Supports CUDA-accelerated solves via HYPRE's device execution policy.
+- **AMReX MLMG**: A matrix-free geometric multigrid solver that operates without explicit matrix assembly, reducing memory consumption by approximately $3\times$ compared to the HYPRE structured matrix approach.
 
 ## Transport Properties
 
 `OpenImpala` computes the following effective transport properties:
 
 - **Tortuosity factor**: Defined as $\tau = \varepsilon / D_{\text{eff}}$, where $\varepsilon$ is the connected volume fraction and $D_{\text{eff}}$ is the normalised effective diffusivity obtained from the flux integral across the domain.
-- **Effective diffusivity tensor**: The full 3$\times$3 symmetric tensor $\mathbf{D}_{\text{eff}}$ is computed via a homogenisation cell problem $\nabla \cdot (D \nabla \chi_j) = -\nabla \cdot (D \hat{e}_j)$, solved independently for each Cartesian direction $j \in \{x, y, z\}$.
+- **Effective diffusivity tensor**: The full $3\times 3$ symmetric tensor $\mathbf{D}_{\text{eff}}$ is computed via a homogenisation cell problem $\nabla \cdot (D \nabla \chi_j) = -\nabla \cdot (D \hat{e}_j)$, solved independently for each Cartesian direction $j \in \{x, y, z\}$.
 - **Multi-phase transport**: Arbitrary numbers of solid and pore phases can be assigned distinct transport coefficients, enabling simulation of composite electrode microstructures with heterogeneous material properties.
 
 ## Microstructural Characterisation
@@ -79,7 +79,7 @@ Beyond transport properties, the framework includes modules for:
 
 ## Python API and Distribution
 
-The Python interface exposes all solver and analysis capabilities through a high-level facade:
+The Python interface exposes the core solver capabilities through a high-level facade:
 
 ```python
 import openimpala as oi
@@ -92,7 +92,7 @@ Pre-compiled CPU and CUDA GPU wheels are distributed via PyPI (`pip install open
 
 ## Testing and Quality Assurance
 
-The test suite includes three analytical regression benchmarks with exact discrete solutions on uniform and layered geometries, integration tests on real tomographic data via CTest, and Catch2 unit tests for configuration and output modules. Continuous integration enforces `clang-format` style checking, `clang-tidy` static analysis, and code coverage reporting via Codecov.
+The test suite includes three analytical regression benchmarks — uniform block, series layers (Reuss bound), and parallel layers (Voigt bound) — each with exact discrete solutions that verify solver correctness to machine precision. Integration tests exercise the full pipeline on real tomographic data via CTest, and Catch2 unit tests cover configuration parsing and JSON output modules. Continuous integration enforces `clang-format` style checking, `clang-tidy` static analysis, and code coverage reporting via Codecov.
 
 # Future Directions
 
