@@ -21,9 +21,15 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          # Strip leading 'v' from tag (e.g. v4.0.2 -> 4.0.2)
-          VERSION="${GITHUB_REF_NAME#v}"
+          # For release events, GITHUB_REF_NAME is the tag (e.g. v4.0.2).
+          # For workflow_dispatch, fall back to git describe.
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${VERSION}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -211,3 +217,5 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+          verbose: true
+          attestations: false
