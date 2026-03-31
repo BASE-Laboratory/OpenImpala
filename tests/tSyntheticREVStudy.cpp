@@ -39,8 +39,7 @@
 struct TestStatus {
     bool passed = true;
     std::string fail_reason;
-    void recordFail(const std::string& reason)
-    {
+    void recordFail(const std::string& reason) {
         if (passed) {
             passed = false;
             fail_reason = reason;
@@ -48,8 +47,7 @@ struct TestStatus {
     }
 };
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     int hypre_ierr = HYPRE_Init();
     if (hypre_ierr != 0) {
         fprintf(stderr, "FATAL: HYPRE_Init() failed with code %d\n", hypre_ierr);
@@ -219,9 +217,9 @@ int main(int argc, char* argv[])
                             // Sub-volumes with Dirichlet BCs give D_eff = N/(N-1),
                             // but REV uses periodic BCs, so D_eff ≈ 1.0
                             if (std::abs(Dxx - 1.0) > diag_tolerance) {
-                                status.recordFail("D_xx = " + std::to_string(Dxx) +
-                                                  ", expected ~1.0 (tol=" +
-                                                  std::to_string(diag_tolerance) + ")");
+                                status.recordFail(
+                                    "D_xx = " + std::to_string(Dxx) +
+                                    ", expected ~1.0 (tol=" + std::to_string(diag_tolerance) + ")");
                             }
                             if (status.passed && std::abs(Dyy - 1.0) > diag_tolerance) {
                                 status.recordFail("D_yy = " + std::to_string(Dyy) +
