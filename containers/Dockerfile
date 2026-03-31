@@ -9,8 +9,8 @@ ARG OPENMPI_VERSION=4.1.6
 ARG HDF5_VERSION=1.12.3
 ARG AMREX_VERSION=23.11
 ARG HYPRE_VERSION=v2.30.0
-ARG OPENIMPALA_REPO=https://github.com/kramergroup/openImpala.git # <-- VERIFY URL
-ARG OPENIMPALA_BRANCH=working # <-- Default branch set to 'working'
+ARG OPENIMPALA_REPO=https://github.com/BASE-Laboratory/openImpala.git 
+ARG OPENIMPALA_BRANCH=master
 
 # Set frontend to noninteractive (less relevant for dnf, but good practice)
 ENV DEBIAN_FRONTEND=noninteractive
