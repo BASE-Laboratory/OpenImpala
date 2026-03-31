@@ -316,6 +316,17 @@ def tortuosity(
     else:
         raise TypeError("data must be a NumPy array or a VoxelImage")
 
+    # Pre-flight percolation check — fail fast before expensive solver
+    # construction and HYPRE matrix assembly.
+    pc = _core.PercolationCheck(img, phase, d, verbose)
+    if not pc.percolates:
+        dir_name = _core.PercolationCheck.direction_string(d)
+        raise PercolationError(
+            f"Phase {phase} does not percolate in the {dir_name} direction. "
+            f"The Krylov solver cannot converge when the conducting phase is "
+            f"disconnected between the inlet and outlet faces."
+        )
+
     # Volume fraction (cheap — pure counting, no flood fill)
     vf_calc = _core.VolumeFraction(img, phase, 0)
     vf_val = vf_calc.value_vf()
@@ -332,15 +343,6 @@ def tortuosity(
         solver_obj = _core.TortuosityHypre(
             img, vf_val, phase, d, st, results_path,
             0.0, 1.0, verbose, False,
-        )
-
-    # If no cells are reachable from both inlet and outlet, the constructor
-    # sets active_volume_fraction = 0 and skips matrix setup.  Detect this
-    # and raise the same PercolationError that users expect.
-    if solver_obj.active_volume_fraction <= 0.0:
-        raise PercolationError(
-            f"Phase {phase} does not percolate in direction "
-            f"{_core.PercolationCheck.direction_string(d)}"
         )
 
     try:
@@ -364,6 +366,42 @@ def tortuosity(
         flux_out=solver_obj.flux_out,
         active_volume_fraction=solver_obj.active_volume_fraction,
     )
+
+
+def estimate_memory(
+    shape: tuple[int, ...],
+    num_ranks: int = 1,
+) -> dict:
+    """Estimate per-rank memory usage for a tortuosity solve.
+
+    Uses the rule of thumb: ~80 bytes per active voxel (4 bytes phase data,
+    56 bytes HYPRE matrix for 7-point stencil, 8 bytes solution field,
+    ~12 bytes work arrays and ghost cells).
+
+    Parameters
+    ----------
+    shape : tuple of int
+        Domain dimensions (Nz, Ny, Nx).
+    num_ranks : int
+        Number of MPI ranks.
+
+    Returns
+    -------
+    dict
+        Keys: ``total_voxels``, ``voxels_per_rank``, ``bytes_per_rank``,
+        ``mb_per_rank``, ``gb_per_rank``, ``num_ranks``.
+    """
+    total = int(np.prod(shape))
+    per_rank = total / max(num_ranks, 1)
+    bytes_per_rank = per_rank * 80
+    return {
+        "total_voxels": total,
+        "voxels_per_rank": int(per_rank),
+        "bytes_per_rank": int(bytes_per_rank),
+        "mb_per_rank": round(bytes_per_rank / 1e6, 1),
+        "gb_per_rank": round(bytes_per_rank / 1e9, 2),
+        "num_ranks": num_ranks,
+    }
 
 
 def read_image(
