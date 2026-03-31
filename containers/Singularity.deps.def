@@ -11,8 +11,8 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     Installs OpenMPI, libtiff, AMReX, HYPRE from source using GCC 11.
 
 %labels
-    Maintainer "James Le Houx <jrl0@soton.ac.uk>" # <-- EXAMPLE, PLEASE UPDATE
-    Version 2.37-deps-amrex2503-hypre2320-ompfix # <-- UPDATED Version Label
+    Maintainer "James Le Houx <james.le-houx@gre.ac.uk>"
+    Version 2.37-deps-amrex2503-hypre2320-ompfix 
 
 %post
     set -e # Ensure commands exit on error early
