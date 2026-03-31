@@ -21,6 +21,7 @@ dependencies = [
 mpi = ["mpi4py"]
 progress = ["tqdm"]
 jupyter = ["matplotlib", "ipywidgets"]
+viz = ["yt", "matplotlib"]
 test = [
     "pytest>=7",
     "numpy",
@@ -37,6 +38,7 @@ all = [
     "tqdm",
     "matplotlib",
     "ipywidgets",
+    "yt",
     "pytest>=7",
 ]
 
