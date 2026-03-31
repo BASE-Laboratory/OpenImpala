@@ -11,7 +11,9 @@ OpenImpala is available on PyPI as pre-compiled wheels — no compilation requir
 pip install openimpala
 
 # GPU version (requires NVIDIA CUDA runtime)
-pip install openimpala-cuda
+# GPU wheels are distributed via GitHub Releases due to their size (~300 MB).
+pip install openimpala-cuda --find-links \
+  https://github.com/BASE-Laboratory/OpenImpala/releases/latest/download/
 ```
 
 **Requirements:** Python 3.8+ and NumPy. Optional: `mpi4py` for MPI parallelism.

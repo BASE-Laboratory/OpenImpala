@@ -29,8 +29,9 @@ Install from PyPI
    # CPU version
    pip install openimpala
 
-   # GPU version (NVIDIA CUDA)
-   pip install openimpala-cuda
+   # GPU version (NVIDIA CUDA) — distributed via GitHub Releases
+   pip install openimpala-cuda --find-links \
+     https://github.com/BASE-Laboratory/OpenImpala/releases/latest/download/
 
 .. toctree::
    :maxdepth: 2
