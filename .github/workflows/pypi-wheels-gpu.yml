@@ -198,13 +198,12 @@ jobs:
           name: cibw-wheels-gpu
           path: ./wheelhouse/*.whl
 
-  publish_to_pypi:
-    name: Publish GPU wheels to PyPI
+  upload_to_github_release:
+    name: Upload GPU wheels to GitHub Release
     needs: build_gpu_wheels
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
-      id-token: write
+      contents: write
 
     steps:
       - name: Download wheel artifacts
@@ -213,9 +212,12 @@ jobs:
           name: cibw-wheels-gpu
           path: dist/
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Upload wheels to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
         with:
-          skip-existing: true
-          verbose: true
-          attestations: false
+          files: dist/*.whl
+
+      - name: List wheels (workflow_dispatch — no release to upload to)
+        if: github.event_name == 'workflow_dispatch'
+        run: ls -lh dist/
