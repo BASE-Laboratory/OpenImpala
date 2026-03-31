@@ -1,0 +1,10 @@
+# RawReader test: INT16 Little Endian
+# Exercises 16-bit signed integer reading with byte-order handling.
+# Data contains values 0 and 129 (scaled from UINT8 0/1).
+
+rawfile = data/SampleData_2Phase_stack_3d_int16le.raw
+width   = 100
+height  = 100
+depth   = 100
+datatype = INT16_LE
+threshold = 64.0
