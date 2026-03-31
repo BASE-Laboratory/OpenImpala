@@ -100,6 +100,7 @@ openimpala_add_test(tSyntheticVolumeFraction  "${CMAKE_CURRENT_SOURCE_DIR}/tSynt
 openimpala_add_test(tSyntheticPercolation     "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticPercolation.cpp")
 openimpala_add_test(tSyntheticEffectiveDiffusivity "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticEffectiveDiffusivity.cpp")
 openimpala_add_test(tSyntheticMicrostructure "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticMicrostructure.cpp")
+openimpala_add_test(tSyntheticREVStudy "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticREVStudy.cpp")
 
 # ==============================================================================
 # Multi-Phase Transport Tests
