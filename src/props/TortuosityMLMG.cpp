@@ -3,6 +3,10 @@
 #include "TortuosityMLMG.H"
 
 #include <cmath>
+
+namespace {
+constexpr int cell_active = 1;
+} // namespace
 #include <iomanip>
 #include <string>
 
