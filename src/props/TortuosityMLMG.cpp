@@ -125,7 +125,50 @@ bool TortuosityMLMG::solve() {
     acoef.setVal(0.0);
     mlabec.setACoeffs(0, acoef);
 
-    // B-coefficients: face-centred diffusivities via harmonic mean
+    // B-coefficients: face-centred diffusivities via harmonic mean.
+    //
+    // First, extrapolate m_mf_diff_coeff into physical boundary ghost cells
+    // so that boundary-face harmonic means see the correct value (the adjacent
+    // interior cell's D) instead of the default 0.  Without this, boundary
+    // faces get B=0, effectively imposing zero-flux Neumann everywhere and
+    // preventing MLMG from enforcing Dirichlet BCs properly.
+    {
+        const amrex::Box& domain = m_geom.Domain();
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+        for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            amrex::Array4<amrex::Real> const dc = m_mf_diff_coeff.array(mfi);
+            const amrex::Box& vbx = mfi.validbox();
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                // Low boundary: copy interior value into ghost cell
+                if (vbx.smallEnd(d) == domain.smallEnd(d)) {
+                    const amrex::Box lobx = amrex::adjCellLo(vbx, d, 1);
+                    const int interior = domain.smallEnd(d);
+                    amrex::ParallelFor(
+                        lobx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                            amrex::IntVect iv(i, j, k);
+                            amrex::IntVect iv_int = iv;
+                            iv_int[d] = interior;
+                            dc(i, j, k) = dc(iv_int);
+                        });
+                }
+                // High boundary: copy interior value into ghost cell
+                if (vbx.bigEnd(d) == domain.bigEnd(d)) {
+                    const amrex::Box hibx = amrex::adjCellHi(vbx, d, 1);
+                    const int interior = domain.bigEnd(d);
+                    amrex::ParallelFor(
+                        hibx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                            amrex::IntVect iv(i, j, k);
+                            amrex::IntVect iv_int = iv;
+                            iv_int[d] = interior;
+                            dc(i, j, k) = dc(iv_int);
+                        });
+                }
+            }
+        }
+    }
+
     amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> bcoefs;
     for (int d = 0; d < AMREX_SPACEDIM; ++d) {
         amrex::BoxArray edge_ba = m_ba;
