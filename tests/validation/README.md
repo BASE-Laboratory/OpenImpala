@@ -73,6 +73,35 @@ python tests/validation/fetch_canonical_data.py --data-dir /tmp/vv_data
 
 **Exit code:** 0 if within tolerance, 1 if any value exceeds the threshold.
 
+### `sphere_packing_vv.py` — Sphere Packing HS Bound Validation
+
+Validates that OpenImpala's tortuosity solver respects the Hashin-Shtrikman
+upper bound on physically realistic isotropic microstructures generated from
+random overlapping sphere packings.
+
+**What it does:**
+
+1. Generates random overlapping sphere packings at varying solid fractions
+   (porosities from ~0.25 to ~0.85).
+2. Checks percolation of the pore phase in the solve direction.
+3. Runs the OpenImpala tortuosity solver on each percolating structure.
+4. Converts tortuosity to effective diffusivity: D_eff = φ / τ.
+5. Checks that every result falls below the HS upper bound: HS⁺ = 2φ/(3−φ).
+6. Produces a validation plot (`sphere_packing_vv.png`).
+
+**How to run:**
+
+```bash
+# From the repository root
+python tests/validation/sphere_packing_vv.py
+
+# With custom grid size and output path
+python tests/validation/sphere_packing_vv.py --grid-size 48 --output my_plot.png
+```
+
+**Exit code:** 0 if all results are within the HS upper bound, 1 if any
+violation is detected.
+
 ## The Hashin-Shtrikman Bounds: Physical Significance
 
 The Hashin-Shtrikman (HS) bounds are the **tightest possible bounds** on the
@@ -128,7 +157,8 @@ investigate before merging.
 ```
 tests/validation/
 ├── README.md                      ← this file
-├── analytical_bounds_vv.py        ← bounds validation script
+├── analytical_bounds_vv.py        ← bounds validation (layered/random structures)
+├── sphere_packing_vv.py           ← bounds validation (sphere packings)
 ├── fetch_canonical_data.py        ← dataset fetcher + reference validation
 └── data/                          ← downloaded datasets and reference JSON
     ├── SampleData_2Phase_*.tif    ← canonical TIFF (downloaded on first run)
