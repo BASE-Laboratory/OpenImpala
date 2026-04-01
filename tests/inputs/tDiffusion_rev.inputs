@@ -1,0 +1,30 @@
+# Diffusion.cpp Integration Test: REV Study Path
+#
+# Exercises the REV convergence study code path in Diffusion.cpp:
+#   - REV configuration parsing
+#   - Sub-volume extraction and cell-problem solve
+#   - CSV output generation
+# Uses a small domain with one small sub-volume size for speed.
+
+filename = SampleData_2Phase_stack_3d_1bit.tif
+data_path = ./data/
+results_path = ./tDiffusion_rev_results/
+threshold_val = 0.5
+phase_id = 1
+box_size = 32
+verbose = 1
+dry_run = 0
+write_plotfile = 0
+calculation_method = homogenization
+solver_type = FlexGMRES
+
+# --- Solver Controls ---
+hypre.maxiter = 200
+hypre.eps = 1e-8
+
+# --- REV Study Configuration ---
+rev.do_study = 1
+rev.num_samples = 1
+rev.sizes = 32
+rev.phase_id = 1
+rev.write_plotfiles = 0

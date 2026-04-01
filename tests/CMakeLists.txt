@@ -74,6 +74,51 @@ openimpala_add_test(tTiffReader    "${CMAKE_CURRENT_SOURCE_DIR}/tTiffReader.cpp"
 openimpala_add_test(tRawReader     "${CMAKE_CURRENT_SOURCE_DIR}/tRawReader.cpp")
 openimpala_add_test(tHDF5Reader    "${CMAKE_CURRENT_SOURCE_DIR}/tHDF5Reader.cpp")
 
+# RawReader UINT16_LE variant: exercises 16-bit unsigned integer path
+add_test(
+    NAME tRawReader_uint16le
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tRawReader>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tRawReader_uint16le.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tRawReader_uint16le PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# RawReader INT16_LE variant: exercises 16-bit signed integer path
+add_test(
+    NAME tRawReader_int16le
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tRawReader>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tRawReader_int16le.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tRawReader_int16le PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# RawReader FLOAT32_LE variant: exercises 32-bit float path
+add_test(
+    NAME tRawReader_float32le
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tRawReader>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tRawReader_float32le.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tRawReader_float32le PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
 # ==============================================================================
 # Props Tests
 # ==============================================================================
@@ -100,6 +145,7 @@ openimpala_add_test(tSyntheticVolumeFraction  "${CMAKE_CURRENT_SOURCE_DIR}/tSynt
 openimpala_add_test(tSyntheticPercolation     "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticPercolation.cpp")
 openimpala_add_test(tSyntheticEffectiveDiffusivity "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticEffectiveDiffusivity.cpp")
 openimpala_add_test(tSyntheticMicrostructure "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticMicrostructure.cpp")
+openimpala_add_test(tSyntheticREVStudy "${CMAKE_CURRENT_SOURCE_DIR}/tSyntheticREVStudy.cpp")
 
 # ==============================================================================
 # Multi-Phase Transport Tests
@@ -421,6 +467,51 @@ add_test(
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
 set_tests_properties(tDiffusion_hdf5 PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 600
+)
+
+# Microstructure parameterization: SSA, profiles, PSD
+add_test(
+    NAME tDiffusion_microstructure
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:Diffusion>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tDiffusion_microstructure.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tDiffusion_microstructure PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
+# Tortuosity (flow-through) method with conductivity physics type
+add_test(
+    NAME tDiffusion_tortuosity
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:Diffusion>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tDiffusion_tortuosity.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tDiffusion_tortuosity PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 600
+)
+
+# REV convergence study path
+add_test(
+    NAME tDiffusion_rev
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:Diffusion>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tDiffusion_rev.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tDiffusion_rev PROPERTIES
     ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
     TIMEOUT 600
 )

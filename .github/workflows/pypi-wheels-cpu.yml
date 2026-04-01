@@ -18,6 +18,19 @@ jobs:
           submodules: recursive # Fetches Catch2, nlohmann/json, or pybind11 if needed
           fetch-depth: 0
 
+      - name: Extract version from tag
+        id: version
+        run: |
+          # For release events, GITHUB_REF_NAME is the tag (e.g. v4.0.2).
+          # For workflow_dispatch, fall back to git describe.
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${VERSION}"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -130,6 +143,7 @@ jobs:
             CMAKE_CXX_COMPILER="mpicxx"
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
+            SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
 
           # Vendor libraries into the wheel, but exclude host-specific MPI and
           # runtime libraries that users must provide on their system.
