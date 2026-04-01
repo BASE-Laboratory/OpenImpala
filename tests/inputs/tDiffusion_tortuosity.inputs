@@ -15,7 +15,7 @@ box_size = 32
 verbose = 1
 dry_run = 0
 write_plotfile = 0
-calculation_method = tortuosity
+calculation_method = flow_through
 direction = Z
 solver_type = FlexGMRES
 
