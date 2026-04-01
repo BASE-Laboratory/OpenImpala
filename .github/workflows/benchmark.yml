@@ -102,7 +102,7 @@ jobs:
           import openimpala as oi
 
           sizes = [int(s) for s in os.environ.get("BENCH_SIZES", "64,128").split(",")]
-          solvers = ["pcg", "flexgmres", "pfmg", "mlmg"]
+          solvers = ["pcg", "flexgmres", "bicgstab", "gmres"]
           n_repeats = 3
           results = []
 
