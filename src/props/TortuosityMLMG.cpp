@@ -145,25 +145,23 @@ bool TortuosityMLMG::solve() {
                 if (vbx.smallEnd(d) == domain.smallEnd(d)) {
                     const amrex::Box lobx = amrex::adjCellLo(vbx, d, 1);
                     const int interior = domain.smallEnd(d);
-                    amrex::ParallelFor(
-                        lobx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-                            amrex::IntVect iv(i, j, k);
-                            amrex::IntVect iv_int = iv;
-                            iv_int[d] = interior;
-                            dc(i, j, k) = dc(iv_int);
-                        });
+                    amrex::ParallelFor(lobx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                        amrex::IntVect iv(i, j, k);
+                        amrex::IntVect iv_int = iv;
+                        iv_int[d] = interior;
+                        dc(i, j, k) = dc(iv_int);
+                    });
                 }
                 // High boundary: copy interior value into ghost cell
                 if (vbx.bigEnd(d) == domain.bigEnd(d)) {
                     const amrex::Box hibx = amrex::adjCellHi(vbx, d, 1);
                     const int interior = domain.bigEnd(d);
-                    amrex::ParallelFor(
-                        hibx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-                            amrex::IntVect iv(i, j, k);
-                            amrex::IntVect iv_int = iv;
-                            iv_int[d] = interior;
-                            dc(i, j, k) = dc(iv_int);
-                        });
+                    amrex::ParallelFor(hibx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                        amrex::IntVect iv(i, j, k);
+                        amrex::IntVect iv_int = iv;
+                        iv_int[d] = interior;
+                        dc(i, j, k) = dc(iv_int);
+                    });
                 }
             }
         }
@@ -227,6 +225,47 @@ bool TortuosityMLMG::solve() {
     // but with residual above tolerance)
     if (m_converged && res_norm >= m_eps) {
         m_converged = false;
+    }
+
+    // --- Pin boundary cells to Dirichlet values ---
+    // AMReX MLABecLaplacian applies Dirichlet BCs at domain faces (half-cell
+    // outside the boundary cell centre). The shared globalFluxes() code uses
+    // cell-to-cell gradients and expects the HYPRE convention where Dirichlet
+    // values are imposed at the boundary cell centres themselves. Overwrite
+    // the boundary cells with vlo/vhi so flux integration is consistent.
+    if (m_converged) {
+        const amrex::Box& domain = m_geom.Domain();
+        const amrex::Real vlo = m_vlo;
+        const amrex::Real vhi = m_vhi;
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+        for (amrex::MFIter mfi(m_mf_solution, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.tilebox();
+            amrex::Array4<amrex::Real> const phi = m_mf_solution.array(mfi);
+            amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
+
+            // Low boundary face in flow direction
+            if (bx.smallEnd(idir) == domain.smallEnd(idir)) {
+                amrex::Box lo_slab = bx;
+                lo_slab.setBig(idir, domain.smallEnd(idir));
+                amrex::ParallelFor(lo_slab, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                    if (mask(i, j, k) == cell_active) {
+                        phi(i, j, k) = vlo;
+                    }
+                });
+            }
+            // High boundary face in flow direction
+            if (bx.bigEnd(idir) == domain.bigEnd(idir)) {
+                amrex::Box hi_slab = bx;
+                hi_slab.setSmall(idir, domain.bigEnd(idir));
+                amrex::ParallelFor(hi_slab, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                    if (mask(i, j, k) == cell_active) {
+                        phi(i, j, k) = vhi;
+                    }
+                });
+            }
+        }
     }
 
     m_mf_solution.FillBoundary(m_geom.periodicity());
