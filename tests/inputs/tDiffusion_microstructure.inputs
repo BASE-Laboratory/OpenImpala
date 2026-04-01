@@ -1,0 +1,30 @@
+# Diffusion.cpp Integration Test: Microstructure Parameterization
+#
+# Exercises the microstructure analysis code paths in Diffusion.cpp:
+#   - Specific surface area (SSA) with Cauchy-Crofton correction
+#   - Through-thickness volume fraction profiles
+#   - Particle size distribution via connected component labelling
+#   - Macro geometry extraction
+#   - Multi-phase volume fractions
+# Runs in dry-run mode (no solver) to keep it fast.
+
+filename = SampleData_2Phase_stack_3d_1bit.tif
+data_path = ./data/
+results_path = ./tDiffusion_microstructure_results/
+threshold_val = 0.5
+phase_id = 1
+box_size = 32
+verbose = 1
+dry_run = 1
+calculation_method = homogenization
+solver_type = FlexGMRES
+
+# Enable all microstructure characterization modules
+microstructure.compute_ssa = 1
+microstructure.compute_profiles = 1
+microstructure.compute_psd = 1
+microstructure.ssa_phase_a = 0
+microstructure.ssa_phase_b = 1
+microstructure.psd_phase_id = 1
+microstructure.profile_direction = Z
+microstructure.voxel_size_m = 1.0e-6

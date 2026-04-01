@@ -1,0 +1,17 @@
+# Synthetic REV Study Test
+# Uniform domain — D_eff should be ~I for all sub-volume sizes
+domain_size = 16
+box_size = 16
+verbose = 1
+
+# Tolerance for D_eff diagonal elements (expected ~1.0)
+diag_tolerance = 0.15
+
+# Tolerance for off-diagonal elements (expected ~0.0)
+offdiag_tolerance = 0.1
+
+resultsdir = ./tSyntheticREVStudy_results
+
+# HYPRE solver settings
+hypre.maxiter = 200
+hypre.eps = 1e-8

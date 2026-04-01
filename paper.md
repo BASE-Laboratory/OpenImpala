@@ -15,9 +15,6 @@ authors:
     corresponding: true
     email: james.le-houx@stfc.ac.uk
     affiliation: "1, 2, 3"
-  - name: Denis Kramer
-    orcid: 0000-0003-0605-1047
-    affiliation: 4
 affiliations:
  - name: University of Greenwich, Old Royal Naval College, Park Row, London, SE10 9LS, United Kingdom
    index: 1
@@ -25,8 +22,6 @@ affiliations:
    index: 2
  - name: The Faraday Institution, Harwell Science and Innovation Campus, Didcot, OX11 0RA, United Kingdom
    index: 3
- - name: Helmut Schmidt University, Hamburg, Germany
-   index: 4
 date: 29 March 2026
 bibliography: paper.bib
 ---
@@ -88,7 +83,7 @@ with oi.Session():
     print(f"Tortuosity: {result.tortuosity:.4f}")
 ```
 
-Pre-compiled CPU and CUDA GPU wheels are distributed via PyPI (`pip install openimpala` or `pip install openimpala-cuda`), built using `cibuildwheel` with statically linked dependencies. Interactive tutorial notebooks are provided for Google Colab, covering workflows from basic tortuosity computation to digital twin parameterisation with PyBaMM.
+Pre-compiled CPU wheels are distributed via PyPI (`pip install openimpala`) and CUDA GPU wheels via GitHub Releases (`pip install openimpala-cuda --find-links https://github.com/BASE-Laboratory/OpenImpala/releases/latest/download/`), both built using `cibuildwheel` with statically linked dependencies. Interactive tutorial notebooks are provided for Google Colab, covering workflows from basic tortuosity computation to digital twin parameterisation with PyBaMM. API reference documentation, installation guides, and interactive tutorial notebooks are available at https://base-laboratory.github.io/OpenImpala/
 
 ## Testing and Quality Assurance
 
@@ -99,9 +94,11 @@ The test suite includes three analytical regression benchmarks — uniform block
 Active development is focused on three areas. First, GPU-accelerated solves via CUDA are now available through dedicated PyPI wheels, and profiling infrastructure (AMReX TinyProfiler integration, NVIDIA Nsight Systems workflows) has been established to guide further kernel-level optimisation. Second, embedded boundary (cut-cell) methods via AMReX's EB2 infrastructure are being investigated to achieve sub-voxel geometric accuracy without mesh generation. Third, direct memory-coupling with PyBaMM [@sulzer2021python] is planned to enable researchers to perform 3D microstructural parameterisation and 1D electrochemical simulation in a single, zero-copy Python script.
 
 # Acknowledgements
+The author thanks Denis Kramer for his supervision and initial conceptual direction during the early development of the OpenImpala framework during the author's doctoral studies.
 
 This work was financially supported by the EPSRC Centre for Doctoral Training (CDT) in Energy Storage and its Applications [grant ref: EP/R021295/1]; the Ada Lovelace Centre (ALC) STFC project, CANVAS-NXtomo; the EPSRC prosperity partnership with Imperial College, INFUSE [grant ref: EP/V038044/1]; the Rutherford Appleton Laboratory; The Faraday Institution through James Le Houx's Emerging Leader Fellowship [Grant No. FIELF001]; and Research England's 'Expanding Excellence in England' grant at the University of Greenwich via the "Multi-scale Multi-disciplinary Modelling for Impact" (M34Impact) programme.
 
-The authors acknowledge the use of the IRIDIS High Performance Computing Facility, Diamond Light Source's Wilson HPC cluster, STFC's SCARF cluster, and the University of Greenwich's M34Impact HPC Cluster. We also thank the developers of AMReX, HYPRE, libtiff, and HDF5, upon which OpenImpala relies.
+The author acknowledge the use of the IRIDIS High Performance Computing Facility, Diamond Light Source's Wilson HPC cluster, STFC's SCARF cluster, and the University of Greenwich's M34Impact HPC Cluster. We also thank the developers of AMReX, HYPRE, libtiff, and HDF5, upon which OpenImpala relies.
 
-# References
+# AI Usage Disclosure
+Generative AI (Anthropic's Claude) was used to assist with specific software development tasks, including Fortran-to-C++ kernel translation, boilerplate test generation, and documentation formatting. The author reviewed, edited, and validated all AI-assisted outputs, made all core architectural decisions, and assumes full responsibility for the accuracy, correctness, and originality of the codebase.

@@ -1,0 +1,28 @@
+# Diffusion.cpp Integration Test: Tortuosity (flow-through) Method
+#
+# Exercises the flow-through tortuosity code path in Diffusion.cpp:
+#   - TortuosityHypre solver (instead of EffectiveDiffusivityHypre)
+#   - Single-direction solve (Z)
+#   - ResultsJSON output with tortuosity factor
+#   - Physics configuration: electrical conductivity type
+
+filename = SampleData_2Phase_stack_3d_1bit.tif
+data_path = ./data/
+results_path = ./tDiffusion_tortuosity_results/
+threshold_val = 0.5
+phase_id = 1
+box_size = 32
+verbose = 1
+dry_run = 0
+write_plotfile = 0
+calculation_method = flow_through
+direction = Z
+solver_type = FlexGMRES
+
+# --- Solver Controls ---
+hypre.maxiter = 500
+hypre.eps = 1e-9
+
+# --- Physics Configuration ---
+physics.type = electrical_conductivity
+physics.bulk_property = 1.0

@@ -73,6 +73,68 @@ python tests/validation/fetch_canonical_data.py --data-dir /tmp/vv_data
 
 **Exit code:** 0 if within tolerance, 1 if any value exceeds the threshold.
 
+### `sphere_packing_vv.py` — Sphere Packing HS Bound Validation
+
+Validates that OpenImpala's tortuosity solver respects the Hashin-Shtrikman
+upper bound on physically realistic isotropic microstructures generated from
+random overlapping sphere packings.
+
+**What it does:**
+
+1. Generates random overlapping sphere packings at varying solid fractions
+   (porosities from ~0.25 to ~0.85).
+2. Checks percolation of the pore phase in the solve direction.
+3. Runs the OpenImpala tortuosity solver on each percolating structure.
+4. Converts tortuosity to effective diffusivity: D_eff = φ / τ.
+5. Checks that every result falls below the HS upper bound: HS⁺ = 2φ/(3−φ).
+6. Produces a validation plot (`sphere_packing_vv.png`).
+
+**How to run:**
+
+```bash
+# From the repository root
+python tests/validation/sphere_packing_vv.py
+
+# With custom grid size and output path
+python tests/validation/sphere_packing_vv.py --grid-size 48 --output my_plot.png
+```
+
+**Exit code:** 0 if all results are within the HS upper bound, 1 if any
+violation is detected.
+
+### `berea_sandstone_vv.py` — Experimental Validation (Berea Sandstone)
+
+Validates OpenImpala against published experimental data for Berea sandstone
+— the most widely studied porous medium in digital rock physics. This is
+the script that bridges the gap from *verification* (math is correct) to
+*validation* (physics matches reality).
+
+**What it does:**
+
+1. Downloads a 400³ micro-CT image of Berea sandstone from the Digital Rocks
+   Portal (Dong & Blunt 2009, project #317) at 5.345 µm/voxel resolution.
+   Falls back to a synthetic structure if the download fails (offline CI).
+2. Segments the image and identifies the pore phase.
+3. Checks porosity against the published range (0.15 – 0.28).
+4. Checks percolation in all three directions.
+5. Solves for tortuosity in each percolating direction.
+6. Validates tortuosity (2.0 – 6.0) and formation factor (10 – 25) against
+   literature consensus from multiple independent measurements.
+7. Reports isotropy of the computed tortuosity tensor.
+
+**How to run:**
+
+```bash
+# From the repository root
+python tests/validation/berea_sandstone_vv.py
+
+# With custom data directory
+python tests/validation/berea_sandstone_vv.py --data-dir /tmp/berea_data
+```
+
+**Exit code:** 0 if all properties fall within published experimental ranges,
+1 if any value is outside the expected range.
+
 ## The Hashin-Shtrikman Bounds: Physical Significance
 
 The Hashin-Shtrikman (HS) bounds are the **tightest possible bounds** on the
@@ -128,7 +190,9 @@ investigate before merging.
 ```
 tests/validation/
 ├── README.md                      ← this file
-├── analytical_bounds_vv.py        ← bounds validation script
+├── analytical_bounds_vv.py        ← bounds validation (layered/random structures)
+├── sphere_packing_vv.py           ← bounds validation (sphere packings)
+├── berea_sandstone_vv.py          ← experimental validation (Berea sandstone)
 ├── fetch_canonical_data.py        ← dataset fetcher + reference validation
 └── data/                          ← downloaded datasets and reference JSON
     ├── SampleData_2Phase_*.tif    ← canonical TIFF (downloaded on first run)

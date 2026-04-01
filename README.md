@@ -130,6 +130,13 @@ conda install -c conda-forge openmpi
 pip install openimpala
 ```
 
+For **GPU acceleration** (NVIDIA CUDA), install `openimpala-cuda` from GitHub Releases:
+
+```bash
+pip install openimpala-cuda --find-links \
+  https://github.com/BASE-Laboratory/OpenImpala/releases/latest/download/
+```
+
 To install with optional dependencies:
 
 ```bash

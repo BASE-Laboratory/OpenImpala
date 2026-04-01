@@ -288,6 +288,7 @@ jobs:
               gcovr --root . \
                 --filter "src/" \
                 --print-summary \
+                --gcov-ignore-parse-errors=suspicious_hits.warn_once_per_file \
                 --xml coverage.xml \
                 --txt coverage.txt \
                 cmake_build_cov/
