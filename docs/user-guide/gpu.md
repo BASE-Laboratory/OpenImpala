@@ -8,7 +8,7 @@ flood fills, and solver loops are GPU-compatible.
 ```bash
 # GPU wheels are distributed via GitHub Releases due to their size (~300 MB).
 pip install openimpala-cuda --find-links \
-  https://github.com/BASE-Laboratory/OpenImpala/releases/latest/download/
+  https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6
 ```
 
 The GPU wheel requires:
