@@ -79,39 +79,18 @@ bool TortuosityMLMG::solve() {
     }
     mlabec.setDomainBC(lo_bc, hi_bc);
 
-    // --- Adjust Dirichlet face values for HYPRE-compatible cell-centre BCs ---
-    //
-    // AMReX MLABecLaplacian applies Dirichlet BCs at domain faces (half a cell
-    // outside the boundary cell centre). The shared flux integration code
-    // (globalFluxes / value) expects the HYPRE convention where Dirichlet
-    // values are at boundary cell centres: cell 0 = vlo, cell N-1 = vhi.
-    //
-    // To make the MLMG face BC produce the same cell-centre values, we extend
-    // the face values outward by half a cell:
-    //   face_lo = vlo - 0.5 * (vhi - vlo) / (N - 1)
-    //   face_hi = vhi + 0.5 * (vhi - vlo) / (N - 1)
-    //
-    // This ensures the linear solution through cell centres hits exactly
-    // vlo at cell 0 and vhi at cell N-1, matching HYPRE's τ = (N-1)/N.
-    const amrex::Box& domain = m_geom.Domain();
-    const int n_cells = domain.length(idir);
-    if (n_cells <= 1) {
-        amrex::Abort("TortuosityMLMG: domain must have more than 1 cell in flow direction.");
-    }
-    const amrex::Real half_step = 0.5 * (m_vhi - m_vlo) / static_cast<amrex::Real>(n_cells - 1);
-    const amrex::Real face_vlo = m_vlo - half_step;
-    const amrex::Real face_vhi = m_vhi + half_step;
-
     // Set initial guess: linear ramp in flow direction for better convergence
     m_mf_solution.setVal(0.0);
     {
+        const amrex::Box& domain = m_geom.Domain();
+        const int n_cells = domain.length(idir);
+        if (n_cells <= 1) {
+            amrex::Abort("TortuosityMLMG: domain must have more than 1 cell in flow direction.");
+        }
         const int dom_lo_dir = domain.smallEnd(idir);
         const int dom_hi_dir = domain.bigEnd(idir);
-        const amrex::Real vlo = face_vlo;
-        const amrex::Real vhi = face_vhi;
-        // Ramp from face_vlo at the low face to face_vhi at the high face.
-        // Cell centres at i map to fraction (i - dom_lo + 0.5) / n_cells.
-        const amrex::Real inv_n = 1.0 / static_cast<amrex::Real>(n_cells);
+        const amrex::Real vlo = m_vlo;
+        const amrex::Real vhi = m_vhi;
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
@@ -121,7 +100,8 @@ bool TortuosityMLMG::solve() {
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
                 amrex::IntVect iv(i, j, k);
                 int idx_in_dir = iv[idir] - dom_lo_dir;
-                amrex::Real frac = (static_cast<amrex::Real>(idx_in_dir) + 0.5) * inv_n;
+                amrex::Real frac =
+                    static_cast<amrex::Real>(idx_in_dir) / static_cast<amrex::Real>(n_cells - 1);
                 if (iv[idir] >= dom_lo_dir && iv[idir] <= dom_hi_dir) {
                     phi(i, j, k) = vlo + frac * (vhi - vlo);
                 } else if (iv[idir] < dom_lo_dir) {
@@ -134,7 +114,7 @@ bool TortuosityMLMG::solve() {
     }
     m_mf_solution.FillBoundary(m_geom.periodicity());
 
-    // Set level BC (ghost cell values encode the Dirichlet face data)
+    // Set level BC (ghost cell values encode the Dirichlet data)
     mlabec.setLevelBC(0, &m_mf_solution);
 
     // Set coefficients: alpha*a - beta*div(B*grad)
@@ -145,48 +125,7 @@ bool TortuosityMLMG::solve() {
     acoef.setVal(0.0);
     mlabec.setACoeffs(0, acoef);
 
-    // B-coefficients: face-centred diffusivities via harmonic mean.
-    //
-    // First, extrapolate m_mf_diff_coeff into physical boundary ghost cells
-    // so that boundary-face harmonic means see the correct value (the adjacent
-    // interior cell's D) instead of the default 0.  Without this, boundary
-    // faces get B=0, effectively imposing zero-flux Neumann everywhere and
-    // preventing MLMG from enforcing Dirichlet BCs properly.
-    {
-        const amrex::Box& domain = m_geom.Domain();
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-        for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-            amrex::Array4<amrex::Real> const dc = m_mf_diff_coeff.array(mfi);
-            const amrex::Box& vbx = mfi.validbox();
-            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-                // Low boundary: copy interior value into ghost cell
-                if (vbx.smallEnd(d) == domain.smallEnd(d)) {
-                    const amrex::Box lobx = amrex::adjCellLo(vbx, d, 1);
-                    const int interior = domain.smallEnd(d);
-                    amrex::ParallelFor(lobx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-                        amrex::IntVect iv(i, j, k);
-                        amrex::IntVect iv_int = iv;
-                        iv_int[d] = interior;
-                        dc(i, j, k) = dc(iv_int);
-                    });
-                }
-                // High boundary: copy interior value into ghost cell
-                if (vbx.bigEnd(d) == domain.bigEnd(d)) {
-                    const amrex::Box hibx = amrex::adjCellHi(vbx, d, 1);
-                    const int interior = domain.bigEnd(d);
-                    amrex::ParallelFor(hibx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-                        amrex::IntVect iv(i, j, k);
-                        amrex::IntVect iv_int = iv;
-                        iv_int[d] = interior;
-                        dc(i, j, k) = dc(iv_int);
-                    });
-                }
-            }
-        }
-    }
-
+    // B-coefficients: face-centred diffusivities via harmonic mean
     amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> bcoefs;
     for (int d = 0; d < AMREX_SPACEDIM; ++d) {
         amrex::BoxArray edge_ba = m_ba;

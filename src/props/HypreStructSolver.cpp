@@ -480,9 +480,8 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         HYPRE_CHECK(ierr);
         HYPRE_StructPFMGSetTol(solver, m_eps);
         HYPRE_StructPFMGSetMaxIter(solver, m_maxiter);
-        HYPRE_StructPFMGSetNumPreRelax(solver, 2);
-        HYPRE_StructPFMGSetNumPostRelax(solver, 2);
-        HYPRE_StructPFMGSetRelaxType(solver, 2); // 2 = weighted Jacobi (more stable)
+        HYPRE_StructPFMGSetNumPreRelax(solver, 1);
+        HYPRE_StructPFMGSetNumPostRelax(solver, 1);
         HYPRE_StructPFMGSetPrintLevel(solver, m_verbose > 1 ? 3 : 0);
 
         ierr = HYPRE_StructPFMGSetup(solver, m_A, m_b, m_x);
