@@ -83,7 +83,7 @@ with oi.Session():
     print(f"Tortuosity: {result.tortuosity:.4f}")
 ```
 
-Pre-compiled CPU wheels are distributed via PyPI (`pip install openimpala`) and CUDA GPU wheels via GitHub Releases (`pip install openimpala-cuda --find-links https://github.com/BASE-Laboratory/OpenImpala/releases/latest/download/`), both built using `cibuildwheel` with statically linked dependencies. Interactive tutorial notebooks are provided for Google Colab, covering workflows from basic tortuosity computation to digital twin parameterisation with PyBaMM. API reference documentation, installation guides, and interactive tutorial notebooks are available at https://base-laboratory.github.io/OpenImpala/
+Pre-compiled CPU wheels are distributed via PyPI (`pip install openimpala`) and CUDA GPU wheels via GitHub Releases (`pip install openimpala-cuda --find-links https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6`), both built using `cibuildwheel` with statically linked dependencies. Interactive tutorial notebooks are provided for Google Colab, covering workflows from basic tortuosity computation to digital twin parameterisation with PyBaMM. API reference documentation, installation guides, and interactive tutorial notebooks are available at https://base-laboratory.github.io/OpenImpala/
 
 ## Testing and Quality Assurance
 

@@ -13,7 +13,7 @@ pip install openimpala
 # GPU version (requires NVIDIA CUDA runtime)
 # GPU wheels are distributed via GitHub Releases due to their size (~300 MB).
 pip install openimpala-cuda --find-links \
-  https://github.com/BASE-Laboratory/OpenImpala/releases/latest/download/
+  https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6
 ```
 
 **Requirements:** Python 3.8+ and NumPy. Optional: `mpi4py` for MPI parallelism.
@@ -25,7 +25,7 @@ For HPC clusters, download the pre-built Apptainer/Singularity container from
 
 ```bash
 # Download the latest .sif file
-wget https://github.com/BASE-Laboratory/OpenImpala/releases/latest/download/openimpala-v4.0.0.sif
+wget https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6openimpala-v4.0.0.sif
 
 # Run interactively
 apptainer shell openimpala-v4.0.0.sif

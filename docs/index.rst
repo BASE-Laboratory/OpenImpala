@@ -31,7 +31,7 @@ Install from PyPI
 
    # GPU version (NVIDIA CUDA) — distributed via GitHub Releases
    pip install openimpala-cuda --find-links \
-     https://github.com/BASE-Laboratory/OpenImpala/releases/latest/download/
+     https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6
 
 .. toctree::
    :maxdepth: 2
