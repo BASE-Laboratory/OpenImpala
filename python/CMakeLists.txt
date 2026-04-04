@@ -35,6 +35,13 @@ pybind11_add_module(_core ${BINDING_SOURCES})
 # that require compilation by nvcc.
 if(GPU_BACKEND STREQUAL "CUDA")
     set_source_files_properties(${BINDING_SOURCES} PROPERTIES LANGUAGE CUDA)
+    # AMReX's static library contains relocatable device code (RDC).  The _core
+    # shared library must run CUDA's device linker to resolve __cudaRegister*
+    # symbols from AMReX and HYPRE device objects.
+    set_target_properties(_core PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    )
 endif()
 
 target_link_libraries(_core PRIVATE
