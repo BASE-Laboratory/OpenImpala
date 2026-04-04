@@ -134,7 +134,7 @@ For **GPU acceleration** (NVIDIA CUDA), install `openimpala-cuda` from GitHub Re
 
 ```bash
 pip install openimpala-cuda --find-links \
-  https://github.com/BASE-Laboratory/OpenImpala/releases/latest/download/
+  https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6
 ```
 
 To install with optional dependencies:

@@ -93,20 +93,16 @@ jobs:
             SIZES="64,128"
           fi
 
-          cat > /tmp/bench.py << 'BENCHEOF'
+          cat > $PWD/bench.py << 'BENCHEOF'
           import sys
           import os
           import json
           import time
           import numpy as np
-
-          # Add the build directory to Python path
-          sys.path.insert(0, "/src/cmake_build_bench")
-
           import openimpala as oi
 
           sizes = [int(s) for s in os.environ.get("BENCH_SIZES", "64,128").split(",")]
-          solvers = ["pcg", "flexgmres", "pfmg", "mlmg"]
+          solvers = ["pcg", "flexgmres", "bicgstab", "gmres"]
           n_repeats = 3
           results = []
 
@@ -166,7 +162,7 @@ jobs:
                           })
 
           # Write results to JSON
-          with open("/tmp/benchmark_results.json", "w") as f:
+          with open("/src/benchmark_results.json", "w") as f:
               json.dump(results, f, indent=2)
 
           print(f"\n{len(results)} benchmark results written.")
@@ -178,13 +174,14 @@ jobs:
             ./dependency_image.sif \
             bash -c "
               source /opt/rh/gcc-toolset-11/enable
-              export PYTHONPATH=/src/cmake_build_bench
+              export PYTHONPATH=/src/python
               export BENCH_SIZES=$SIZES
-              cd /src && python3.11 /tmp/bench.py
+              cd /src && python3.11 /src/bench.py
             "
 
-          # Copy results out for the next step
-          cp /tmp/benchmark_results.json ./benchmark_results.json 2>/dev/null || true
+          # bench.py writes results to /src/benchmark_results.json (= $PWD inside container)
+          # Clean up the helper script
+          rm -f bench.py
 
       - name: Generate benchmark report
         id: report

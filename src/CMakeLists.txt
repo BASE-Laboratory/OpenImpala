@@ -78,6 +78,15 @@ if(OPENIMPALA_PYTHON)
 endif()
 
 # ==============================================================================
+# CUDA Separable Compilation (required for device linking with AMReX/HYPRE)
+# ==============================================================================
+if(GPU_BACKEND STREQUAL "CUDA")
+    set_target_properties(openimpala_io openimpala_props PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+endif()
+
+# ==============================================================================
 # Diffusion Application
 # ==============================================================================
 add_executable(Diffusion
