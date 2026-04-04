@@ -4,19 +4,37 @@
 
 ### Python (recommended)
 
-OpenImpala is available on PyPI as pre-compiled wheels — no compilation required.
+OpenImpala is available on PyPI — no compilation required.
 
 ```bash
-# CPU version (works everywhere)
 pip install openimpala
+```
 
-# GPU version (requires NVIDIA CUDA runtime)
-# GPU wheels are distributed via GitHub Releases due to their size (~300 MB).
+**GPU acceleration** is automatic. If you have an NVIDIA GPU and
+[CuPy](https://cupy.dev/) installed, OpenImpala detects it at runtime and
+offloads compute kernels to the GPU. No separate package is needed:
+
+```bash
+# Optional: install CuPy for automatic GPU acceleration
+pip install cupy-cuda12x   # match your CUDA toolkit version
+```
+
+If CuPy is not available, OpenImpala falls back to SciPy on the CPU.
+
+**Requirements:** Python 3.8+ and NumPy. Optional: `mpi4py` for MPI parallelism.
+
+#### Advanced / HPC: compiled HYPRE backend
+
+For HPC clusters that need the compiled C++ HYPRE solvers, a separate package
+is available:
+
+```bash
 pip install openimpala-cuda --find-links \
   https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6
 ```
 
-**Requirements:** Python 3.8+ and NumPy. Optional: `mpi4py` for MPI parallelism.
+This package bundles AMReX + HYPRE compiled with CUDA and is a drop-in
+replacement for the pure-Python `openimpala` package.
 
 ### Container (HPC)
 
