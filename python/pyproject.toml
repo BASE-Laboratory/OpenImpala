@@ -1,0 +1,36 @@
+# Pure-Python build configuration for the openimpala package.
+#
+# This builds a wheel containing only the Python files (no compiled _core.so).
+# The pure-Python solver backend (SciPy/CuPy) provides full functionality
+# without any C++ dependencies.
+#
+# The root pyproject.toml (scikit-build-core) is used for compiled wheels
+# (openimpala-cuda) that include the C++ HYPRE/AMReX backend.
+
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openimpala"
+dynamic = ["version"]
+description = "Transport-property computation on 3-D voxel images — tortuosity, diffusivity, and more"
+readme = {text = "Transport-property computation on 3-D voxel images — tortuosity, diffusivity, and more.", content-type = "text/plain"}
+license = "BSD-3-Clause"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+    "scipy>=1.7",
+]
+
+[project.scripts]
+openimpala = "openimpala.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["openimpala*"]
+
+[tool.setuptools_scm]
+root = ".."
+local_scheme = "no-local-version"
+fallback_version = "4.0.2"

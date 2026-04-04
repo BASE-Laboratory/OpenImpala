@@ -19,7 +19,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gpu = ["cupy-cuda12x"]
 mpi = ["mpi4py"]
 progress = ["tqdm"]
 jupyter = ["matplotlib", "ipywidgets"]
