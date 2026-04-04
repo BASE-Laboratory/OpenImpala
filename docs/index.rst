@@ -26,12 +26,11 @@ Install from PyPI
 
 .. code-block:: bash
 
-   # CPU version
    pip install openimpala
 
-   # GPU version (NVIDIA CUDA) — distributed via GitHub Releases
-   pip install openimpala-cuda --find-links \
-     https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6
+GPU acceleration is automatic when `CuPy <https://cupy.dev/>`_ is installed.
+For HPC clusters needing compiled HYPRE solvers, see ``openimpala-cuda`` in the
+:doc:`getting-started` guide.
 
 .. toctree::
    :maxdepth: 2

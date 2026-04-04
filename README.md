@@ -130,7 +130,19 @@ conda install -c conda-forge openmpi
 pip install openimpala
 ```
 
-For **GPU acceleration** (NVIDIA CUDA), install `openimpala-cuda` from GitHub Releases:
+**GPU acceleration** is automatic. If you have an NVIDIA GPU and
+[CuPy](https://cupy.dev/) installed, OpenImpala detects it at runtime and
+offloads compute kernels to the GPU. No separate package is needed:
+
+```bash
+# Optional: install CuPy for automatic GPU acceleration
+pip install cupy-cuda12x   # match your CUDA toolkit version
+```
+
+If CuPy is not available, OpenImpala falls back to SciPy on the CPU.
+
+**Advanced / HPC:** For clusters needing compiled C++ HYPRE solvers with native
+CUDA support:
 
 ```bash
 pip install openimpala-cuda --find-links \

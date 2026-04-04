@@ -1,28 +1,33 @@
-name: "Build and Publish OpenImpala CPU Wheels"
+name: "Build and Publish OpenImpala Pure-Python Package"
 
 on:
   release:
     types:
       - published
-  workflow_dispatch: # Allows you to trigger it manually from the Actions tab for testing
+  workflow_dispatch:
 
 jobs:
-  build_wheels:
-    name: Build manylinux wheels on ubuntu-latest
+  build_package:
+    name: Build pure-Python wheel and sdist
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive # Fetches Catch2, nlohmann/json, or pybind11 if needed
           fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install build tools
+        run: python -m pip install build "setuptools-scm>=8"
 
       - name: Extract version from tag
         id: version
         run: |
-          # For release events, GITHUB_REF_NAME is the tag (e.g. v4.0.2).
-          # For workflow_dispatch, fall back to git describe.
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
@@ -31,162 +36,44 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved version: ${VERSION}"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
-      - name: Install cibuildwheel
-        run: python -m pip install cibuildwheel==2.16.5
-
-      # Cache the compiled C/C++ dependencies (HDF5, libtiff, HYPRE, AMReX)
-      # inside the manylinux container. cibuildwheel runs CIBW_BEFORE_ALL only
-      # once per container launch, so we tar /usr/local after the first build
-      # and restore it on subsequent runs to skip the ~5-minute dep compile.
-      - name: Cache native dependencies
-        uses: actions/cache@v4
-        with:
-          path: .cibw-deps-cache
-          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v3
-
-      - name: Build wheels
-        run: python -m cibuildwheel --output-dir wheelhouse
+      # Build from python/ subdirectory which has its own pyproject.toml
+      # using setuptools (no CMake, no compiled extensions).
+      - name: Build wheel and sdist
+        run: python -m build python/ --outdir dist/
         env:
-          # Target modern 64-bit Python versions
-          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-*"
-          CIBW_SKIP: "*musllinux* *i686*"
-          CIBW_ARCHS_LINUX: "x86_64"
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.version.outputs.version }}
 
-          # Explicitly use AlmaLinux 8 (matches your Rocky 8 environment)
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+      - name: Verify wheel is pure-Python
+        run: |
+          echo "=== Built artifacts ==="
+          ls -lh dist/
+          # Pure-Python wheels have 'py3-none-any' in the filename
+          if ls dist/*-py3-none-any.whl 1>/dev/null 2>&1; then
+            echo "OK: wheel is platform-independent (pure-Python)"
+          else
+            echo "ERROR: wheel appears to contain compiled code"
+            exit 1
+          fi
 
-          # Install all build dependencies inside the manylinux container.
-          # Key points:
-          #   - gcc-gfortran is kept for AMReX's Fortran dependencies
-          #   - HDF5 and libtiff are built from source as static libraries so they
-          #     get linked into the wheel without auditwheel needing to vendor them
-          #   - HYPRE is built static (--enable-shared=no)
-          #   - AMReX is built static (-DBUILD_SHARED_LIBS=OFF)
-          # Install system packages, then restore cached deps or build from source.
-          # The cache tarball (.cibw-deps-cache/deps.tar.gz) is mounted into the
-          # container via the project bind-mount. On cache hit we just untar it;
-          # on miss we build everything and create the tarball for next time.
-          CIBW_BEFORE_ALL_LINUX: >
-            dnf install -y epel-release &&
-            dnf --enablerepo=powertools install -y
-            openmpi-devel gcc-gfortran gcc-c++ wget git
-            zlib-devel libjpeg-turbo-devel python3-pip &&
-            pip3 install "cmake>=3.28,<4" &&
-            export PATH=/usr/lib64/openmpi/bin:$PATH &&
-            if [ -f /project/.cibw-deps-cache/deps.tar.gz ]; then
-            echo "=== Restoring cached dependencies ===" &&
-            tar xzf /project/.cibw-deps-cache/deps.tar.gz -C / ;
-            else
-            echo "=== Building dependencies from source ===" &&
-            wget -q https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.6/hdf5-1.14.6.tar.gz &&
-            tar xzf hdf5-1.14.6.tar.gz &&
-            cd hdf5-1.14.6 &&
-            CC=mpicc CXX=mpicxx ./configure
-            --prefix=/usr/local
-            --enable-parallel
-            --enable-cxx
-            --enable-unsupported
-            --disable-shared
-            --with-pic &&
-            make -j$(nproc) &&
-            make install &&
-            cd .. &&
-            wget -q https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz &&
-            tar xzf tiff-4.6.0.tar.gz &&
-            cd tiff-4.6.0 &&
-            cmake -S . -B build
-            -DCMAKE_INSTALL_PREFIX=/usr/local
-            -DCMAKE_BUILD_TYPE=Release
-            -DBUILD_SHARED_LIBS=OFF
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON &&
-            cmake --build build -j$(nproc) &&
-            cmake --install build &&
-            cd .. &&
-            wget -q https://github.com/hypre-space/hypre/archive/v2.31.0.tar.gz &&
-            tar xzf v2.31.0.tar.gz &&
-            cd hypre-2.31.0/src &&
-            ./configure --prefix=/usr/local --with-MPI --enable-shared=no
-            CC=mpicc CXX=mpicxx FC=mpif90
-            CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" FFLAGS="-O2 -fPIC" &&
-            make -j$(nproc) &&
-            make install &&
-            cd ../.. &&
-            git clone --depth 1 --branch 25.03 https://github.com/AMReX-Codes/amrex.git /tmp/amrex &&
-            cmake -S /tmp/amrex -B /tmp/amrex/build
-            -DCMAKE_INSTALL_PREFIX=/usr/local
-            -DCMAKE_BUILD_TYPE=Release
-            -DBUILD_SHARED_LIBS=OFF
-            -DAMReX_MPI=ON
-            -DAMReX_OMP=ON
-            -DAMReX_SPACEDIM=3
-            -DAMReX_FORTRAN=ON
-            -DAMReX_PARTICLES=OFF
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON &&
-            cmake --build /tmp/amrex/build -j$(nproc) &&
-            cmake --install /tmp/amrex/build &&
-            mkdir -p /project/.cibw-deps-cache &&
-            tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
-            fi
-
-          # Ensure each Python version has cmake >= 3.28 (needed by AMReX)
-          CIBW_BEFORE_BUILD: pip install "cmake>=3.28,<4"
-
-          # Point scikit-build-core to our newly compiled dependencies and MPI compilers.
-          CIBW_ENVIRONMENT_LINUX: >
-            PATH="/usr/lib64/openmpi/bin:$PATH"
-            CMAKE_C_COMPILER="mpicc"
-            CMAKE_CXX_COMPILER="mpicxx"
-            CMAKE_PREFIX_PATH="/usr/local"
-            CMAKE_GENERATOR="Unix Makefiles"
-            SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
-
-          # Vendor libraries into the wheel, but exclude host-specific MPI and
-          # runtime libraries that users must provide on their system.
-          # With all C/C++ deps statically linked, the only external shared libs
-          # left are MPI and OpenMP runtime (libgomp).
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
-            auditwheel repair -w {dest_dir} {wheel}
-            --exclude libmpi.so
-            --exclude libmpi.so.12
-            --exclude libmpi.so.40
-            --exclude libmpi_cxx.so
-            --exclude libmpi_cxx.so.1
-            --exclude libmpi_cxx.so.40
-            --exclude libopen-rte.so
-            --exclude libopen-rte.so.40
-            --exclude libopen-pal.so
-            --exclude libopen-pal.so.40
-            --exclude libmpi_mpifh.so
-            --exclude libmpi_mpifh.so.40
-            --exclude libgomp.so.1
-            --exclude libgfortran.so.5
-            --exclude libquadmath.so.0
-
-      - name: Upload wheels as artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cibw-wheels
-          path: ./wheelhouse/*.whl
+          name: python-package
+          path: dist/
 
   publish_to_pypi:
-    name: Publish wheels to PyPI
-    needs: build_wheels
+    name: Publish to PyPI
+    needs: build_package
     runs-on: ubuntu-latest
-    # Required for PyPI's Trusted Publishing
     environment: pypi
     permissions:
       id-token: write
 
     steps:
-      - name: Download wheel artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: cibw-wheels
+          name: python-package
           path: dist/
 
       - name: Publish to PyPI

@@ -69,7 +69,14 @@ def __getattr__(name):
     }
 
     if name in _CORE_ATTRS:
-        _core = _load_core()
+        try:
+            _core = _load_core()
+        except ImportError:
+            raise AttributeError(
+                f"'openimpala.{name}' requires the compiled C++ backend (_core). "
+                f"In pure-Python mode, use the high-level API: "
+                f"openimpala.volume_fraction(), tortuosity(), etc."
+            )
         if name in ("core", "_core"):
             return _core
         return getattr(_core, name)
