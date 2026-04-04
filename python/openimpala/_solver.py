@@ -415,7 +415,7 @@ def solve_tortuosity(
 
         # CuPy CG solve
         solution_gpu, info = cusp_linalg.cg(A_gpu, rhs_gpu, x0=x0_gpu,
-                                             tol=tol, maxiter=maxiter)
+                                             rtol=tol, maxiter=maxiter)
         solution = cp.asnumpy(solution_gpu)
         converged = info == 0
         # CuPy doesn't return iteration count directly; estimate from info
