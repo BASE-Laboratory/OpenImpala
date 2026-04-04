@@ -84,6 +84,7 @@ install(FILES
     openimpala/exceptions.py
     openimpala/facade.py
     openimpala/cli.py
+    openimpala/_solver.py
     DESTINATION openimpala
     COMPONENT python
 )

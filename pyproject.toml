@@ -15,9 +15,11 @@ license = {text = "BSD-3-Clause"}
 requires-python = ">=3.8"
 dependencies = [
     "numpy",
+    "scipy>=1.7",
 ]
 
 [project.optional-dependencies]
+gpu = ["cupy-cuda12x"]
 mpi = ["mpi4py"]
 progress = ["tqdm"]
 jupyter = ["matplotlib", "ipywidgets"]
@@ -25,6 +27,7 @@ viz = ["yt", "matplotlib"]
 test = [
     "pytest>=7",
     "numpy",
+    "scipy>=1.7",
 ]
 docs = [
     "sphinx>=7.0",

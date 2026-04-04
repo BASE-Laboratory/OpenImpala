@@ -2,6 +2,9 @@
 
 These functions accept plain ``numpy.ndarray`` inputs and return rich
 Python dataclasses, hiding all AMReX boilerplate from general users.
+
+When the compiled C++ backend (_core) is unavailable, functions
+transparently fall back to the pure-Python solver (SciPy/CuPy).
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from typing import Optional, Union
 import numpy as np
 
 from .exceptions import ConvergenceError, PercolationError
+from .session import Session
 
 
 # ---------------------------------------------------------------------------
@@ -76,13 +80,42 @@ class TortuosityResult:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Backend detection
 # ---------------------------------------------------------------------------
+
+def _is_pure_python() -> bool:
+    """Return True if we should use the pure-Python solver backend."""
+    return Session._pure_python
+
 
 def _get_core():
     """Import and return the _core C extension (lazy, cached by Python)."""
     import importlib
     return importlib.import_module("openimpala._core")
+
+
+# ---------------------------------------------------------------------------
+# Direction / solver helpers
+# ---------------------------------------------------------------------------
+
+_DIR_MAP = {"x": 0, "y": 1, "z": 2}
+_DIR_NAMES = {0: "x", 1: "y", 2: "z"}
+
+
+def _parse_direction_int(d) -> int:
+    """Parse a direction to an integer (0=x, 1=y, 2=z)."""
+    if isinstance(d, int):
+        return d
+    if isinstance(d, str):
+        key = d.strip().lower()
+        if key in _DIR_MAP:
+            return _DIR_MAP[key]
+    # Might be a _core.Direction enum
+    try:
+        return {"X": 0, "Y": 1, "Z": 2}[str(d).split(".")[-1]]
+    except (KeyError, AttributeError):
+        pass
+    raise ValueError(f"Unknown direction '{d}'. Use 'x', 'y', or 'z'.")
 
 
 def _parse_direction(d):
@@ -98,6 +131,15 @@ def _parse_direction(d):
 
 
 def _ensure_initialized():
+    """Check that a Session is active."""
+    if _is_pure_python():
+        if Session._depth == 0:
+            raise RuntimeError(
+                "OpenImpala is not initialized! Please wrap your code in a session block:\n\n"
+                "with openimpala.Session():\n"
+                "    openimpala.volume_fraction(...)"
+            )
+        return
     _core = _get_core()
     if not _core.amrex_initialized():
         raise RuntimeError(
@@ -203,6 +245,13 @@ def volume_fraction(
     VolumeFractionResult
     """
     _ensure_initialized()
+
+    if _is_pure_python():
+        from . import _solver
+        data = np.ascontiguousarray(data, dtype=np.int32)
+        pc, tc, frac = _solver.volume_fraction(data, phase)
+        return VolumeFractionResult(phase_count=pc, total_count=tc, fraction=frac)
+
     _core = _get_core()
 
     if isinstance(data, np.ndarray):
@@ -244,6 +293,18 @@ def percolation_check(
     PercolationResult
     """
     _ensure_initialized()
+
+    if _is_pure_python():
+        from . import _solver
+        data = np.ascontiguousarray(data, dtype=np.int32)
+        d = _parse_direction_int(direction)
+        percolates, active_vf, _ = _solver.percolation_check(data, phase, d)
+        return PercolationResult(
+            percolates=percolates,
+            active_volume_fraction=active_vf,
+            direction=_DIR_NAMES[d],
+        )
+
     _core = _get_core()
     d = _parse_direction(direction)
 
@@ -272,7 +333,7 @@ def tortuosity(
     results_path: str = ".",
     verbose: int = 0,
 ) -> TortuosityResult:
-    """Compute the tortuosity of *phase* in *direction* using the HYPRE solver.
+    """Compute the tortuosity of *phase* in *direction*.
 
     Parameters
     ----------
@@ -283,12 +344,12 @@ def tortuosity(
     direction : str or Direction
         Flow direction ('x', 'y', 'z').
     solver : str or SolverType
-        Solver algorithm.  ``'auto'`` (default) selects HYPRE PCG, which is
-        optimal for the symmetric positive-definite single-phase diffusion
-        problem.  ``'mlmg'`` uses AMReX's native matrix-free geometric
-        multigrid (lower memory, no matrix assembly).  Other HYPRE options:
-        ``'flexgmres'``, ``'gmres'``, ``'bicgstab'``, ``'pcg'``, ``'smg'``,
-        ``'pfmg'``, ``'jacobi'``.
+        Solver algorithm.  ``'auto'`` (default) selects the best available
+        solver: CuPy CG on GPU or SciPy CG on CPU when the C++ backend is
+        not installed, HYPRE PCG otherwise.  ``'mlmg'`` uses AMReX's native
+        matrix-free geometric multigrid (requires C++ backend).  Other HYPRE
+        options: ``'flexgmres'``, ``'gmres'``, ``'bicgstab'``, ``'pcg'``,
+        ``'smg'``, ``'pfmg'``, ``'jacobi'``.
     max_grid_size : int or str
         AMReX box decomposition size.  ``'auto'`` picks a value based on the
         domain dimensions.
@@ -305,6 +366,28 @@ def tortuosity(
         If the phase does not percolate in the given direction.
     """
     _ensure_initialized()
+
+    if _is_pure_python():
+        from . import _solver
+        data = np.ascontiguousarray(data, dtype=np.int32)
+        d = _parse_direction_int(direction)
+        result = _solver.solve_tortuosity(data, phase, d)
+        if not result["solver_converged"]:
+            raise ConvergenceError(
+                f"Solver did not converge after {result['iterations']} "
+                f"iterations (residual={result['residual_norm']:.2e})"
+            )
+        return TortuosityResult(
+            tortuosity=result["tortuosity"],
+            solver_converged=result["solver_converged"],
+            iterations=result["iterations"],
+            residual_norm=result["residual_norm"],
+            flux_in=result["flux_in"],
+            flux_out=result["flux_out"],
+            active_volume_fraction=result["active_volume_fraction"],
+        )
+
+    # --- C++ backend path (unchanged) ---
     _core = _get_core()
     d = _parse_direction(direction)
     st = _parse_solver(solver)
@@ -438,6 +521,14 @@ def read_image(
         The reader object and the VoxelImage handle.
     """
     _ensure_initialized()
+
+    if _is_pure_python():
+        raise NotImplementedError(
+            "read_image() requires the compiled C++ backend (_core). "
+            "In pure-Python mode, load your image with tifffile/h5py/numpy "
+            "and pass the array directly to volume_fraction() or tortuosity()."
+        )
+
     _core = _get_core()
 
     if raw_data_type is None:
