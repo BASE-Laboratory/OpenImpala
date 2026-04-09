@@ -62,6 +62,7 @@ class TortuosityResult:
     flux_in: float
     flux_out: float
     active_volume_fraction: float
+    solution_field: "np.ndarray | None" = None
 
     def _repr_html_(self) -> str:
         status = "converged" if self.solver_converged else "NOT converged"
@@ -385,6 +386,7 @@ def tortuosity(
             flux_in=result["flux_in"],
             flux_out=result["flux_out"],
             active_volume_fraction=result["active_volume_fraction"],
+            solution_field=result["solution_field"],
         )
 
     # --- C++ backend path (unchanged) ---
