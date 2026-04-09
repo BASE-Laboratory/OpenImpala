@@ -457,6 +457,9 @@ def solve_tortuosity(
     else:
         tau = float("inf")
 
+    # Reshape flat solution back to 3-D field
+    solution_field = solution.reshape(shape).copy()
+
     return {
         "tortuosity": tau,
         "solver_converged": converged,
@@ -465,5 +468,6 @@ def solve_tortuosity(
         "flux_in": flux_in,
         "flux_out": flux_out,
         "active_volume_fraction": active_vf,
+        "solution_field": solution_field,
         "backend": backend_name(),
     }
