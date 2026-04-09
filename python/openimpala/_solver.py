@@ -413,9 +413,13 @@ def solve_tortuosity(
         rhs_gpu = cp.asarray(rhs)
         x0_gpu = cp.asarray(x0)
 
-        # CuPy CG solve
-        solution_gpu, info = cusp_linalg.cg(A_gpu, rhs_gpu, x0=x0_gpu,
-                                             rtol=tol, maxiter=maxiter)
+        # CuPy CG solve — CuPy >= 13 renamed tol → rtol (mirroring scipy).
+        try:
+            solution_gpu, info = cusp_linalg.cg(A_gpu, rhs_gpu, x0=x0_gpu,
+                                                 rtol=tol, maxiter=maxiter)
+        except TypeError:
+            solution_gpu, info = cusp_linalg.cg(A_gpu, rhs_gpu, x0=x0_gpu,
+                                                 tol=tol, maxiter=maxiter)
         solution = cp.asnumpy(solution_gpu)
         converged = info == 0
         # CuPy doesn't return iteration count directly; estimate from info
