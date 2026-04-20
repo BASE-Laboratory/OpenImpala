@@ -159,6 +159,23 @@ if(ENABLE_COVERAGE)
 endif()
 
 # ==============================================================================
+# TinyProfiler
+# ==============================================================================
+# AMReX's TinyProfiler emits a function-level timing table at AMReX::Finalize().
+# Useful for diagnosing C++ hotspots from the profiling notebook (§7).
+#
+# This option assumes AMReX was itself built with AMReX_TINY_PROFILE=ON — if not,
+# BL_PROFILE regions compile away and no table is emitted. The wheel CI builds
+# AMReX with this flag when OPENIMPALA_ENABLE_TINY_PROFILE=ON.
+option(OPENIMPALA_ENABLE_TINY_PROFILE
+       "Enable AMReX TinyProfiler instrumentation (BL_PROFILE regions)" OFF)
+if(OPENIMPALA_ENABLE_TINY_PROFILE)
+    add_compile_definitions(AMREX_TINY_PROFILE)
+    message(STATUS "AMReX TinyProfiler: ENABLED (AMReX must also be built with "
+                   "AMReX_TINY_PROFILE=ON for tables to appear)")
+endif()
+
+# ==============================================================================
 # Library targets
 # ==============================================================================
 add_subdirectory(src)
