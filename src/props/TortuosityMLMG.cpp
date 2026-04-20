@@ -30,10 +30,17 @@ TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArra
                                const amrex::iMultiFab& mf_phase_input, const amrex::Real vf,
                                const int phase, const OpenImpala::Direction dir,
                                const std::string& resultspath, const amrex::Real vlo,
-                               const amrex::Real vhi, int verbose, bool write_plotfile)
+                               const amrex::Real vhi, int verbose, bool write_plotfile,
+                               amrex::Real eps, int maxiter, int max_coarsening_level)
     : TortuositySolverBase(geom, ba, dm, mf_phase_input, vf, phase, dir, resultspath, vlo, vhi,
                            verbose, write_plotfile) {
-    // Parse MLMG-specific solver parameters
+    // Seed from explicit constructor arguments (Python / callers can now tune these).
+    m_eps = eps;
+    m_maxiter = maxiter;
+    m_max_coarsening_level = max_coarsening_level;
+
+    // A [mlmg] block in the inputs file still takes precedence — keeps the
+    // command-line path working for users who rely on it.
     amrex::ParmParse pp_mlmg("mlmg");
     pp_mlmg.query("eps", m_eps);
     pp_mlmg.query("maxiter", m_maxiter);

@@ -5,6 +5,7 @@
 #include <pybind11/pybind11.h>
 
 #include "BoundaryCondition.H"
+#include "HypreStructSolver.H"
 #include "Tortuosity.H"
 #include "RawReader.H"
 #include "PhysicsConfig.H"
@@ -61,6 +62,17 @@ void init_enums(py::module_& m) {
 
     // --- EffDiffSolverType: backward-compatible alias for SolverType ---
     m.attr("EffDiffSolverType") = m.attr("SolverType");
+
+    // --- PrecondType: multigrid preconditioner for Krylov solvers ---
+    // Used when ``solver_type`` is PCG/GMRES/FlexGMRES/BiCGSTAB; ignored for
+    // standalone SMG/PFMG/Jacobi. This is the asymptotic-scaling lever —
+    // plain PCG is O(N^p) with p>1; PCG+PFMG restores closer to O(N).
+    py::enum_<OpenImpala::PrecondType>(m, "PrecondType",
+                                       "Multigrid preconditioner for HYPRE Krylov solvers.")
+        .value("SMG", OpenImpala::PrecondType::SMG,
+               "Semicoarsening multigrid — robust for anisotropic grids")
+        .value("PFMG", OpenImpala::PrecondType::PFMG,
+               "Parallel semicoarsening multigrid — more scalable for large problems");
 
     // --- BCType (boundary condition strategy for transport solvers) ---
     py::enum_<OpenImpala::BCType>(m, "BCType", "Boundary condition type for transport solvers.")

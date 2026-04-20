@@ -183,6 +183,25 @@ def _parse_solver(s):
     return solver_map[key]
 
 
+# Krylov solvers that accept a multigrid preconditioner
+_KRYLOV_SOLVERS = {"pcg", "gmres", "flexgmres", "bicgstab"}
+
+
+def _parse_preconditioner(p):
+    """Parse a preconditioner string or PrecondType enum value."""
+    _core = _get_core()
+    if isinstance(p, _core.PrecondType):
+        return p
+    precond_map = {
+        "smg": _core.PrecondType.SMG,
+        "pfmg": _core.PrecondType.PFMG,
+    }
+    key = p.strip().lower()
+    if key not in precond_map:
+        raise ValueError(f"Unknown preconditioner '{p}'. Options: {list(precond_map)}")
+    return precond_map[key]
+
+
 def _auto_grid_size(shape: tuple[int, ...]) -> int:
     """Pick a good AMReX max_grid_size based on domain dimensions.
 
@@ -330,9 +349,13 @@ def tortuosity(
     direction: Union[str, "Direction"] = "x",
     solver: Union[str, "SolverType"] = "auto",
     *,
+    preconditioner: Union[str, "PrecondType"] = "smg",
     max_grid_size: Union[int, str] = 32,
     results_path: str = ".",
     verbose: int = 0,
+    mlmg_eps: Optional[float] = None,
+    mlmg_maxiter: Optional[int] = None,
+    mlmg_max_coarsening_level: Optional[int] = None,
 ) -> TortuosityResult:
     """Compute the tortuosity of *phase* in *direction*.
 
@@ -351,9 +374,17 @@ def tortuosity(
         matrix-free geometric multigrid (requires C++ backend).  Other HYPRE
         options: ``'flexgmres'``, ``'gmres'``, ``'bicgstab'``, ``'pcg'``,
         ``'smg'``, ``'pfmg'``, ``'jacobi'``.
+    preconditioner : str or PrecondType, keyword-only
+        Multigrid preconditioner for Krylov solvers (PCG/GMRES/FlexGMRES/BiCGSTAB):
+        ``'smg'`` (default) or ``'pfmg'``.  Ignored for standalone SMG/PFMG/Jacobi
+        and for MLMG.  PCG+PFMG is typically the best combination for large grids —
+        plain PCG scales super-linearly with N, a multigrid preconditioner restores
+        near-O(N) scaling.
     max_grid_size : int or str
         AMReX box decomposition size.  ``'auto'`` picks a value based on the
         domain dimensions.
+    mlmg_eps, mlmg_maxiter, mlmg_max_coarsening_level
+        Tuning knobs for ``solver='mlmg'``.  ``None`` leaves the C++ default.
 
     Returns
     -------
@@ -419,15 +450,26 @@ def tortuosity(
     # Route to the appropriate solver backend
     if st == "mlmg":
         # Matrix-free AMReX MLMG solver — no HYPRE, lower memory
+        mlmg_kwargs = {}
+        if mlmg_eps is not None:
+            mlmg_kwargs["eps"] = float(mlmg_eps)
+        if mlmg_maxiter is not None:
+            mlmg_kwargs["maxiter"] = int(mlmg_maxiter)
+        if mlmg_max_coarsening_level is not None:
+            mlmg_kwargs["max_coarsening_level"] = int(mlmg_max_coarsening_level)
         solver_obj = _core.TortuosityMLMG(
             img, vf_val, phase, d, results_path,
             0.0, 1.0, verbose, False,
+            **mlmg_kwargs,
         )
     else:
-        # HYPRE-based solver (PCG, FlexGMRES, etc.)
+        # HYPRE-based solver (PCG, FlexGMRES, etc.). The preconditioner is applied
+        # to Krylov solvers; HYPRE ignores it for standalone SMG/PFMG/Jacobi.
+        pc = _parse_preconditioner(preconditioner)
         solver_obj = _core.TortuosityHypre(
             img, vf_val, phase, d, st, results_path,
             0.0, 1.0, verbose, False,
+            pc,
         )
 
     try:

@@ -41,7 +41,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-v3
+          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-tinyprof-v4
 
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -106,6 +106,7 @@ jobs:
             -DAMReX_SPACEDIM=3
             -DAMReX_FORTRAN=ON
             -DAMReX_PARTICLES=OFF
+            -DAMReX_TINY_PROFILE=ON
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
@@ -122,6 +123,7 @@ jobs:
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
             SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
+            SKBUILD_CMAKE_ARGS="-DOPENIMPALA_ENABLE_TINY_PROFILE=ON"
 
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel}
