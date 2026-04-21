@@ -29,12 +29,13 @@ For HPC clusters that need the compiled C++ HYPRE solvers, a separate package
 is available:
 
 ```bash
-pip install openimpala-cuda --find-links \
-  https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6
+pip install openimpala-cuda
 ```
 
 This package bundles AMReX + HYPRE compiled with CUDA and is a drop-in
-replacement for the pure-Python `openimpala` package.
+replacement for the pure-Python `openimpala` package. It requires a working
+NVIDIA CUDA 12 runtime (driver + toolkit) on the host, which is already
+present on Colab, Kaggle, and most GPU cluster nodes.
 
 ### Container (HPC)
 
@@ -42,14 +43,14 @@ For HPC clusters, download the pre-built Apptainer/Singularity container from
 [GitHub Releases](https://github.com/BASE-Laboratory/OpenImpala/releases):
 
 ```bash
-# Download the latest .sif file
-wget https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6openimpala-v4.0.0.sif
+# Download the latest .sif file (replace vX.Y.Z with the release tag)
+wget https://github.com/BASE-Laboratory/OpenImpala/releases/download/vX.Y.Z/openimpala-vX.Y.Z.sif
 
 # Run interactively
-apptainer shell openimpala-v4.0.0.sif
+apptainer shell openimpala-vX.Y.Z.sif
 
 # Run a simulation
-apptainer exec openimpala-v4.0.0.sif /opt/OpenImpala/build/Diffusion3d inputs
+apptainer exec openimpala-vX.Y.Z.sif /opt/OpenImpala/build/Diffusion3d inputs
 ```
 
 ### From source (developers)

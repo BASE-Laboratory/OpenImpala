@@ -60,11 +60,10 @@ with oi.Session():
 
 For HPC clusters that need the compiled C++ HYPRE linear solvers with native
 CUDA support (AMReX + HYPRE compiled with CUDA), a separate package is
-available:
+available on PyPI:
 
 ```bash
-pip install openimpala-cuda --find-links \
-  https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6
+pip install openimpala-cuda
 ```
 
 The `openimpala-cuda` package is a drop-in replacement for `openimpala` and

@@ -145,9 +145,11 @@ If CuPy is not available, OpenImpala falls back to SciPy on the CPU.
 CUDA support:
 
 ```bash
-pip install openimpala-cuda --find-links \
-  https://github.com/BASE-Laboratory/OpenImpala/releases/expanded_assets/v4.0.6
+pip install openimpala-cuda
 ```
+
+The `openimpala-cuda` wheel requires a working NVIDIA CUDA 12 runtime (driver
++ toolkit). On Colab, Kaggle, and most cluster nodes this is already present.
 
 To install with optional dependencies:
 
