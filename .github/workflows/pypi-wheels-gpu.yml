@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-tinyprof-v3
+          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3-v4
 
       - name: Build GPU wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -117,6 +117,7 @@ jobs:
             make install &&
             cd ../.. &&
             git clone --depth 1 --branch 25.03 https://github.com/AMReX-Codes/amrex.git /tmp/amrex &&
+            sed -i 's|CUDA::nvToolsExt|CUDA::nvtx3|g' /tmp/amrex/Tools/CMake/AMReXParallelBackends.cmake &&
             cmake -S /tmp/amrex -B /tmp/amrex/build
             -DCMAKE_INSTALL_PREFIX=/usr/local
             -DCMAKE_BUILD_TYPE=Release
@@ -138,11 +139,16 @@ jobs:
             tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
             fi
 
-          # Rename the package to openimpala-cuda for the GPU wheel.
+          # Rename the package to openimpala-cuda and uncomment the nvidia-*-cu12
+          # runtime deps (kept commented in pyproject.toml so they don't pollute
+          # the CPU wheel). auditwheel --exclude drops the CUDA .so's from the
+          # wheel payload, so without these PyPI deps the wheel breaks on any
+          # machine that doesn't already have the CUDA toolkit installed.
           # The import name stays 'openimpala' — only the PyPI distribution name changes.
           CIBW_BEFORE_BUILD: >
             pip install "cmake>=3.28,<4" &&
-            sed -i 's/^name = "openimpala"/name = "openimpala-cuda"/' /project/pyproject.toml
+            sed -i 's/^name = "openimpala"/name = "openimpala-cuda"/' /project/pyproject.toml &&
+            sed -i 's/^    #"nvidia-/    "nvidia-/' /project/pyproject.toml
 
           # Point to MPI, CUDA, and our compiled GPU dependencies.
           CIBW_ENVIRONMENT_LINUX: >
@@ -157,7 +163,6 @@ jobs:
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
             CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=60;70;75;80;86;89;90' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
-            SKBUILD_CMAKE_ARGS="-DOPENIMPALA_ENABLE_TINY_PROFILE=ON"
             SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
 
           # Vendor libraries but exclude host-specific MPI, OpenMP, Fortran runtime,
@@ -200,12 +205,16 @@ jobs:
           name: cibw-wheels-gpu
           path: ./wheelhouse/*.whl
 
-  upload_to_github_release:
-    name: Upload GPU wheels to GitHub Release
+  publish_to_pypi:
+    name: Publish GPU wheels to PyPI (openimpala-cuda)
     needs: build_gpu_wheels
     runs-on: ubuntu-latest
+    # Only publish on release; workflow_dispatch leaves the artifact for manual
+    # inspection without touching PyPI.
+    if: github.event_name == 'release'
+    environment: pypi
     permissions:
-      contents: write
+      id-token: write
 
     steps:
       - name: Download wheel artifacts
@@ -214,12 +223,7 @@ jobs:
           name: cibw-wheels-gpu
           path: dist/
 
-      - name: Upload wheels to GitHub Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          files: dist/*.whl
-
-      - name: List wheels (workflow_dispatch — no release to upload to)
-        if: github.event_name == 'workflow_dispatch'
-        run: ls -lh dist/
+          skip-existing: true

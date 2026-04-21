@@ -83,7 +83,7 @@ with oi.Session():
     print(f"Tortuosity: {result.tortuosity:.4f}")
 ```
 
-A pure-Python package is distributed via PyPI (`pip install openimpala`) with automatic GPU acceleration via CuPy when available, and compiled CUDA GPU wheels with HYPRE solvers are available via GitHub Releases (`pip install openimpala-cuda`) for HPC deployments. Interactive tutorial notebooks are provided for Google Colab, covering workflows from basic tortuosity computation to digital twin parameterisation with PyBaMM. API reference documentation, installation guides, and interactive tutorial notebooks are available at https://base-laboratory.github.io/OpenImpala/
+A pure-Python package is distributed via PyPI (`pip install openimpala`) with automatic GPU acceleration via CuPy when available, and compiled CUDA GPU wheels with HYPRE solvers are also distributed via PyPI (`pip install openimpala-cuda`) for HPC deployments. Interactive tutorial notebooks are provided for Google Colab, covering workflows from basic tortuosity computation to digital twin parameterisation with PyBaMM. API reference documentation, installation guides, and interactive tutorial notebooks are available at https://base-laboratory.github.io/OpenImpala/
 
 ## Testing and Quality Assurance
 
