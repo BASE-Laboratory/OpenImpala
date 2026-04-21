@@ -93,10 +93,9 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
       m_mf_phase(ba, dm, mf_phase_input.nComp(), mf_phase_input.nGrow()), m_phase(phase), m_vf(vf),
       m_dir(dir), m_vlo(vlo), m_vhi(vhi), m_resultspath(resultspath),
       m_write_plotfile(write_plotfile), m_precond_type(precond_type),
-      m_mf_phi(ba, dm, numComponentsPhi, 1),
-      m_mf_active_mask(ba, dm, 1, 1), m_mf_diff_coeff(ba, dm, 1, 1), m_active_vf(0.0),
-      m_first_call(true), m_value(std::numeric_limits<amrex::Real>::quiet_NaN()), m_flux_in(0.0),
-      m_flux_out(0.0) {
+      m_mf_phi(ba, dm, numComponentsPhi, 1), m_mf_active_mask(ba, dm, 1, 1),
+      m_mf_diff_coeff(ba, dm, 1, 1), m_active_vf(0.0), m_first_call(true),
+      m_value(std::numeric_limits<amrex::Real>::quiet_NaN()), m_flux_in(0.0), m_flux_out(0.0) {
     // Ensure HYPRE is initialised exactly once (thread-safe via std::call_once).
     // C++ tests call HYPRE_Init() in main(), but Python bindings have no main().
     static std::once_flag hypre_once;

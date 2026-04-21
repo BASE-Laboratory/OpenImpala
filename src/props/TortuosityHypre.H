@@ -73,8 +73,7 @@ public:
                     const amrex::Real vf, const int phase, const OpenImpala::Direction dir,
                     const SolverType solvertype, const std::string& resultspath,
                     const amrex::Real vlo = 0.0, const amrex::Real vhi = 1.0, int verbose = 0,
-                    bool write_plotfile = false,
-                    const PrecondType precond_type = PrecondType::SMG);
+                    bool write_plotfile = false, const PrecondType precond_type = PrecondType::SMG);
 
     /** Destructor. Base class handles HYPRE resource cleanup. */
     virtual ~TortuosityHypre() override = default;
