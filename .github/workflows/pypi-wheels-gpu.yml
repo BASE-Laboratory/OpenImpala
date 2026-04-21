@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3-v4
+          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3-v5
 
       - name: Build GPU wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -118,6 +118,7 @@ jobs:
             cd ../.. &&
             git clone --depth 1 --branch 25.03 https://github.com/AMReX-Codes/amrex.git /tmp/amrex &&
             sed -i 's|CUDA::nvToolsExt|CUDA::nvtx3|g' /tmp/amrex/Tools/CMake/AMReXParallelBackends.cmake &&
+            grep -rl 'include.*<nvToolsExt\.h>' /tmp/amrex/Src | xargs -r sed -i 's|<nvToolsExt\.h>|<nvtx3/nvToolsExt.h>|g' &&
             cmake -S /tmp/amrex -B /tmp/amrex/build
             -DCMAKE_INSTALL_PREFIX=/usr/local
             -DCMAKE_BUILD_TYPE=Release
