@@ -16,6 +16,17 @@ requires-python = ">=3.8"
 dependencies = [
     "numpy",
     "scipy>=1.7",
+    # GPU-only deps: kept commented out so the CPU wheel stays lean.
+    # The openimpala-cuda build in .github/workflows/pypi-wheels-gpu.yml
+    # uncomments these via sed before scikit-build-core reads this file.
+    # Do not remove the "# cuda-" markers — the sed rule keys off them.
+    # cuda-deps-start
+    #"nvidia-cuda-runtime-cu12",
+    #"nvidia-cublas-cu12",
+    #"nvidia-cusparse-cu12",
+    #"nvidia-curand-cu12",
+    #"nvidia-nvjitlink-cu12",
+    # cuda-deps-end
 ]
 
 [project.optional-dependencies]

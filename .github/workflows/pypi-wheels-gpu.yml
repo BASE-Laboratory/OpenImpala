@@ -139,11 +139,16 @@ jobs:
             tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
             fi
 
-          # Rename the package to openimpala-cuda for the GPU wheel.
+          # Rename the package to openimpala-cuda and uncomment the nvidia-*-cu12
+          # runtime deps (kept commented in pyproject.toml so they don't pollute
+          # the CPU wheel). auditwheel --exclude drops the CUDA .so's from the
+          # wheel payload, so without these PyPI deps the wheel breaks on any
+          # machine that doesn't already have the CUDA toolkit installed.
           # The import name stays 'openimpala' — only the PyPI distribution name changes.
           CIBW_BEFORE_BUILD: >
             pip install "cmake>=3.28,<4" &&
-            sed -i 's/^name = "openimpala"/name = "openimpala-cuda"/' /project/pyproject.toml
+            sed -i 's/^name = "openimpala"/name = "openimpala-cuda"/' /project/pyproject.toml &&
+            sed -i 's/^    #"nvidia-/    "nvidia-/' /project/pyproject.toml
 
           # Point to MPI, CUDA, and our compiled GPU dependencies.
           CIBW_ENVIRONMENT_LINUX: >
