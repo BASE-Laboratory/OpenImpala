@@ -200,12 +200,16 @@ jobs:
           name: cibw-wheels-gpu
           path: ./wheelhouse/*.whl
 
-  upload_to_github_release:
-    name: Upload GPU wheels to GitHub Release
+  publish_to_pypi:
+    name: Publish GPU wheels to PyPI (openimpala-cuda)
     needs: build_gpu_wheels
     runs-on: ubuntu-latest
+    # Only publish on release; workflow_dispatch leaves the artifact for manual
+    # inspection without touching PyPI.
+    if: github.event_name == 'release'
+    environment: pypi
     permissions:
-      contents: write
+      id-token: write
 
     steps:
       - name: Download wheel artifacts
@@ -214,12 +218,7 @@ jobs:
           name: cibw-wheels-gpu
           path: dist/
 
-      - name: Upload wheels to GitHub Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          files: dist/*.whl
-
-      - name: List wheels (workflow_dispatch — no release to upload to)
-        if: github.event_name == 'workflow_dispatch'
-        run: ls -lh dist/
+          skip-existing: true
