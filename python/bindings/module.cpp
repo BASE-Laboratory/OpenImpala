@@ -11,6 +11,7 @@
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+#include <pybind11/stl.h>
 
 #include <AMReX.H>
 #include <AMReX_Box.H>
@@ -22,6 +23,15 @@
 #include <AMReX_MFIter.H>
 #include <AMReX_RealBox.H>
 #include <AMReX_iMultiFab.H>
+
+#ifdef AMREX_USE_GPU
+#include <AMReX_Gpu.H>
+#endif
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+#include <HYPRE_config.h>
 
 #include "VoxelImage.H"
 
@@ -54,6 +64,79 @@ static void finalize_amrex() {
 
 static bool amrex_initialized() {
     return amrex::Initialized();
+}
+
+// =========================================================================
+// Build info — lets users verify which wheel they installed (CPU vs CUDA),
+// whether TinyProfile is on, OpenMP thread count, and visible GPU devices.
+// Critical for Colab users: §1a of the profiling notebook runs this first.
+// =========================================================================
+static py::dict build_info() {
+    py::dict info;
+
+#ifdef OPENIMPALA_USE_CUDA
+    info["cuda_enabled"] = true;
+#else
+    info["cuda_enabled"] = false;
+#endif
+
+#ifdef OPENIMPALA_USE_HIP
+    info["hip_enabled"] = true;
+#else
+    info["hip_enabled"] = false;
+#endif
+
+#ifdef OPENIMPALA_USE_GPU
+    info["gpu_enabled"] = true;
+#else
+    info["gpu_enabled"] = false;
+#endif
+
+#ifdef _OPENMP
+    info["openmp_enabled"] = true;
+    info["openmp_max_threads"] = omp_get_max_threads();
+#else
+    info["openmp_enabled"] = false;
+    info["openmp_max_threads"] = 1;
+#endif
+
+#ifdef AMREX_USE_MPI
+    info["mpi_enabled"] = true;
+#else
+    info["mpi_enabled"] = false;
+#endif
+
+#ifdef AMREX_TINY_PROFILE
+    info["tiny_profile"] = true;
+#else
+    info["tiny_profile"] = false;
+#endif
+
+#ifdef HYPRE_USING_CUDA
+    info["hypre_cuda"] = true;
+#else
+    info["hypre_cuda"] = false;
+#endif
+
+#ifdef HYPRE_USING_HIP
+    info["hypre_hip"] = true;
+#else
+    info["hypre_hip"] = false;
+#endif
+
+    // Runtime GPU device count — only meaningful when the wheel has GPU support
+    // AND AMReX has been initialised (otherwise the query can segfault).
+#ifdef AMREX_USE_GPU
+    if (amrex::Initialized()) {
+        info["gpu_device_count"] = amrex::Gpu::Device::numDevicesUsed();
+    } else {
+        info["gpu_device_count"] = -1; // unknown until init_amrex() called
+    }
+#else
+    info["gpu_device_count"] = 0;
+#endif
+
+    return info;
 }
 
 // =========================================================================
@@ -128,6 +211,11 @@ PYBIND11_MODULE(_core, m) {
           "Shut down the AMReX runtime (no-op if not initialised).");
     m.def("amrex_initialized", &amrex_initialized,
           "Return True if the AMReX runtime is currently active.");
+    m.def("build_info", &build_info,
+          "Return a dict of compile-time feature flags (cuda, openmp, mpi, tiny_profile, "
+          "hypre_cuda) plus runtime GPU device count.  Use this to verify which wheel "
+          "is installed (CPU vs. CUDA) — critical for Colab users who need the GPU wheel "
+          "to actually use their T4/A100.");
 
     // --- VoxelImage opaque handle ---
     py::class_<OpenImpala::VoxelImage, std::shared_ptr<OpenImpala::VoxelImage>>(

@@ -65,7 +65,7 @@ def __getattr__(name):
     # Symbols that live in the facade module
     _FACADE_ATTRS = {
         "volume_fraction", "percolation_check", "tortuosity", "estimate_memory",
-        "read_image",
+        "read_image", "build_info",
     }
 
     if name in _CORE_ATTRS:
@@ -108,4 +108,5 @@ __all__ = [
     "tortuosity",
     "estimate_memory",
     "read_image",
+    "build_info",
 ]

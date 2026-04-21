@@ -34,8 +34,7 @@ void init_solvers(py::module_& m) {
         .def(py::init([](std::shared_ptr<VoxelImage> img, amrex::Real vf, int phase,
                          OpenImpala::Direction dir, TortuosityHypre::SolverType solver_type,
                          const std::string& results_path, amrex::Real vlo, amrex::Real vhi,
-                         int verbose, bool write_plotfile,
-                         OpenImpala::PrecondType preconditioner) {
+                         int verbose, bool write_plotfile, OpenImpala::PrecondType preconditioner) {
                  return new TortuosityHypre(img->geom, img->ba, img->dm, *(img->mf), vf, phase, dir,
                                             solver_type, results_path, vlo, vhi, verbose,
                                             write_plotfile, preconditioner);
@@ -98,14 +97,13 @@ void init_solvers(py::module_& m) {
                          amrex::Real vlo, amrex::Real vhi, int verbose, bool write_plotfile,
                          amrex::Real eps, int maxiter, int max_coarsening_level) {
                  return new TortuosityMLMG(img->geom, img->ba, img->dm, *(img->mf), vf, phase, dir,
-                                           results_path, vlo, vhi, verbose, write_plotfile,
-                                           eps, maxiter, max_coarsening_level);
+                                           results_path, vlo, vhi, verbose, write_plotfile, eps,
+                                           maxiter, max_coarsening_level);
              }),
              py::arg("img"), py::arg("vf"), py::arg("phase"), py::arg("dir"),
              py::arg("results_path"), py::arg("vlo") = 0.0, py::arg("vhi") = 1.0,
-             py::arg("verbose") = 0, py::arg("write_plotfile") = false,
-             py::arg("eps") = 1.0e-9, py::arg("maxiter") = 200,
-             py::arg("max_coarsening_level") = 30, py::keep_alive<1, 2>())
+             py::arg("verbose") = 0, py::arg("write_plotfile") = false, py::arg("eps") = 1.0e-9,
+             py::arg("maxiter") = 200, py::arg("max_coarsening_level") = 30, py::keep_alive<1, 2>())
 
         .def(
             "value",

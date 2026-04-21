@@ -531,6 +531,63 @@ def estimate_memory(
     }
 
 
+def build_info() -> dict:
+    """Return compile-time + runtime feature flags for the installed wheel.
+
+    Critical for Colab users who need to verify they got the GPU wheel
+    (``pip install openimpala-cuda``) and not the default CPU wheel.
+
+    Returns
+    -------
+    dict
+        Keys:
+
+        * ``backend``: ``"cpp-cuda"``, ``"cpp-hip"``, ``"cpp-cpu"``, or ``"pure-python"``
+        * ``cuda_enabled`` / ``hip_enabled`` / ``gpu_enabled``: bool
+        * ``openmp_enabled``: bool; ``openmp_max_threads``: int
+        * ``mpi_enabled``: bool
+        * ``tiny_profile``: bool (BL_PROFILE regions emit a table at shutdown)
+        * ``hypre_cuda`` / ``hypre_hip``: bool (HYPRE solver device support)
+        * ``gpu_device_count``: int (runtime — ``-1`` if AMReX not yet initialised)
+        * ``version``: str (package version)
+    """
+    from . import __version__
+
+    if _is_pure_python():
+        # Pure-Python fallback (SciPy/CuPy) — no compiled backend at all.
+        # CuPy CG is GPU-accelerated but has no OpenMP / HYPRE / TinyProfile.
+        try:
+            import cupy  # noqa: F401
+            has_cupy = True
+        except ImportError:
+            has_cupy = False
+        return {
+            "backend": "pure-python",
+            "cuda_enabled": has_cupy,
+            "hip_enabled": False,
+            "gpu_enabled": has_cupy,
+            "openmp_enabled": False,
+            "openmp_max_threads": 1,
+            "mpi_enabled": False,
+            "tiny_profile": False,
+            "hypre_cuda": False,
+            "hypre_hip": False,
+            "gpu_device_count": -1,
+            "version": __version__,
+        }
+
+    _core = _get_core()
+    info = dict(_core.build_info())
+    if info.get("cuda_enabled"):
+        info["backend"] = "cpp-cuda"
+    elif info.get("hip_enabled"):
+        info["backend"] = "cpp-hip"
+    else:
+        info["backend"] = "cpp-cpu"
+    info["version"] = __version__
+    return info
+
+
 def read_image(
     path: str,
     threshold: float = 0.5,
