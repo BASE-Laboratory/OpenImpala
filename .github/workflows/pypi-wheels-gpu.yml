@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-v6
+          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch70-90-v7
 
       - name: Build GPU wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -134,9 +134,9 @@ jobs:
             -DAMReX_PARTICLES=OFF
             -DAMReX_TINY_PROFILE=ON
             -DAMReX_GPU_BACKEND=CUDA
-            '-DAMReX_CUDA_ARCH=60;70;75;80;86;89;90'
+            '-DAMReX_CUDA_ARCH=70;75;80;89;90'
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-            '-DCMAKE_CUDA_ARCHITECTURES=60;70;75;80;86;89;90'
+            '-DCMAKE_CUDA_ARCHITECTURES=70-real;75-real;80-real;89-real;90-real;90-virtual'
             -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++ &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
@@ -167,13 +167,13 @@ jobs:
             CMAKE_CXX_COMPILER="mpicxx"
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
-            CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=60;70;75;80;86;89;90' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+            CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=70-real;75-real;80-real;89-real;90-real;90-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
             SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
 
           # Vendor libraries but exclude host-specific MPI, OpenMP, Fortran runtime,
           # and CUDA runtime libraries (users must have CUDA toolkit installed).
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
-            auditwheel repair -w {dest_dir} {wheel}
+            auditwheel repair --strip -w {dest_dir} {wheel}
             --exclude libmpi.so
             --exclude libmpi.so.12
             --exclude libmpi.so.40
