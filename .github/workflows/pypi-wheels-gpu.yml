@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-stripped-v8
+          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-archfix-v9
 
       - name: Build GPU wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -123,6 +123,7 @@ jobs:
             cp -rf NVTX-3.1.1/c/include/nvtx3/. /usr/local/include/nvtx3/ &&
             git clone --depth 1 --branch 25.03 https://github.com/AMReX-Codes/amrex.git /tmp/amrex &&
             sed -i 's|CUDA::nvToolsExt|CUDA::nvtx3|g' /tmp/amrex/Tools/CMake/AMReXParallelBackends.cmake &&
+            sed -i 's|@AMREX_CUDA_ARCHS@|75;80|g' /tmp/amrex/Tools/CMake/AMReXConfig.cmake.in &&
             cmake -S /tmp/amrex -B /tmp/amrex/build
             -DCMAKE_INSTALL_PREFIX=/usr/local
             -DCMAKE_BUILD_TYPE=Release
@@ -140,6 +141,7 @@ jobs:
             -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++ &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
+            sed -i 's|set(AMREX_CUDA_ARCHS  CACHE INTERNAL|set(AMREX_CUDA_ARCHS "75;80" CACHE INTERNAL|' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake &&
             strip --strip-debug /usr/local/lib/libamrex_3d.a /usr/local/lib/libHYPRE.a /usr/local/lib/libhdf5*.a /usr/local/lib/libtiff.a 2>/dev/null || true &&
             mkdir -p /project/.cibw-deps-cache &&
             tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
