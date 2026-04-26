@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch70-90-v7
+          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-stripped-v8
 
       - name: Build GPU wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -134,12 +134,13 @@ jobs:
             -DAMReX_PARTICLES=OFF
             -DAMReX_TINY_PROFILE=ON
             -DAMReX_GPU_BACKEND=CUDA
-            '-DAMReX_CUDA_ARCH=70;75;80;89;90'
+            '-DAMReX_CUDA_ARCH=75;80'
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-            '-DCMAKE_CUDA_ARCHITECTURES=70-real;75-real;80-real;89-real;90-real;90-virtual'
+            '-DCMAKE_CUDA_ARCHITECTURES=75-real;80-real;90-virtual'
             -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++ &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
+            strip --strip-debug /usr/local/lib/libamrex_3d.a /usr/local/lib/libHYPRE.a /usr/local/lib/libhdf5*.a /usr/local/lib/libtiff.a 2>/dev/null || true &&
             mkdir -p /project/.cibw-deps-cache &&
             tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
             fi
@@ -167,13 +168,18 @@ jobs:
             CMAKE_CXX_COMPILER="mpicxx"
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
-            CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=70-real;75-real;80-real;89-real;90-real;90-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+            CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=75-real;80-real;90-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
             SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
 
           # Vendor libraries but exclude host-specific MPI, OpenMP, Fortran runtime,
           # and CUDA runtime libraries (users must have CUDA toolkit installed).
+          # auditwheel --strip only touches vendored libs, NOT the main extension
+          # _core.so where most of the bloat lives. After auditwheel, unpack the
+          # wheel, run strip --strip-all on every .so (including _core.so), then
+          # repack via `wheel pack` so RECORD hashes regenerate.
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
-            auditwheel repair --strip -w {dest_dir} {wheel}
+            mkdir -p /tmp/repaired &&
+            auditwheel repair --strip -w /tmp/repaired {wheel}
             --exclude libmpi.so
             --exclude libmpi.so.12
             --exclude libmpi.so.40
@@ -202,7 +208,16 @@ jobs:
             --exclude libcurand.so
             --exclude libcurand.so.10
             --exclude libnvJitLink.so
-            --exclude libnvJitLink.so.12
+            --exclude libnvJitLink.so.12 &&
+            for whl in /tmp/repaired/*.whl; do
+              echo "Pre-strip wheel size:" && ls -lh "$whl" &&
+              d=$(mktemp -d) &&
+              python3 -m wheel unpack --dest "$d" "$whl" &&
+              find "$d" -type f \( -name '*.so' -o -name '*.so.*' \) -print -exec strip --strip-all {} + &&
+              python3 -m wheel pack --dest-dir {dest_dir} "$d"/*/ &&
+              echo "Post-strip wheel size:" && ls -lh {dest_dir}/*.whl &&
+              rm -rf "$d" "$whl";
+            done
 
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v4
