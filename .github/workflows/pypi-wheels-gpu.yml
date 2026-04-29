@@ -178,13 +178,11 @@ jobs:
 
           # Vendor libraries but exclude host-specific MPI, OpenMP, Fortran runtime,
           # and CUDA runtime libraries (users must have CUDA toolkit installed).
-          # auditwheel --strip only touches vendored libs, NOT the main extension
-          # _core.so where most of the bloat lives. After auditwheel, unpack the
-          # wheel, run strip --strip-all on every .so (including _core.so), then
-          # repack via `wheel pack` so RECORD hashes regenerate.
+          # auditwheel --strip strips both vendored libs AND the main _core.so —
+          # combined with the 2 SASS + 1 PTX arch trim, this brings the wheel
+          # comfortably under PyPI's 320 MiB ceiling (~260 MiB observed).
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
-            mkdir -p /tmp/repaired &&
-            auditwheel repair --strip -w /tmp/repaired {wheel}
+            auditwheel repair --strip -w {dest_dir} {wheel}
             --exclude libmpi.so
             --exclude libmpi.so.12
             --exclude libmpi.so.40
@@ -213,16 +211,7 @@ jobs:
             --exclude libcurand.so
             --exclude libcurand.so.10
             --exclude libnvJitLink.so
-            --exclude libnvJitLink.so.12 &&
-            for whl in /tmp/repaired/*.whl; do
-              echo "Pre-strip wheel size:" && ls -lh "$whl" &&
-              d=$(mktemp -d) &&
-              python3 -m wheel unpack --dest "$d" "$whl" &&
-              find "$d" -type f \( -name '*.so' -o -name '*.so.*' \) -print -exec strip --strip-all {} + &&
-              python3 -m wheel pack --dest-dir {dest_dir} "$d"/*/ &&
-              echo "Post-strip wheel size:" && ls -lh {dest_dir}/*.whl &&
-              rm -rf "$d" "$whl";
-            done
+            --exclude libnvJitLink.so.12
 
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v4
