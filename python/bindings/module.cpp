@@ -106,7 +106,7 @@ static py::dict build_info() {
     info["mpi_enabled"] = false;
 #endif
 
-#ifdef AMREX_TINY_PROFILE
+#ifdef AMREX_TINY_PROFILING
     info["tiny_profile"] = true;
 #else
     info["tiny_profile"] = false;
