@@ -169,29 +169,45 @@ voxelimage_from_numpy(py::array_t<int32_t, py::array::c_style | py::array::force
     img->dm.define(img->ba);
     img->mf = std::make_shared<amrex::iMultiFab>(img->ba, img->dm, 1, 1);
 
-    const auto* ptr = static_cast<const int32_t*>(buf.ptr);
+    const auto* host_ptr = static_cast<const int32_t*>(buf.ptr);
+    const std::size_t total = static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) *
+                              static_cast<std::size_t>(nz);
+
+    // Stage the NumPy data in a buffer the kernel below can dereference safely.
+    // On CPU builds this is just the host pointer (no copy). On CUDA builds the
+    // iMultiFab data lives in device memory, so we have to copy the host array
+    // to a device-side buffer first — writing to fab(i,j,k) directly from host
+    // would segfault (T4, A100, etc.) because the Array4<int> view points at
+    // device memory.
+#ifdef AMREX_USE_GPU
+    amrex::Gpu::DeviceVector<int> dvec(total);
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, host_ptr, host_ptr + total, dvec.begin());
+    amrex::Gpu::streamSynchronize();
+    const int* src_ptr = dvec.data();
+#else
+    const int* src_ptr = host_ptr;
+#endif
+
+    const int nx_l = nx;
+    const int ny_l = ny;
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
     for (amrex::MFIter mfi(*(img->mf), amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.tilebox();
-        auto fab = img->mf->array(mfi);
-        const auto lo = amrex::lbound(bx);
-        const auto hi = amrex::ubound(bx);
-
-        for (int k = lo.z; k <= hi.z; ++k) {
-            for (int j = lo.y; j <= hi.y; ++j) {
-                for (int i = lo.x; i <= hi.x; ++i) {
-                    std::size_t idx = static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) *
-                                          static_cast<std::size_t>(nx) +
-                                      static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
-                                      static_cast<std::size_t>(i);
-                    fab(i, j, k) = ptr[idx];
-                }
-            }
-        }
+        auto const& fab = img->mf->array(mfi);
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            const std::size_t idx = static_cast<std::size_t>(k) * static_cast<std::size_t>(ny_l) *
+                                        static_cast<std::size_t>(nx_l) +
+                                    static_cast<std::size_t>(j) * static_cast<std::size_t>(nx_l) +
+                                    static_cast<std::size_t>(i);
+            fab(i, j, k) = src_ptr[idx];
+        });
     }
+#ifdef AMREX_USE_GPU
+    amrex::Gpu::streamSynchronize();
+#endif
 
     img->mf->FillBoundary(img->geom.periodicity());
     return img;
