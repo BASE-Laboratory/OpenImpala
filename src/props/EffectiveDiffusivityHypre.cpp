@@ -253,64 +253,49 @@ void EffectiveDiffusivityHypre::generateActiveMask() {
         m_mf_phase_original.FillBoundary(m_geom.periodicity());
     }
 
-    std::atomic<long> cells_not_target_became_active(0); // Renamed for clarity
-    std::atomic<long> cells_target_became_active(0);     // Renamed
-    std::atomic<long> cells_target_became_inactive(0);   // Renamed
-
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
+    // Phase 1: write the active mask via a GPU-compatible ParallelFor. The
+    // mask_arr Array4 view points at device memory on CUDA builds, so the
+    // assignment must run on the device that owns the iMultiFab.
     for (amrex::MFIter mfi(m_mf_active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const amrex::Box& current_tile_box = mfi.tilebox();
         amrex::Array4<int> const mask_arr = m_mf_active_mask.array(mfi);
-        amrex::Array4<const int> const phase_arr = m_mf_phase_original.const_array(mfi);
-
-        const int local_m_phase_id = m_phase_id;
-
-        if (m_verbose > 2 && amrex::ParallelDescriptor::IOProcessor() && mfi.LocalIndex() == 0 &&
-            amrex::ParallelDescriptor::MyProc() ==
-                amrex::ParallelDescriptor::IOProcessorNumber()) { // Changed to verbose > 2
-            amrex::Print() << "  DEBUG HYPRE: generateActiveMask MFIter loop (verbose > 2) is "
-                              "using local_m_phase_id = "
-                           << local_m_phase_id << " (from m_phase_id = " << m_phase_id
-                           << ") for comparison." << std::endl;
-        }
-
-        const amrex::Box& valid_bx_for_debug = mfi.validbox();
-
         amrex::Array4<const amrex::Real> const dc_arr = m_mf_diff_coeff.const_array(mfi);
-
-        amrex::LoopOnCpu(
-            current_tile_box, [=, &cells_not_target_became_active, &cells_target_became_active,
-                               &cells_target_became_inactive](int i, int j, int k) noexcept {
-                // In multi-phase mode, mark active if D > 0.
-                // In single-phase mode, mark active if phase matches target.
-                bool should_be_active = (dc_arr(i, j, k, 0) > 0.0);
-
-                if (should_be_active) {
-                    mask_arr(i, j, k, MaskComp) = cell_active;
-                    if (valid_bx_for_debug.contains(i, j, k)) {
-                        cells_target_became_active++;
-                    }
-                } else {
-                    mask_arr(i, j, k, MaskComp) = cell_inactive;
-                }
-                // Separate check for errors in valid region
-                int original_phase_val = phase_arr(i, j, k, 0);
-                bool is_target_phase = (original_phase_val == local_m_phase_id);
-                if (valid_bx_for_debug.contains(i, j, k)) {
-                    if (!is_target_phase && mask_arr(i, j, k, MaskComp) == cell_active) {
-                        cells_not_target_became_active++;
-                    } else if (is_target_phase && mask_arr(i, j, k, MaskComp) == cell_inactive) {
-                        cells_target_became_inactive++;
-                    }
-                }
-            });
+        amrex::ParallelFor(current_tile_box, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            mask_arr(i, j, k, MaskComp) = (dc_arr(i, j, k, 0) > 0.0) ? cell_active : cell_inactive;
+        });
     }
 
-    long cells_not_target_became_active_val = cells_not_target_became_active.load();
-    long cells_target_became_active_val = cells_target_became_active.load();
-    long cells_target_became_inactive_val = cells_target_became_inactive.load();
+    // Phase 2: collect debug counters via GPU-compatible reductions over the
+    // valid region only. Three independent ReduceOps because the counters
+    // mean different things; merging them into one tuple-reduce would be
+    // marginally faster but obscures intent.
+    amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum> debug_reduce_op;
+    amrex::ReduceData<long, long, long> debug_reduce_data(debug_reduce_op);
+    const int local_m_phase_id = m_phase_id;
+    for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+        const amrex::Box& vbx = mfi.validbox();
+        amrex::Array4<const int> const mask_arr = m_mf_active_mask.const_array(mfi);
+        amrex::Array4<const int> const phase_arr = m_mf_phase_original.const_array(mfi);
+        amrex::Array4<const amrex::Real> const dc_arr = m_mf_diff_coeff.const_array(mfi);
+        debug_reduce_op.eval(
+            vbx, debug_reduce_data,
+            [=] AMREX_GPU_DEVICE(int i, int j,
+                                 int k) noexcept -> amrex::GpuTuple<long, long, long> {
+                const bool should_be_active = (dc_arr(i, j, k, 0) > 0.0);
+                const int classified = mask_arr(i, j, k, MaskComp);
+                const bool is_target_phase = (phase_arr(i, j, k, 0) == local_m_phase_id);
+                long n_target_active = (should_be_active && is_target_phase) ? 1L : 0L;
+                long n_not_target_became_active =
+                    (!is_target_phase && classified == cell_active) ? 1L : 0L;
+                long n_target_became_inactive =
+                    (is_target_phase && classified == cell_inactive) ? 1L : 0L;
+                return {n_not_target_became_active, n_target_active, n_target_became_inactive};
+            });
+    }
+    const auto debug_tuple = debug_reduce_data.value();
+    long cells_not_target_became_active_val = amrex::get<0>(debug_tuple);
+    long cells_target_became_active_val = amrex::get<1>(debug_tuple);
+    long cells_target_became_inactive_val = amrex::get<2>(debug_tuple);
 
     amrex::ParallelDescriptor::ReduceLongSum(cells_not_target_became_active_val);
     amrex::ParallelDescriptor::ReduceLongSum(cells_target_became_active_val);
@@ -524,27 +509,46 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
         amrex::IntVect local_pin(-1, -1, -1);
         long local_pin_rank_idx = std::numeric_limits<long>::max(); // linearized index
 
+        // Find the lexicographically-first active cell on this rank via a
+        // GPU-compatible Min reduction over the linearised (i,j,k) index of
+        // active cells. Inactive cells contribute LONG_MAX so they never win.
+        // mask_arr is an Array4 view into device memory on CUDA builds —
+        // reading it from a host loop would segfault.
+        const amrex::Box& domain = m_geom.Domain();
+        const long dom_lo_x = domain.smallEnd(0);
+        const long dom_lo_y = domain.smallEnd(1);
+        const long dom_lo_z = domain.smallEnd(2);
+        const long dom_len_x = domain.length(0);
+        const long dom_len_y = domain.length(1);
+        const long sentinel = std::numeric_limits<long>::max();
+
+        amrex::ReduceOps<amrex::ReduceOpMin> pin_reduce_op;
+        amrex::ReduceData<long> pin_reduce_data(pin_reduce_op);
         for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
             const amrex::Box& vbx = mfi.validbox();
             auto mask_arr = m_mf_active_mask.const_array(mfi);
-            const auto& domain = m_geom.Domain();
-            bool found = false;
-            amrex::LoopOnCpu(vbx, [&](int i, int j, int k) {
-                if (!found && mask_arr(i, j, k, MaskComp) == cell_active) {
-                    long lin = static_cast<long>(i - domain.smallEnd(0)) +
-                               static_cast<long>(domain.length(0)) *
-                                   (static_cast<long>(j - domain.smallEnd(1)) +
-                                    static_cast<long>(domain.length(1)) *
-                                        static_cast<long>(k - domain.smallEnd(2)));
-                    if (lin < local_pin_rank_idx) {
-                        local_pin_rank_idx = lin;
-                        local_pin = amrex::IntVect(i, j, k);
-                        found = true;
+            pin_reduce_op.eval(
+                vbx, pin_reduce_data,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept -> amrex::GpuTuple<long> {
+                    if (mask_arr(i, j, k, MaskComp) != cell_active) {
+                        return {sentinel};
                     }
-                }
-            });
-            if (found)
-                break;
+                    const long lin = static_cast<long>(i - dom_lo_x) +
+                                     dom_len_x * (static_cast<long>(j - dom_lo_y) +
+                                                  dom_len_y * static_cast<long>(k - dom_lo_z));
+                    return {lin};
+                });
+        }
+        local_pin_rank_idx = amrex::get<0>(pin_reduce_data.value());
+        if (local_pin_rank_idx < sentinel) {
+            // Recover (i,j,k) from the linearised index.
+            const long k_off = local_pin_rank_idx / (dom_len_x * dom_len_y);
+            const long rem = local_pin_rank_idx - k_off * dom_len_x * dom_len_y;
+            const long j_off = rem / dom_len_x;
+            const long i_off = rem - j_off * dom_len_x;
+            local_pin = amrex::IntVect(static_cast<int>(i_off + dom_lo_x),
+                                       static_cast<int>(j_off + dom_lo_y),
+                                       static_cast<int>(k_off + dom_lo_z));
         }
 
         // Find the globally minimum linearized index across all ranks
@@ -718,19 +722,33 @@ void EffectiveDiffusivityHypre::getChiSolution(amrex::MultiFab& chi_field) {
             continue;
         }
 
+        // Stage HYPRE's host soln_buffer in device memory; chi_arr is an
+        // Array4 view into chi_field which on CUDA builds lives in device
+        // memory, so writing through it from a host loop segfaults.
+#ifdef AMREX_USE_GPU
+        amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buffer(npts);
+        amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, soln_buffer.data(),
+                              soln_buffer.data() + npts, d_soln_buffer.data());
+        amrex::Gpu::streamSynchronize();
+        const HYPRE_Real* src_ptr = d_soln_buffer.data();
+#else
+        const HYPRE_Real* src_ptr = soln_buffer.data();
+#endif
         amrex::Array4<amrex::Real> const chi_arr = chi_field.array(mfi);
-        long long k_lin_idx = 0;
-
-        amrex::LoopOnCpu(bx_getsol, [=, &k_lin_idx](int i, int j, int k) noexcept {
-            if (k_lin_idx < npts) {
-                chi_arr(i, j, k, ChiComp) = soln_buffer[k_lin_idx];
-            }
-            k_lin_idx++;
+        const int chi_comp = ChiComp;
+        const auto lo = amrex::lbound(bx_getsol);
+        const int nx_box = bx_getsol.length(0);
+        const int ny_box = bx_getsol.length(1);
+        amrex::ParallelFor(bx_getsol, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            const long long lin = static_cast<long long>(k - lo.z) * nx_box * ny_box +
+                                  static_cast<long long>(j - lo.y) * nx_box +
+                                  static_cast<long long>(i - lo.x);
+            chi_arr(i, j, k, chi_comp) = static_cast<amrex::Real>(src_ptr[lin]);
         });
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-            k_lin_idx == npts,
-            "Point count mismatch during HYPRE GetBoxValues copy in getChiSolution");
     }
+#ifdef AMREX_USE_GPU
+    amrex::Gpu::streamSynchronize();
+#endif
 
     if (chi_field.nGrow() > 0) {
         chi_field.FillBoundary(m_geom.periodicity());

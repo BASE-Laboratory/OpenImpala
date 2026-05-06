@@ -125,7 +125,12 @@ void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFa
     AMREX_ASSERT(label != FLOOD_INACTIVE); // label must differ from the "empty" marker
 
     // --- Phase 1: Plant seeds ---
-    // Seeds are a small host-side list; planting is cheap either way.
+    // Seeds arrive as a small host-side list. The mask_arr writes below need
+    // to run on the device that owns the iMultiFab data: on a CUDA build that
+    // is the GPU, and writing to mask_arr(iv, 0) from a host loop would
+    // segfault (T4 / A100 etc.). Filter seeds per tile on the host, stage
+    // them in a device buffer, then plant them via ParallelFor.
+    //
     // Note: we do NOT clear the mask here — callers that use multiple labels
     // (ConnectedComponents) may call this repeatedly on the same mask.
     // Callers doing a fresh fill should setVal(FLOOD_INACTIVE) beforehand.
@@ -138,14 +143,41 @@ void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFa
         const amrex::Box& tileBox = mfi.tilebox();
         auto mask_arr = reachabilityMask.array(mfi);
         const auto phase_arr = phaseFab.const_array(mfi, 0);
+
+        amrex::Vector<amrex::IntVect> tile_seeds;
         for (const auto& seed : seedPoints) {
             if (tileBox.contains(seed)) {
-                if (phase_arr(seed) == phaseID) {
-                    mask_arr(seed, 0) = label;
-                }
+                tile_seeds.push_back(seed);
             }
         }
+        if (tile_seeds.empty()) {
+            continue;
+        }
+
+        const int n_seeds = static_cast<int>(tile_seeds.size());
+        const int pid = phaseID;
+        const int lbl = label;
+
+#ifdef AMREX_USE_GPU
+        amrex::Gpu::DeviceVector<amrex::IntVect> d_seeds(n_seeds);
+        amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, tile_seeds.data(),
+                              tile_seeds.data() + n_seeds, d_seeds.data());
+        amrex::Gpu::streamSynchronize();
+        const amrex::IntVect* seed_ptr = d_seeds.data();
+#else
+        const amrex::IntVect* seed_ptr = tile_seeds.data();
+#endif
+
+        amrex::ParallelFor(n_seeds, [=] AMREX_GPU_DEVICE(int s) noexcept {
+            const amrex::IntVect iv = seed_ptr[s];
+            if (phase_arr(iv) == pid) {
+                mask_arr(iv, 0) = lbl;
+            }
+        });
     }
+#ifdef AMREX_USE_GPU
+    amrex::Gpu::streamSynchronize();
+#endif
 
     // --- Phase 2: Iterative wavefront expansion ---
     // Each iteration expands the reachable set by 1 cell in each direction.

@@ -170,8 +170,8 @@ voxelimage_from_numpy(py::array_t<int32_t, py::array::c_style | py::array::force
     img->mf = std::make_shared<amrex::iMultiFab>(img->ba, img->dm, 1, 1);
 
     const auto* host_ptr = static_cast<const int32_t*>(buf.ptr);
-    const std::size_t total = static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) *
-                              static_cast<std::size_t>(nz);
+    const std::size_t total =
+        static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz);
 
     // Stage the NumPy data in a buffer the kernel below can dereference safely.
     // On CPU builds this is just the host pointer (no copy). On CUDA builds the
