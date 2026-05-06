@@ -657,20 +657,31 @@ bool OpenImpala::TortuosityHypre::solve() {
             if (get_ierr != 0) {
                 amrex::Warning("HYPRE_StructVectorGetBoxValues failed during plotfile writing!");
             }
+            // Same host-buffer-into-device-Array4 pattern as the flux-calc
+            // writeback below; stage in a DeviceVector and ParallelFor.
+#ifdef AMREX_USE_GPU
+            amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buffer(npts);
+            amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, soln_buffer.data(),
+                                  soln_buffer.data() + npts, d_soln_buffer.data());
+            amrex::Gpu::streamSynchronize();
+            const HYPRE_Real* src_ptr = d_soln_buffer.data();
+#else
+            const HYPRE_Real* src_ptr = soln_buffer.data();
+#endif
             amrex::Array4<amrex::Real> const soln_arr = mf_soln_temp.array(mfi);
-            long long k_lin_idx = 0;
-            amrex::LoopOnCpu(bx, [&](int ii, int jj, int kk) {
-                if (k_lin_idx < npts) {
-                    soln_arr(ii, jj, kk, 0) = static_cast<amrex::Real>(soln_buffer[k_lin_idx]);
-                } else {
-                    amrex::Warning("Buffer overrun detected during HYPRE GetBoxValues copy!");
-                }
-                k_lin_idx++;
+            const auto lo = amrex::lbound(bx);
+            const int nx_box = bx.length(0);
+            const int ny_box = bx.length(1);
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                const long long lin = static_cast<long long>(k - lo.z) * nx_box * ny_box +
+                                      static_cast<long long>(j - lo.y) * nx_box +
+                                      static_cast<long long>(i - lo.x);
+                soln_arr(i, j, k, 0) = static_cast<amrex::Real>(src_ptr[lin]);
             });
-            if (k_lin_idx != npts) {
-                amrex::Warning("Point count mismatch during HYPRE GetBoxValues copy!");
-            }
         }
+#ifdef AMREX_USE_GPU
+        amrex::Gpu::streamSynchronize();
+#endif
         amrex::MultiFab mf_mask_temp(m_ba, m_dm, 1, 0);
         amrex::Copy(mf_mask_temp, m_mf_active_mask, MaskComp, 0, 1, 0);
         amrex::MultiFab mf_phase_temp(m_ba, m_dm, 1, 0);
@@ -706,15 +717,29 @@ bool OpenImpala::TortuosityHypre::solve() {
             auto hypre_hi_f = OpenImpala::TortuosityHypre::hiV(bx);
             HYPRE_StructVectorGetBoxValues(m_x, hypre_lo_f.data(), hypre_hi_f.data(),
                                            soln_buf_fail.data());
+#ifdef AMREX_USE_GPU
+            amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buf_fail(npts);
+            amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, soln_buf_fail.data(),
+                                  soln_buf_fail.data() + npts, d_soln_buf_fail.data());
+            amrex::Gpu::streamSynchronize();
+            const HYPRE_Real* src_ptr_fail = d_soln_buf_fail.data();
+#else
+            const HYPRE_Real* src_ptr_fail = soln_buf_fail.data();
+#endif
             amrex::Array4<amrex::Real> const soln_arr = mf_soln_fail.array(mfi);
-            long long idx = 0;
-            amrex::LoopOnCpu(bx, [&](int ii, int jj, int kk) {
-                if (idx < npts) {
-                    soln_arr(ii, jj, kk, 0) = static_cast<amrex::Real>(soln_buf_fail[idx]);
-                }
-                idx++;
+            const auto lo_f = amrex::lbound(bx);
+            const int nx_f = bx.length(0);
+            const int ny_f = bx.length(1);
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                const long long lin = static_cast<long long>(k - lo_f.z) * nx_f * ny_f +
+                                      static_cast<long long>(j - lo_f.y) * nx_f +
+                                      static_cast<long long>(i - lo_f.x);
+                soln_arr(i, j, k, 0) = static_cast<amrex::Real>(src_ptr_fail[lin]);
             });
         }
+#ifdef AMREX_USE_GPU
+        amrex::Gpu::streamSynchronize();
+#endif
         amrex::MultiFab mf_mask_fail(m_ba, m_dm, 1, 0);
         amrex::Copy(mf_mask_fail, m_mf_active_mask, MaskComp, 0, 1, 0);
         amrex::MultiFab mf_phase_fail(m_ba, m_dm, 1, 0);
@@ -1134,18 +1159,33 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
         if (get_ierr != 0) {
             amrex::Warning("HYPRE_StructVectorGetBoxValues failed during flux calculation copy!");
         }
+        // Stage HYPRE's host-side soln_buffer in device memory before writing it
+        // through the iMultiFab Array4 view, which on CUDA builds points at GPU
+        // memory. A bare LoopOnCpu writing soln_arr(ii,jj,kk,0) = ... segfaults
+        // on T4 / A100 / etc.
+#ifdef AMREX_USE_GPU
+        amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buffer(npts);
+        amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, soln_buffer.data(),
+                              soln_buffer.data() + npts, d_soln_buffer.data());
+        amrex::Gpu::streamSynchronize();
+        const HYPRE_Real* src_ptr = d_soln_buffer.data();
+#else
+        const HYPRE_Real* src_ptr = soln_buffer.data();
+#endif
         amrex::Array4<amrex::Real> const soln_arr = mf_soln_temp.array(mfi);
-        long long k_lin_idx = 0;
-        amrex::LoopOnCpu(bx, [&](int ii, int jj, int kk) {
-            if (k_lin_idx < npts) {
-                soln_arr(ii, jj, kk, 0) = static_cast<amrex::Real>(soln_buffer[k_lin_idx]);
-            }
-            k_lin_idx++;
+        const auto lo = amrex::lbound(bx);
+        const int nx_box = bx.length(0);
+        const int ny_box = bx.length(1);
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            const long long lin = static_cast<long long>(k - lo.z) * nx_box * ny_box +
+                                  static_cast<long long>(j - lo.y) * nx_box +
+                                  static_cast<long long>(i - lo.x);
+            soln_arr(i, j, k, 0) = static_cast<amrex::Real>(src_ptr[lin]);
         });
-        if (k_lin_idx != npts) {
-            amrex::Warning("Point count mismatch during flux calc copy!");
-        }
     }
+#ifdef AMREX_USE_GPU
+    amrex::Gpu::streamSynchronize();
+#endif
     mf_soln_temp.FillBoundary(m_geom.periodicity());
     m_mf_active_mask.FillBoundary(m_geom.periodicity());
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
