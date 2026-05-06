@@ -121,12 +121,16 @@ public:
         return HypreStructSolver::hiV(b);
     }
 
-
-private:
-    // --- Private Methods ---
+    // Implementation methods. They are nominally internal but must live in
+    // the public section because nvcc forbids extended __device__ lambdas in
+    // private/protected member functions (see CUDA Programming Guide §I.4.1).
+    // Compare TortuosityHypre.H, which exposes the same methods publicly for
+    // the same reason.
     void setupMatrixEquation();
     void generateActiveMask(); // Simpler version for D=0/1 based on phase_id
 
+
+private:
     // --- Member Variables ---
     // Configuration (solver config m_solvertype/m_eps/m_maxiter/m_verbose are in base class)
     std::string m_resultspath;
