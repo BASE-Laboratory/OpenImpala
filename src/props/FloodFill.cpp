@@ -35,16 +35,31 @@ void collectBoundarySeeds(const amrex::iMultiFab& phaseFab, int phaseID, int dir
     amrex::Vector<amrex::IntVect> local_inlet;
     amrex::Vector<amrex::IntVect> local_outlet;
 
-    // Seed collection must run on CPU (building host-side IntVect vectors).
-    // Synchronize first to ensure phase data is available on host.
+    // Seed collection runs on CPU (it builds host-side IntVect vectors).
+    // On a CUDA build, phaseFab.const_array(mfi) is a view into device-resident
+    // memory — reading it from a host LoopOnCpu segfaults on T4 / A100. We
+    // therefore snapshot phaseFab into a pinned-host iMultiFab once, and
+    // iterate that copy on the CPU. On CPU builds the snapshot is a no-op
+    // assignment (host data already accessible) so we just alias the input.
     amrex::Gpu::streamSynchronize();
+
+#ifdef AMREX_USE_GPU
+    amrex::iMultiFab phaseFab_host_storage(phaseFab.boxArray(), phaseFab.DistributionMap(),
+                                           phaseFab.nComp(), phaseFab.nGrow(),
+                                           amrex::MFInfo().SetArena(amrex::The_Pinned_Arena()));
+    amrex::Copy(phaseFab_host_storage, phaseFab, 0, 0, phaseFab.nComp(), phaseFab.nGrow());
+    amrex::Gpu::streamSynchronize();
+    const amrex::iMultiFab& phaseFab_host = phaseFab_host_storage;
+#else
+    const amrex::iMultiFab& phaseFab_host = phaseFab;
+#endif
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-    for (amrex::MFIter mfi(phaseFab); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(phaseFab_host); mfi.isValid(); ++mfi) {
         const amrex::Box& validBox = mfi.validbox();
-        const auto phase_arr = phaseFab.const_array(mfi);
+        const auto phase_arr = phaseFab_host.const_array(mfi);
 
         amrex::Box inlet_intersect = validBox & domain_lo_face;
         if (!inlet_intersect.isEmpty()) {
