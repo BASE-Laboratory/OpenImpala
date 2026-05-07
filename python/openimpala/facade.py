@@ -349,7 +349,7 @@ def tortuosity(
     direction: Union[str, "Direction"] = "x",
     solver: Union[str, "SolverType"] = "auto",
     *,
-    preconditioner: Union[str, "PrecondType"] = "smg",
+    preconditioner: Union[str, "PrecondType"] = "pfmg",
     max_grid_size: Union[int, str] = 32,
     results_path: str = ".",
     verbose: int = 0,
@@ -376,10 +376,12 @@ def tortuosity(
         ``'smg'``, ``'pfmg'``, ``'jacobi'``.
     preconditioner : str or PrecondType, keyword-only
         Multigrid preconditioner for Krylov solvers (PCG/GMRES/FlexGMRES/BiCGSTAB):
-        ``'smg'`` (default) or ``'pfmg'``.  Ignored for standalone SMG/PFMG/Jacobi
-        and for MLMG.  PCG+PFMG is typically the best combination for large grids —
-        plain PCG scales super-linearly with N, a multigrid preconditioner restores
-        near-O(N) scaling.
+        ``'pfmg'`` (default) or ``'smg'``.  Ignored for standalone SMG/PFMG/Jacobi
+        and for MLMG.  PFMG is the default because it has full GPU support in
+        HYPRE; SMG only has partial GPU support and may segfault on the CUDA wheel.
+        On CPU builds either works.  PCG+PFMG is typically the best combination
+        for large grids — plain PCG scales super-linearly with N, a multigrid
+        preconditioner restores near-O(N) scaling.
     max_grid_size : int or str
         AMReX box decomposition size.  ``'auto'`` picks a value based on the
         domain dimensions.
