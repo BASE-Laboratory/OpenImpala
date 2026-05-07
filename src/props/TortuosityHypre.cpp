@@ -345,10 +345,28 @@ void OpenImpala::TortuosityHypre::preconditionPhaseFab() {
         for (amrex::MFIter mfi(m_mf_phase, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
             const amrex::Box& tile_box = mfi.tilebox();
             amrex::IArrayBox& fab = m_mf_phase[mfi];
-            int ncomp = fab.nComp();
+            const int ncomp = fab.nComp();
+            // removeIsolatedCells is a host kernel that dereferences the
+            // raw pointer it receives. fab.dataPtr() returns DEVICE memory
+            // on CUDA builds; copy the fab to a host buffer, run the
+            // kernel there, then push the modified data back.
+#ifdef AMREX_USE_GPU
+            const size_t total = static_cast<size_t>(fab.box().numPts()) * ncomp;
+            std::vector<int> host_buf(total);
+            amrex::Gpu::copyAsync(amrex::Gpu::deviceToHost, fab.dataPtr(0), fab.dataPtr(0) + total,
+                                  host_buf.data());
+            amrex::Gpu::streamSynchronize();
+            OpenImpala::removeIsolatedCells(host_buf.data(), fab.loVect(), fab.hiVect(), ncomp,
+                                            tile_box.loVect(), tile_box.hiVect(),
+                                            domain_box.loVect(), domain_box.hiVect());
+            amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, host_buf.data(),
+                                  host_buf.data() + total, fab.dataPtr(0));
+            amrex::Gpu::streamSynchronize();
+#else
             OpenImpala::removeIsolatedCells(fab.dataPtr(0), fab.loVect(), fab.hiVect(), ncomp,
                                             tile_box.loVect(), tile_box.hiVect(),
                                             domain_box.loVect(), domain_box.hiVect());
+#endif
         }
         if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "    DEBUG [preconditionPhaseFab]: Finished remspot pass " << pass + 1

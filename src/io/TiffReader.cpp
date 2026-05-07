@@ -27,7 +27,8 @@
 #include <AMReX_Box.H>
 #include <AMReX_IntVect.H>
 #include <AMReX_iMultiFab.H>
-// #include <AMReX_GpuContainers.H> // Optional
+#include <AMReX_Gpu.H>          // For amrex::Gpu::streamSynchronize, The_Pinned_Arena
+#include <AMReX_MultiFabUtil.H> // For amrex::Copy on iMultiFab
 #include <AMReX_Extension.H>
 #include <AMReX_GpuQualifiers.H>
 #include <AMReX_Utility.H>
@@ -458,6 +459,19 @@ void TiffReader::readDistributedIntoFab(amrex::iMultiFab& dest_mf, int value_if_
     const int image_depth_const = m_depth;
     const uint16_t fill_order_local = m_fill_order;
 
+    // The destination iMultiFab `dest_mf` is on device on CUDA builds. The
+    // amrex::LoopOnCpu blocks below write fab_arr(i, j, k_fab) = ... from
+    // host code; that segfaults if fab_arr points at device memory. Build a
+    // host-mirror iMultiFab on the pinned arena, fill it, then Copy device
+    // at the end.
+#ifdef AMREX_USE_GPU
+    amrex::iMultiFab mf_host(dest_mf.boxArray(), dest_mf.DistributionMap(), dest_mf.nComp(),
+                             dest_mf.nGrow(), amrex::MFInfo().SetArena(amrex::The_Pinned_Arena()));
+    amrex::iMultiFab& target_mf = mf_host;
+#else
+    amrex::iMultiFab& target_mf = dest_mf;
+#endif
+
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
@@ -465,8 +479,8 @@ void TiffReader::readDistributedIntoFab(amrex::iMultiFab& dest_mf, int value_if_
         std::vector<unsigned char> temp_buffer;
         TiffPtr thread_local_tif_handle = nullptr;
 
-        for (amrex::MFIter mfi(dest_mf, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-            amrex::Array4<int> fab_arr = dest_mf.array(mfi);
+        for (amrex::MFIter mfi(target_mf, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            amrex::Array4<int> fab_arr = target_mf.array(mfi);
             const amrex::Box& tile_box = mfi.tilebox();
             const int k_min_fab = tile_box.smallEnd(2);
             const int k_max_fab = tile_box.bigEnd(2);
@@ -714,6 +728,10 @@ void TiffReader::readDistributedIntoFab(amrex::iMultiFab& dest_mf, int value_if_
             } // End k_loop_idx Z-slices
         } // End MFIter
     } // End OMP parallel region
+#ifdef AMREX_USE_GPU
+    amrex::Copy(dest_mf, mf_host, 0, 0, dest_mf.nComp(), dest_mf.nGrow());
+    amrex::Gpu::streamSynchronize();
+#endif
     amrex::ParallelDescriptor::Barrier("TiffReader::readDistributedIntoFab");
 }
 
