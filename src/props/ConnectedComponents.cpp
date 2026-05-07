@@ -31,14 +31,35 @@ ConnectedComponents::ConnectedComponents(const amrex::Geometry& geom, const amre
 amrex::IntVect ConnectedComponents::findNextUnlabeled(const amrex::iMultiFab& labelMF,
                                                       const amrex::iMultiFab& phaseFab,
                                                       int phaseID) const {
-    // Find the first unlabeled cell of the target phase on this rank
+    // Find the first unlabeled cell of the target phase on this rank.
+    // The LoopOnCpu reads through label_arr / phase_arr would segfault on
+    // CUDA builds where those Array4 views point at device memory. Snapshot
+    // both into pinned-host iMultiFabs before iterating; on CPU builds the
+    // snapshots are skipped via the #ifdef and we alias the inputs.
     amrex::IntVect local_seed(-1, -1, -1);
     bool found = false;
 
-    for (amrex::MFIter mfi(labelMF); mfi.isValid() && !found; ++mfi) {
+#ifdef AMREX_USE_GPU
+    amrex::iMultiFab labelMF_host_storage(labelMF.boxArray(), labelMF.DistributionMap(),
+                                          labelMF.nComp(), 0,
+                                          amrex::MFInfo().SetArena(amrex::The_Pinned_Arena()));
+    amrex::iMultiFab phaseFab_host_storage(phaseFab.boxArray(), phaseFab.DistributionMap(),
+                                           phaseFab.nComp(), 0,
+                                           amrex::MFInfo().SetArena(amrex::The_Pinned_Arena()));
+    amrex::Copy(labelMF_host_storage, labelMF, 0, 0, labelMF.nComp(), 0);
+    amrex::Copy(phaseFab_host_storage, phaseFab, 0, 0, phaseFab.nComp(), 0);
+    amrex::Gpu::streamSynchronize();
+    const amrex::iMultiFab& labelMF_host = labelMF_host_storage;
+    const amrex::iMultiFab& phaseFab_host = phaseFab_host_storage;
+#else
+    const amrex::iMultiFab& labelMF_host = labelMF;
+    const amrex::iMultiFab& phaseFab_host = phaseFab;
+#endif
+
+    for (amrex::MFIter mfi(labelMF_host); mfi.isValid() && !found; ++mfi) {
         const amrex::Box& vbox = mfi.validbox();
-        const auto label_arr = labelMF.const_array(mfi);
-        const auto phase_arr = phaseFab.const_array(mfi, 0);
+        const auto label_arr = labelMF_host.const_array(mfi);
+        const auto phase_arr = phaseFab_host.const_array(mfi, 0);
 
         amrex::LoopOnCpu(vbox, [&](int i, int j, int k) {
             if (!found && phase_arr(i, j, k) == phaseID && label_arr(i, j, k, 0) == 0) {

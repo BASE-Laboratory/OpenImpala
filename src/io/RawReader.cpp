@@ -15,6 +15,8 @@
 #include <AMReX_IntVect.H> // Needed for the fix
 #include <AMReX_iMultiFab.H>
 #include <AMReX_GpuContainers.H>      // For amrex::LoopOnCpu
+#include <AMReX_Gpu.H>                // For amrex::Gpu::streamSynchronize, The_Pinned_Arena
+#include <AMReX_MultiFabUtil.H>       // For amrex::Copy on iMultiFab
 #include <AMReX_Extension.H>          // For AMREX_ALWAYS_ASSERT_WITH_MESSAGE
 #include <AMReX_GpuQualifiers.H>      // For AMREX_FORCE_INLINE
 #include <AMReX_ParallelDescriptor.H> // For IOProcessor
@@ -476,13 +478,25 @@ void RawReader::threshold(double threshold_value, int value_if_true, int value_i
     }
     const bool needs_swap = (bytes_per_voxel > 1) && (data_is_le != host_is_little_endian);
 
+    // The destination iMultiFab `mf` is on device on CUDA builds. The
+    // LoopOnCpu fab(...) = ... writes below would segfault writing to
+    // device memory from CPU code. Build a host-mirror iMultiFab on the
+    // pinned arena, fill it, then Copy device at the end.
+#ifdef AMREX_USE_GPU
+    amrex::iMultiFab mf_host(mf.boxArray(), mf.DistributionMap(), mf.nComp(), mf.nGrow(),
+                             amrex::MFInfo().SetArena(amrex::The_Pinned_Arena()));
+    amrex::iMultiFab& target = mf_host;
+#else
+    amrex::iMultiFab& target = mf;
+#endif
+
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
     // Iterate over the iMultiFab using MFIter
-    for (amrex::MFIter mfi(mf); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(target); mfi.isValid(); ++mfi) {
         const amrex::Box& box = mfi.validbox(); // Get the valid box for this FAB
-        amrex::IArrayBox& fab = mf[mfi];        // Get the FArrayBox data (non-const ref)
+        amrex::IArrayBox& fab = target[mfi];    // Get the FArrayBox data (non-const ref)
 
         // Loop over the cells in the box using amrex::LoopOnCpu (since m_raw_bytes is host memory)
         amrex::LoopOnCpu(box, [&](int i, int j, int k) {
@@ -589,6 +603,10 @@ void RawReader::threshold(double threshold_value, int value_if_true, int value_i
             }
         }); // End of amrex::LoopOnCpu lambda
     } // End of MFIter loop
+#ifdef AMREX_USE_GPU
+    amrex::Copy(mf, mf_host, 0, 0, mf.nComp(), mf.nGrow());
+    amrex::Gpu::streamSynchronize();
+#endif
 } // End of threshold function
 
 

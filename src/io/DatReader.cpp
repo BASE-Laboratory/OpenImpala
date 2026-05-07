@@ -15,6 +15,8 @@
 #include <AMReX_Box.H>
 #include <AMReX_IntVect.H>
 #include <AMReX_iMultiFab.H>
+#include <AMReX_Gpu.H>           // For amrex::Gpu::streamSynchronize, The_Pinned_Arena
+#include <AMReX_MultiFabUtil.H>  // For amrex::Copy on iMultiFab
 #include <AMReX_GpuContainers.H> // For amrex::LoopOnCpu
 
 
@@ -223,12 +225,24 @@ void DatReader::threshold(DataType raw_threshold, int value_if_true, int value_i
     const int current_height = m_height;
     const int current_depth = m_depth;
 
+    // The destination iMultiFab `mf` is on device on CUDA builds. The
+    // LoopOnCpu fab(...) = ... writes below would segfault writing to
+    // device memory from CPU code. Build a host-mirror iMultiFab on the
+    // pinned arena, fill it, then Copy device at the end.
+#ifdef AMREX_USE_GPU
+    amrex::iMultiFab mf_host(mf.boxArray(), mf.DistributionMap(), mf.nComp(), mf.nGrow(),
+                             amrex::MFInfo().SetArena(amrex::The_Pinned_Arena()));
+    amrex::iMultiFab& target = mf_host;
+#else
+    amrex::iMultiFab& target = mf;
+#endif
+
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-    for (amrex::MFIter mfi(mf); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(target); mfi.isValid(); ++mfi) {
         const amrex::Box& box = mfi.validbox();
-        amrex::IArrayBox& fab = mf[mfi];
+        amrex::IArrayBox& fab = target[mfi];
         amrex::LoopOnCpu(box, [&](int i, int j, int k) {
             if (i >= 0 && i < current_width && j >= 0 && j < current_height && k >= 0 &&
                 k < current_depth) {
@@ -246,6 +260,10 @@ void DatReader::threshold(DataType raw_threshold, int value_if_true, int value_i
             }
         });
     }
+#ifdef AMREX_USE_GPU
+    amrex::Copy(mf, mf_host, 0, 0, mf.nComp(), mf.nGrow());
+    amrex::Gpu::streamSynchronize();
+#endif
 }
 
 // Original overload (output 1/0) - calls the flexible version
