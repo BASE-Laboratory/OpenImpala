@@ -66,14 +66,16 @@ public:
      * @param write_plotfile If true, write a plotfile of the solution potential field. Default
      * false.
      * @param precond_type Preconditioner used by Krylov solvers (PCG/GMRES/FlexGMRES/BiCGSTAB).
-     *   Ignored when @p solvertype is a standalone multigrid (SMG/PFMG) or Jacobi. Default SMG.
+     *   Ignored when @p solvertype is a standalone multigrid (SMG/PFMG) or Jacobi.
+     *   Default PFMG — full GPU support in HYPRE; SMG only has partial GPU support.
      */
     TortuosityHypre(const amrex::Geometry& geom, const amrex::BoxArray& ba,
                     const amrex::DistributionMapping& dm, const amrex::iMultiFab& mf_phase_input,
                     const amrex::Real vf, const int phase, const OpenImpala::Direction dir,
                     const SolverType solvertype, const std::string& resultspath,
                     const amrex::Real vlo = 0.0, const amrex::Real vhi = 1.0, int verbose = 0,
-                    bool write_plotfile = false, const PrecondType precond_type = PrecondType::SMG);
+                    bool write_plotfile = false,
+                    const PrecondType precond_type = PrecondType::PFMG);
 
     /** Destructor. Base class handles HYPRE resource cleanup. */
     virtual ~TortuosityHypre() override = default;
@@ -179,7 +181,7 @@ private:
     bool m_write_plotfile;
 
     // Preconditioner for Krylov solvers (ignored for standalone SMG/PFMG/Jacobi)
-    PrecondType m_precond_type = PrecondType::SMG;
+    PrecondType m_precond_type = PrecondType::PFMG;
 
     // Boundary condition configuration
     BCType m_bc_inlet_outlet_type = BCType::DirichletExternal;
