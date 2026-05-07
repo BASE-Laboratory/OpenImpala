@@ -527,13 +527,27 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
         amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_xinit.begin(), d_xinit.end(),
                          initial_guess.begin());
 
-        // Apply BCs on host (surface operation, not performance-critical)
+        // The host-side BC functions below dereference mask_ptr / dc_ptr
+        // directly, so the underlying memory must be host-accessible.
+        // m_mf_active_mask[mfi].dataPtr() and m_mf_diff_coeff[mfi].dataPtr()
+        // return DEVICE pointers on CUDA builds — passing those to a CPU
+        // function reading through them segfaults. Snapshot the relevant
+        // component(s) device → host before the BC pass.
         const amrex::IArrayBox& mask_iab = m_mf_active_mask[mfi];
-        const int* mask_ptr = mask_iab.dataPtr(MaskComp);
-        const auto& mask_box = mask_iab.box();
         const amrex::FArrayBox& dc_fab = m_mf_diff_coeff[mfi];
-        const amrex::Real* dc_ptr = dc_fab.dataPtr(0);
+        const auto& mask_box = mask_iab.box();
         const auto& dc_box = dc_fab.box();
+        const size_t mask_comp_size = mask_box.numPts();
+        const size_t dc_comp_size = dc_box.numPts();
+        std::vector<int> mask_host(mask_comp_size);
+        std::vector<amrex::Real> dc_host(dc_comp_size);
+        amrex::Gpu::copyAsync(amrex::Gpu::deviceToHost, mask_iab.dataPtr(MaskComp),
+                              mask_iab.dataPtr(MaskComp) + mask_comp_size, mask_host.data());
+        amrex::Gpu::copyAsync(amrex::Gpu::deviceToHost, dc_fab.dataPtr(0),
+                              dc_fab.dataPtr(0) + dc_comp_size, dc_host.data());
+        amrex::Gpu::streamSynchronize();
+        const int* mask_ptr = mask_host.data();
+        const amrex::Real* dc_ptr = dc_host.data();
 
         if (m_bc_inlet_outlet != nullptr) {
             m_bc_inlet_outlet->applyBC(matrix_values.data(), rhs_values.data(),
