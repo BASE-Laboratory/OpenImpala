@@ -155,10 +155,13 @@ def _parse_solver(s):
 
     The special value ``"auto"`` selects PCG — the optimal solver for
     single-phase steady-state diffusion (the Laplacian with harmonic-mean
-    face coefficients is symmetric positive-definite).
+    face coefficients is symmetric positive-definite). Works on both CPU
+    and GPU wheels.
 
-    The value ``"mlmg"`` selects the matrix-free AMReX MLMG solver,
-    which avoids explicit matrix assembly and uses less memory.
+    The value ``"mlmg"`` selects AMReX's matrix-free geometric multigrid
+    solver. Bypasses HYPRE entirely; the most performant choice on GPU
+    hardware for structured-grid problems and fully matrix-free (no
+    assembly cost).
     """
     _core = _get_core()
     if isinstance(s, _core.SolverType):
@@ -368,12 +371,13 @@ def tortuosity(
     direction : str or Direction
         Flow direction ('x', 'y', 'z').
     solver : str or SolverType
-        Solver algorithm.  ``'auto'`` (default) selects the best available
-        solver: CuPy CG on GPU or SciPy CG on CPU when the C++ backend is
-        not installed, HYPRE PCG otherwise.  ``'mlmg'`` uses AMReX's native
-        matrix-free geometric multigrid (requires C++ backend).  Other HYPRE
-        options: ``'flexgmres'``, ``'gmres'``, ``'bicgstab'``, ``'pcg'``,
-        ``'smg'``, ``'pfmg'``, ``'jacobi'``.
+        Solver algorithm.  ``'auto'`` (default) selects HYPRE PCG, the
+        optimal choice for the symmetric Poisson-like operator with
+        harmonic-mean face coefficients on both CPU and GPU.  ``'mlmg'``
+        uses AMReX's matrix-free geometric multigrid (often the fastest
+        option on GPU hardware).  Other HYPRE options: ``'flexgmres'``,
+        ``'gmres'``, ``'bicgstab'``, ``'pcg'``, ``'smg'``, ``'pfmg'``,
+        ``'jacobi'``.
     preconditioner : str or PrecondType, keyword-only
         Multigrid preconditioner for Krylov solvers (PCG/GMRES/FlexGMRES/BiCGSTAB):
         ``'pfmg'`` (default) or ``'smg'``.  Ignored for standalone SMG/PFMG/Jacobi

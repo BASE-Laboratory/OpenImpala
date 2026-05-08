@@ -169,17 +169,21 @@ void HypreStructSolver::createMatrixAndVectors() {
     HYPRE_CHECK(ierr);
 
 #ifdef OPENIMPALA_USE_GPU
-    // GPU kernels compute on device and copy results to host before calling
-    // HYPRE_StructSetBoxValues with host pointers. Therefore HYPRE matrix
-    // and vector storage must remain on the host (HYPRE_MEMORY_HOST) so that
-    // SetBoxValues receives compatible pointers.  Only the execution policy
-    // is set to device so that HYPRE's own internal solver operations can
-    // run on the GPU when HYPRE is built with device support.
+    // HYPRE 2.31's structured solvers (PFMG/SMG/PCG/GMRES on GPU) require
+    // BOTH the memory location AND the execution policy to be DEVICE — the
+    // mixed configuration (HOST memory + DEVICE execution) compiles and the
+    // matrix assembles, but the actual iterative solve crashes inside the
+    // HYPRE coarsening/smoothing kernels on T4/A100. setupMatrixEquation()
+    // therefore passes device pointers to HYPRE_StructMatrixSetBoxValues
+    // and HYPRE_StructVectorSetBoxValues; HYPRE will store and operate on
+    // the data entirely on the device.
+    HYPRE_SetMemoryLocation(HYPRE_MEMORY_DEVICE);
     HYPRE_SetExecutionPolicy(HYPRE_EXEC_DEVICE);
 
     if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  createMatrixAndVectors: HYPRE execution policy set to DEVICE."
-                       << std::endl;
+        amrex::Print()
+            << "  createMatrixAndVectors: HYPRE memory location and execution policy set to DEVICE."
+            << std::endl;
     }
 #endif
 

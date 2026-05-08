@@ -408,7 +408,13 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
     std::vector<amrex::Real> initial_guess_buffer;
 
 #ifdef OPENIMPALA_USE_GPU
-    // GPU path: use device-resident buffers and ParallelFor kernel
+    // GPU path: keep matrix data device-resident end-to-end. With
+    // HYPRE_SetMemoryLocation(HYPRE_MEMORY_DEVICE) configured in the base
+    // class's createMatrixAndVectors, HYPRE expects device pointers in
+    // SetBoxValues — pass d_matrix.data() / d_rhs.data() / d_xinit.data()
+    // directly with no host roundtrip. effDiffFillMatrixGpu handles BCs
+    // in-kernel so there's no need to bounce to host like TortuosityHypre
+    // does.
     for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
         const amrex::Box& valid_bx = mfi.validbox();
         const int npts_valid = static_cast<int>(valid_bx.numPts());
@@ -427,29 +433,17 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
                                          mask_arr, dc_arr, m_dx.dataPtr(), current_dir_int);
         amrex::Gpu::streamSynchronize();
 
-        // Copy device buffers to host for HYPRE SetBoxValues
-        matrix_values_buffer.resize(mtx_size);
-        rhs_values_buffer.resize(npts_valid);
-        initial_guess_buffer.resize(npts_valid);
-        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_matrix.begin(), d_matrix.end(),
-                         matrix_values_buffer.begin());
-        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_rhs.begin(), d_rhs.end(),
-                         rhs_values_buffer.begin());
-        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_xinit.begin(), d_xinit.end(),
-                         initial_guess_buffer.begin());
-
         auto hypre_lo_valid = EffectiveDiffusivityHypre::loV(valid_bx);
         auto hypre_hi_valid = EffectiveDiffusivityHypre::hiV(valid_bx);
 
         ierr = HYPRE_StructMatrixSetBoxValues(m_A, hypre_lo_valid.data(), hypre_hi_valid.data(),
-                                              stencil_size, stencil_indices_hypre,
-                                              matrix_values_buffer.data());
+                                              stencil_size, stencil_indices_hypre, d_matrix.data());
         HYPRE_CHECK(ierr);
         ierr = HYPRE_StructVectorSetBoxValues(m_b, hypre_lo_valid.data(), hypre_hi_valid.data(),
-                                              rhs_values_buffer.data());
+                                              d_rhs.data());
         HYPRE_CHECK(ierr);
         ierr = HYPRE_StructVectorSetBoxValues(m_x, hypre_lo_valid.data(), hypre_hi_valid.data(),
-                                              initial_guess_buffer.data());
+                                              d_xinit.data());
         HYPRE_CHECK(ierr);
     }
 #else
@@ -700,40 +694,37 @@ void EffectiveDiffusivityHypre::getChiSolution(amrex::MultiFab& chi_field) {
     AMREX_ALWAYS_ASSERT(chi_field.boxArray() == m_ba);
     AMREX_ALWAYS_ASSERT(chi_field.DistributionMap() == m_dm);
 
+    // HYPRE_MEMORY_DEVICE on CUDA → GetBoxValues writes to a device pointer,
+    // and chi_arr below is also device-resident, so on GPU we want HYPRE to
+    // drop the solution straight into a device buffer with no host bounce.
     // No OMP: HYPRE_StructVectorGetBoxValues is not thread-safe for the same vector.
-    std::vector<amrex::Real> soln_buffer;
+    std::vector<amrex::Real> soln_buffer_host;
     for (amrex::MFIter mfi(chi_field, false); mfi.isValid(); ++mfi) {
         const amrex::Box& bx_getsol = mfi.validbox();
         const int npts = static_cast<int>(bx_getsol.numPts());
         if (npts == 0)
             continue;
 
-        soln_buffer.resize(npts);
-
         auto hypre_lo = EffectiveDiffusivityHypre::loV(bx_getsol);
         auto hypre_hi = EffectiveDiffusivityHypre::hiV(bx_getsol);
 
+#ifdef AMREX_USE_GPU
+        amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buffer(npts);
         HYPRE_Int get_ierr = HYPRE_StructVectorGetBoxValues(m_x, hypre_lo.data(), hypre_hi.data(),
-                                                            soln_buffer.data());
+                                                            d_soln_buffer.data());
+        const HYPRE_Real* src_ptr = d_soln_buffer.data();
+#else
+        soln_buffer_host.resize(npts);
+        HYPRE_Int get_ierr = HYPRE_StructVectorGetBoxValues(m_x, hypre_lo.data(), hypre_hi.data(),
+                                                            soln_buffer_host.data());
+        const HYPRE_Real* src_ptr = soln_buffer_host.data();
+#endif
         if (get_ierr != 0) {
             amrex::Warning("HYPRE_StructVectorGetBoxValues failed during getChiSolution!");
             chi_field[mfi].template setVal<amrex::RunOn::Host>(0.0, bx_getsol, ChiComp,
                                                                numComponentsChi);
             continue;
         }
-
-        // Stage HYPRE's host soln_buffer in device memory; chi_arr is an
-        // Array4 view into chi_field which on CUDA builds lives in device
-        // memory, so writing through it from a host loop segfaults.
-#ifdef AMREX_USE_GPU
-        amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buffer(npts);
-        amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, soln_buffer.data(),
-                              soln_buffer.data() + npts, d_soln_buffer.data());
-        amrex::Gpu::streamSynchronize();
-        const HYPRE_Real* src_ptr = d_soln_buffer.data();
-#else
-        const HYPRE_Real* src_ptr = soln_buffer.data();
-#endif
         amrex::Array4<amrex::Real> const chi_arr = chi_field.array(mfi);
         const int chi_comp = ChiComp;
         const auto lo = amrex::lbound(bx_getsol);

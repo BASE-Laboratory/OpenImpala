@@ -512,15 +512,25 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
     std::vector<amrex::Real> initial_guess;
 
 #ifdef OPENIMPALA_USE_GPU
-    // GPU path: use device-resident buffers and ParallelFor kernel.
-    // BCs are applied on the CPU side after the GPU kernel fills the interior.
+    // GPU path: keep matrix data device-resident end-to-end. HYPRE 2.31's
+    // structured solvers crash on device data when the memory location is
+    // HOST but execution policy is DEVICE — see HypreStructSolver::
+    // createMatrixAndVectors for the matching HYPRE_SetMemoryLocation
+    // call. We:
+    //   1. Allocate device buffers for matrix / RHS / initial guess.
+    //   2. Run tortuosityFillMatrixGpu kernel to populate the interior.
+    //   3. Bounce briefly to host to apply BCs (BC code is host-only) —
+    //      copy device→host, snapshot mask/dc to host, run applyBC, copy
+    //      results host→device.
+    //   4. Pass the *device* pointer to HYPRE_StructMatrixSetBoxValues etc.
+    //      With HYPRE_SetMemoryLocation(HYPRE_MEMORY_DEVICE) set, HYPRE
+    //      stores and operates on the data entirely on the GPU.
     for (amrex::MFIter mfi(m_mf_phase); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();
         const int npts = static_cast<int>(bx.numPts());
         if (npts == 0)
             continue;
 
-        // Allocate device buffers via AMReX arena
         const size_t mtx_size = static_cast<size_t>(npts) * stencil_size;
         amrex::Gpu::DeviceVector<amrex::Real> d_matrix(mtx_size);
         amrex::Gpu::DeviceVector<amrex::Real> d_rhs(npts);
@@ -529,13 +539,13 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
         const auto mask_arr = m_mf_active_mask.const_array(mfi, MaskComp);
         const auto dc_arr = m_mf_diff_coeff.const_array(mfi, 0);
 
-        // GPU kernel: fills interior stencil (no BCs)
+        // Step 1+2: GPU kernel fills the interior stencil.
         OpenImpala::tortuosityFillMatrixGpu(bx, d_matrix.data(), d_rhs.data(), d_xinit.data(),
                                             mask_arr, dc_arr, domain.loVect(), domain.hiVect(),
                                             dxinv_sq.data(), m_vlo, m_vhi, dir_int);
         amrex::Gpu::streamSynchronize();
 
-        // Copy to host for BC application (BCs are small surface ops, CPU is fine)
+        // Step 3: bounce to host for BC application.
         matrix_values.resize(mtx_size);
         rhs_values.resize(npts);
         initial_guess.resize(npts);
@@ -545,12 +555,8 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
         amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_xinit.begin(), d_xinit.end(),
                          initial_guess.begin());
 
-        // The host-side BC functions below dereference mask_ptr / dc_ptr
-        // directly, so the underlying memory must be host-accessible.
-        // m_mf_active_mask[mfi].dataPtr() and m_mf_diff_coeff[mfi].dataPtr()
-        // return DEVICE pointers on CUDA builds — passing those to a CPU
-        // function reading through them segfaults. Snapshot the relevant
-        // component(s) device → host before the BC pass.
+        // mask_iab/dc_fab dataPtr() returns device pointers; snapshot to
+        // host vectors so applyBC can dereference them safely.
         const amrex::IArrayBox& mask_iab = m_mf_active_mask[mfi];
         const amrex::FArrayBox& dc_fab = m_mf_diff_coeff[mfi];
         const auto& mask_box = mask_iab.box();
@@ -582,17 +588,26 @@ void OpenImpala::TortuosityHypre::setupMatrixEquation() {
                                 dir_int);
         }
 
+        // Step 4a: push BC-applied values back to device buffers.
+        amrex::Gpu::copy(amrex::Gpu::hostToDevice, matrix_values.begin(), matrix_values.end(),
+                         d_matrix.begin());
+        amrex::Gpu::copy(amrex::Gpu::hostToDevice, rhs_values.begin(), rhs_values.end(),
+                         d_rhs.begin());
+        amrex::Gpu::copy(amrex::Gpu::hostToDevice, initial_guess.begin(), initial_guess.end(),
+                         d_xinit.begin());
+        amrex::Gpu::streamSynchronize();
+
         auto hypre_lo = OpenImpala::TortuosityHypre::loV(bx);
         auto hypre_hi = OpenImpala::TortuosityHypre::hiV(bx);
 
+        // Step 4b: hand DEVICE pointers to HYPRE.
         ierr = HYPRE_StructMatrixSetBoxValues(m_A, hypre_lo.data(), hypre_hi.data(), stencil_size,
-                                              stencil_indices, matrix_values.data());
+                                              stencil_indices, d_matrix.data());
         HYPRE_CHECK(ierr);
-        ierr = HYPRE_StructVectorSetBoxValues(m_b, hypre_lo.data(), hypre_hi.data(),
-                                              rhs_values.data());
+        ierr = HYPRE_StructVectorSetBoxValues(m_b, hypre_lo.data(), hypre_hi.data(), d_rhs.data());
         HYPRE_CHECK(ierr);
-        ierr = HYPRE_StructVectorSetBoxValues(m_x, hypre_lo.data(), hypre_hi.data(),
-                                              initial_guess.data());
+        ierr =
+            HYPRE_StructVectorSetBoxValues(m_x, hypre_lo.data(), hypre_hi.data(), d_xinit.data());
         HYPRE_CHECK(ierr);
     }
 #else
@@ -674,32 +689,30 @@ bool OpenImpala::TortuosityHypre::solve() {
         amrex::MultiFab mf_plot(m_ba, m_dm, numComponentsPhi, 0);
         amrex::MultiFab mf_soln_temp(m_ba, m_dm, 1, 0);
         mf_soln_temp.setVal(0.0);
+        // HYPRE_MEMORY_DEVICE on CUDA → GetBoxValues writes to a device pointer.
         // No OMP: HYPRE_StructVectorGetBoxValues is not thread-safe for the same vector.
-        std::vector<HYPRE_Real> soln_buffer;
+        std::vector<HYPRE_Real> soln_buffer_host;
         for (amrex::MFIter mfi(mf_soln_temp, false); mfi.isValid(); ++mfi) {
             const amrex::Box& bx = mfi.validbox();
             const int npts = static_cast<int>(bx.numPts());
             if (npts == 0)
                 continue;
-            soln_buffer.resize(npts);
             auto hypre_lo = OpenImpala::TortuosityHypre::loV(bx);
             auto hypre_hi = OpenImpala::TortuosityHypre::hiV(bx);
+#ifdef AMREX_USE_GPU
+            amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buffer(npts);
             HYPRE_Int get_ierr = HYPRE_StructVectorGetBoxValues(
-                m_x, hypre_lo.data(), hypre_hi.data(), soln_buffer.data());
+                m_x, hypre_lo.data(), hypre_hi.data(), d_soln_buffer.data());
+            const HYPRE_Real* src_ptr = d_soln_buffer.data();
+#else
+            soln_buffer_host.resize(npts);
+            HYPRE_Int get_ierr = HYPRE_StructVectorGetBoxValues(
+                m_x, hypre_lo.data(), hypre_hi.data(), soln_buffer_host.data());
+            const HYPRE_Real* src_ptr = soln_buffer_host.data();
+#endif
             if (get_ierr != 0) {
                 amrex::Warning("HYPRE_StructVectorGetBoxValues failed during plotfile writing!");
             }
-            // Same host-buffer-into-device-Array4 pattern as the flux-calc
-            // writeback below; stage in a DeviceVector and ParallelFor.
-#ifdef AMREX_USE_GPU
-            amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buffer(npts);
-            amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, soln_buffer.data(),
-                                  soln_buffer.data() + npts, d_soln_buffer.data());
-            amrex::Gpu::streamSynchronize();
-            const HYPRE_Real* src_ptr = d_soln_buffer.data();
-#else
-            const HYPRE_Real* src_ptr = soln_buffer.data();
-#endif
             amrex::Array4<amrex::Real> const soln_arr = mf_soln_temp.array(mfi);
             const auto lo = amrex::lbound(bx);
             const int nx_box = bx.length(0);
@@ -737,26 +750,26 @@ bool OpenImpala::TortuosityHypre::solve() {
         amrex::MultiFab mf_plot_fail(m_ba, m_dm, numComponentsPhi, 0);
         amrex::MultiFab mf_soln_fail(m_ba, m_dm, 1, 0);
         mf_soln_fail.setVal(0.0);
+        // HYPRE_MEMORY_DEVICE on CUDA → GetBoxValues writes to a device pointer.
         // No OMP: HYPRE_StructVectorGetBoxValues is not thread-safe for the same vector.
-        std::vector<HYPRE_Real> soln_buf_fail;
+        std::vector<HYPRE_Real> soln_buf_fail_host;
         for (amrex::MFIter mfi(mf_soln_fail, false); mfi.isValid(); ++mfi) {
             const amrex::Box& bx = mfi.validbox();
             const int npts = static_cast<int>(bx.numPts());
             if (npts == 0)
                 continue;
-            soln_buf_fail.resize(npts);
             auto hypre_lo_f = OpenImpala::TortuosityHypre::loV(bx);
             auto hypre_hi_f = OpenImpala::TortuosityHypre::hiV(bx);
-            HYPRE_StructVectorGetBoxValues(m_x, hypre_lo_f.data(), hypre_hi_f.data(),
-                                           soln_buf_fail.data());
 #ifdef AMREX_USE_GPU
             amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buf_fail(npts);
-            amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, soln_buf_fail.data(),
-                                  soln_buf_fail.data() + npts, d_soln_buf_fail.data());
-            amrex::Gpu::streamSynchronize();
+            HYPRE_StructVectorGetBoxValues(m_x, hypre_lo_f.data(), hypre_hi_f.data(),
+                                           d_soln_buf_fail.data());
             const HYPRE_Real* src_ptr_fail = d_soln_buf_fail.data();
 #else
-            const HYPRE_Real* src_ptr_fail = soln_buf_fail.data();
+            soln_buf_fail_host.resize(npts);
+            HYPRE_StructVectorGetBoxValues(m_x, hypre_lo_f.data(), hypre_hi_f.data(),
+                                           soln_buf_fail_host.data());
+            const HYPRE_Real* src_ptr_fail = soln_buf_fail_host.data();
 #endif
             amrex::Array4<amrex::Real> const soln_arr = mf_soln_fail.array(mfi);
             const auto lo_f = amrex::lbound(bx);
@@ -1173,37 +1186,35 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
     const amrex::Real* dx = m_geom.CellSize();
     const int idir = static_cast<int>(m_dir);
 
-    // Solution copy logic remains the same...
+    // Pull HYPRE's solution back into an AMReX MultiFab for downstream flux
+    // integration. Since HYPRE_SetMemoryLocation is set to DEVICE on CUDA
+    // builds, GetBoxValues expects a device pointer; on CPU it's a host
+    // std::vector.
     amrex::MultiFab mf_soln_temp(m_ba, m_dm, 1, 1);
     mf_soln_temp.setVal(0.0);
     // No OMP: HYPRE_StructVectorGetBoxValues is not thread-safe for the same vector.
-    std::vector<HYPRE_Real> soln_buffer;
+    std::vector<HYPRE_Real> soln_buffer_host;
     for (amrex::MFIter mfi(mf_soln_temp, false); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();
         const int npts = static_cast<int>(bx.numPts());
         if (npts == 0)
             continue;
-        soln_buffer.resize(npts);
         auto hypre_lo = OpenImpala::TortuosityHypre::loV(bx);
         auto hypre_hi = OpenImpala::TortuosityHypre::hiV(bx);
+#ifdef AMREX_USE_GPU
+        amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buffer(npts);
         HYPRE_Int get_ierr = HYPRE_StructVectorGetBoxValues(m_x, hypre_lo.data(), hypre_hi.data(),
-                                                            soln_buffer.data());
+                                                            d_soln_buffer.data());
+        const HYPRE_Real* src_ptr = d_soln_buffer.data();
+#else
+        soln_buffer_host.resize(npts);
+        HYPRE_Int get_ierr = HYPRE_StructVectorGetBoxValues(m_x, hypre_lo.data(), hypre_hi.data(),
+                                                            soln_buffer_host.data());
+        const HYPRE_Real* src_ptr = soln_buffer_host.data();
+#endif
         if (get_ierr != 0) {
             amrex::Warning("HYPRE_StructVectorGetBoxValues failed during flux calculation copy!");
         }
-        // Stage HYPRE's host-side soln_buffer in device memory before writing it
-        // through the iMultiFab Array4 view, which on CUDA builds points at GPU
-        // memory. A bare LoopOnCpu writing soln_arr(ii,jj,kk,0) = ... segfaults
-        // on T4 / A100 / etc.
-#ifdef AMREX_USE_GPU
-        amrex::Gpu::DeviceVector<HYPRE_Real> d_soln_buffer(npts);
-        amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, soln_buffer.data(),
-                              soln_buffer.data() + npts, d_soln_buffer.data());
-        amrex::Gpu::streamSynchronize();
-        const HYPRE_Real* src_ptr = d_soln_buffer.data();
-#else
-        const HYPRE_Real* src_ptr = soln_buffer.data();
-#endif
         amrex::Array4<amrex::Real> const soln_arr = mf_soln_temp.array(mfi);
         const auto lo = amrex::lbound(bx);
         const int nx_box = bx.length(0);
