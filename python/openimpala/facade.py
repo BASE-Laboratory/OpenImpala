@@ -153,43 +153,22 @@ def _ensure_initialized():
 def _parse_solver(s):
     """Parse a solver string or SolverType enum value.
 
-    The special value ``"auto"`` picks the best-fit default for the active
-    backend:
+    The special value ``"auto"`` selects PCG — the optimal solver for
+    single-phase steady-state diffusion (the Laplacian with harmonic-mean
+    face coefficients is symmetric positive-definite). Works on both CPU
+    and GPU wheels.
 
-    * On the CUDA wheel, MLMG (matrix-free AMReX geometric multigrid).
-      HYPRE 2.31's GPU support for SMG/PFMG is incomplete — the solve
-      crashes on T4 / A100 even when the matrix is correctly assembled.
-      MLMG bypasses HYPRE entirely and runs natively in AMReX device
-      kernels, so it sidesteps the upstream limitation.
-    * On the CPU wheel, PCG. The Laplacian with harmonic-mean face
-      coefficients is symmetric positive-definite, so the conjugate
-      gradient method is optimal.
-
-    Pass an explicit solver name (``"pcg"``, ``"flexgmres"``, etc.) to
-    override the auto-pick.
-
-    The value ``"mlmg"`` always selects the AMReX matrix-free path
-    regardless of backend.
+    The value ``"mlmg"`` selects AMReX's matrix-free geometric multigrid
+    solver. Bypasses HYPRE entirely; the most performant choice on GPU
+    hardware for structured-grid problems and fully matrix-free (no
+    assembly cost).
     """
     _core = _get_core()
     if isinstance(s, _core.SolverType):
         return s
-    key = s.strip().lower() if isinstance(s, str) else None
-
-    # "auto" resolves at runtime based on the build's GPU support.
-    if key == "auto":
-        try:
-            info = _core.build_info()
-            if info.get("backend") in ("cpp-cuda", "cpp-hip"):
-                return "mlmg"
-        except Exception:
-            pass
-        return _core.SolverType.PCG
-
     # "mlmg" is handled as a special string, not a SolverType enum
-    if key == "mlmg":
+    if isinstance(s, str) and s.strip().lower() == "mlmg":
         return "mlmg"
-
     solver_map = {
         "jacobi": _core.SolverType.Jacobi,
         "gmres": _core.SolverType.GMRES,
@@ -199,9 +178,11 @@ def _parse_solver(s):
         "smg": _core.SolverType.SMG,
         "pfmg": _core.SolverType.PFMG,
         "hypre": _core.SolverType.FlexGMRES,  # convenience alias
+        "auto": _core.SolverType.PCG,  # SPD-optimal for single-phase diffusion
     }
+    key = s.strip().lower()
     if key not in solver_map:
-        raise ValueError(f"Unknown solver '{s}'. Options: {list(solver_map) + ['mlmg', 'auto']}")
+        raise ValueError(f"Unknown solver '{s}'. Options: {list(solver_map) + ['mlmg']}")
     return solver_map[key]
 
 
@@ -390,21 +371,13 @@ def tortuosity(
     direction : str or Direction
         Flow direction ('x', 'y', 'z').
     solver : str or SolverType
-        Solver algorithm.  ``'auto'`` (default) picks the best fit for the
-        active backend:
-
-        * **GPU build (openimpala-cuda)** — MLMG.  HYPRE 2.31's GPU support
-          for SMG/PFMG is incomplete (the solve crashes on T4/A100 even
-          when the matrix assembles correctly), so the auto-pick on GPU
-          bypasses HYPRE entirely with AMReX's matrix-free MLMG.
-        * **CPU build (openimpala)** — HYPRE PCG.  The Laplacian with
-          harmonic-mean face coefficients is symmetric positive-definite,
-          so conjugate gradient is optimal.
-
-        Override with an explicit name to force a particular solver:
-        ``'mlmg'``, ``'pcg'``, ``'flexgmres'``, ``'gmres'``, ``'bicgstab'``,
-        ``'smg'``, ``'pfmg'``, ``'jacobi'``.  The HYPRE solvers may segfault
-        on the GPU wheel — see the auto-pick note above.
+        Solver algorithm.  ``'auto'`` (default) selects HYPRE PCG, the
+        optimal choice for the symmetric Poisson-like operator with
+        harmonic-mean face coefficients on both CPU and GPU.  ``'mlmg'``
+        uses AMReX's matrix-free geometric multigrid (often the fastest
+        option on GPU hardware).  Other HYPRE options: ``'flexgmres'``,
+        ``'gmres'``, ``'bicgstab'``, ``'pcg'``, ``'smg'``, ``'pfmg'``,
+        ``'jacobi'``.
     preconditioner : str or PrecondType, keyword-only
         Multigrid preconditioner for Krylov solvers (PCG/GMRES/FlexGMRES/BiCGSTAB):
         ``'pfmg'`` (default) or ``'smg'``.  Ignored for standalone SMG/PFMG/Jacobi
