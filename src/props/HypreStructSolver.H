@@ -28,14 +28,18 @@ namespace OpenImpala {
 
 /** @brief Preconditioner type for HYPRE Krylov solvers.
  *
- *  PFMG is the default because it has full GPU support in HYPRE 2.31; SMG
- *  is only partially supported on device (the coarsening uses CPU code
- *  paths in several HYPRE configurations and segfaults on device-resident
- *  data). On CPU builds either works equivalently for structured Poisson.
+ *  SMG is the default because its point-based smoothing handles the
+ *  decoupled rows that arise from masked cells (inactive cells have
+ *  ``A_ii=1, b_i=0``, which PFMG's semicoarsening fails to coarsen
+ *  meaningfully — symptom: PCG+PFMG hits max iterations without
+ *  converging on porous-media inputs). PFMG is the more scalable choice
+ *  for fully active grids (no masked-out regions). Both have full GPU
+ *  support in HYPRE 2.31 when ``HYPRE_SetMemoryLocation(HYPRE_MEMORY_DEVICE)``
+ *  is active (see ``HypreStructSolver::createMatrixAndVectors``).
  */
 enum class PrecondType {
-    SMG, /**< Semicoarsening multigrid — robust on CPU, partial GPU support */
-    PFMG /**< Parallel semicoarsening multigrid — full GPU support, default */
+    SMG, /**< Semicoarsening multigrid — robust default, handles masked rows */
+    PFMG /**< Parallel semicoarsening multigrid — scales better on full grids */
 };
 
 /** @brief Base class for HYPRE structured-grid solvers.
@@ -113,7 +117,7 @@ protected:
      *
      *  Updates m_num_iterations, m_final_res_norm, and m_converged.
      */
-    bool runSolver(PrecondType precond_type = PrecondType::PFMG);
+    bool runSolver(PrecondType precond_type = PrecondType::SMG);
 
     // --- HYPRE handles (owned by this base class, cleaned up in destructor) ---
     HYPRE_StructGrid m_grid = nullptr;

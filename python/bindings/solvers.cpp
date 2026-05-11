@@ -42,7 +42,7 @@ void init_solvers(py::module_& m) {
              py::arg("img"), py::arg("vf"), py::arg("phase"), py::arg("dir"),
              py::arg("solver_type"), py::arg("results_path"), py::arg("vlo") = 0.0,
              py::arg("vhi") = 1.0, py::arg("verbose") = 0, py::arg("write_plotfile") = false,
-             py::arg("preconditioner") = OpenImpala::PrecondType::PFMG,
+             py::arg("preconditioner") = OpenImpala::PrecondType::SMG,
              // keep VoxelImage alive while this object lives
              py::keep_alive<1, 2>())
 
