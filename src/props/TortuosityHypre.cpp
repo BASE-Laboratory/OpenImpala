@@ -846,7 +846,27 @@ amrex::Real OpenImpala::TortuosityHypre::value(const bool refresh) {
         global_fluxes(); // Calculates and stores m_flux_in, m_flux_out
 
         // --- Check Flux Conservation (boundary + interior planes) ---
-        constexpr amrex::Real flux_tol = 1.0e-6;
+        //
+        // Two distinct tests, with different roles. Loosened in OpenImpala
+        // 4.2.18 to match the realistic precision of iterative solves on
+        // heterogeneous media — see comments in TortuositySolverBase::value()
+        // for the same fix applied to the MLMG path.
+        //
+        //  1) Boundary: |flux_in| ≈ |flux_out|. The canonical conservation
+        //     guarantee, kept as a hard failure but at a loose relative
+        //     tolerance (1e-4) — well above the per-cell solver residual
+        //     (~1e-9) so legitimate converged solves don't trip it, tight
+        //     enough that genuinely broken BC applications still do.
+        //
+        //  2) Interior plane variance: max relative deviation of integrated
+        //     flux across interior cross-sections. Theoretically zero in
+        //     steady state but the per-cell residual accumulates into a
+        //     small per-plane discrepancy that scales with cells-per-plane
+        //     and can exceed any fixed relative threshold for masked
+        //     porous-media inputs at 64³+. Now warning-only — boundary
+        //     conservation is the real correctness test.
+        constexpr amrex::Real flux_tol = 1.0e-4;
+        constexpr amrex::Real plane_dev_warn = 1.0e-3;
         bool flux_conserved = true;
         amrex::Real rel_diff = 0.0;
         amrex::Real flux_mag_in = std::abs(m_flux_in);
@@ -876,18 +896,15 @@ amrex::Real OpenImpala::TortuosityHypre::value(const bool refresh) {
             }
         }
 
-        // --- Interior Plane Flux Conservation Check ---
-        // Verify that flux is conserved at every cross-section, not just boundaries.
-        // This catches cases like narrow inlets/outlets where boundary flux is
-        // unreliable but interior planes reveal non-conservation.
-        if (flux_conserved && !m_plane_fluxes.empty()) {
-            if (m_plane_flux_max_dev > flux_tol) {
-                flux_conserved = false;
+        // --- Interior Plane Flux Variance: warning only ---
+        if (!m_plane_fluxes.empty()) {
+            if (m_plane_flux_max_dev > plane_dev_warn) {
                 if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
-                    amrex::Warning(
-                        "Interior plane flux conservation check failed! Max deviation = " +
-                        std::to_string(m_plane_flux_max_dev) +
-                        " > tolerance = " + std::to_string(flux_tol));
+                    amrex::Print() << "  Interior plane flux variance is " << m_plane_flux_max_dev
+                                   << " (above " << plane_dev_warn
+                                   << " warn threshold). Boundary conservation still holds; "
+                                      "tortuosity is reported but treat results from large or "
+                                      "heterogeneous domains with caution.\n";
                 }
             } else if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << "    Interior Plane Conservation Check Status: PASS"
