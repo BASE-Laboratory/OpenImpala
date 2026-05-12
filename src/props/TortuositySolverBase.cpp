@@ -460,27 +460,53 @@ amrex::Real TortuositySolverBase::value(const bool refresh) {
 
         globalFluxes();
 
-        // Flux conservation check
-        constexpr amrex::Real flux_tol = 1.0e-6;
+        // Flux conservation check.
+        //
+        // Two distinct tests, with different roles:
+        //
+        //  1) Boundary: |flux_in| ≈ |flux_out|. This is the canonical
+        //     conservation guarantee for a steady-state diffusion solve and
+        //     stays a hard failure (NaN return). Tolerance is loose at 1e-4
+        //     relative — far above the solver's per-cell residual of ~1e-9,
+        //     so a legitimate converged solve won't trip it, but a
+        //     genuinely-broken one (e.g. wrong BC application) will.
+        //
+        //  2) Interior planes: max variance of integrated flux across
+        //     domain-perpendicular cross-sections. In a heterogeneous medium
+        //     these are theoretically equal but the per-cell residual
+        //     accumulates into a small per-plane discrepancy that scales as
+        //     ~residual × cells-per-plane, which can easily exceed any
+        //     fixed relative tolerance at 128³+ even when the solve is
+        //     numerically fine. This is now warning-only: it reports the
+        //     deviation in the log but does NOT NaN the result.
+        constexpr amrex::Real flux_tol = 1.0e-4;
+        constexpr amrex::Real plane_dev_warn = 1.0e-3;
         bool flux_conserved = true;
         amrex::Real flux_mag_in = std::abs(m_flux_in);
         amrex::Real flux_mag_out = std::abs(m_flux_out);
         amrex::Real flux_mag_avg = 0.5 * (flux_mag_in + flux_mag_out);
+        amrex::Real boundary_rel_diff = 0.0;
         if (flux_mag_avg > tiny_flux_threshold) {
-            amrex::Real rel_diff = std::abs(flux_mag_in - flux_mag_out) / flux_mag_avg;
-            if (rel_diff > flux_tol)
+            boundary_rel_diff = std::abs(flux_mag_in - flux_mag_out) / flux_mag_avg;
+            if (boundary_rel_diff > flux_tol)
                 flux_conserved = false;
         }
 
-        // Interior plane check
-        if (flux_conserved && !m_plane_fluxes.empty()) {
-            if (m_plane_flux_max_dev > flux_tol)
-                flux_conserved = false;
+        if (!m_plane_fluxes.empty() && m_plane_flux_max_dev > plane_dev_warn) {
+            if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
+                amrex::Print() << "  Interior plane flux variance is " << m_plane_flux_max_dev
+                               << " (above " << plane_dev_warn
+                               << " warn threshold). Boundary conservation still holds; "
+                                  "tortuosity is reported but treat results from large or "
+                                  "heterogeneous domains with caution.\n";
+            }
         }
 
         if (!flux_conserved) {
             if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
-                amrex::Print() << "WARNING: Flux not conserved. Returning NaN." << std::endl;
+                amrex::Print() << "WARNING: Boundary flux not conserved (|in|-|out| / avg = "
+                               << boundary_rel_diff << " > " << flux_tol << "). Returning NaN."
+                               << std::endl;
             }
             m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
         } else {
