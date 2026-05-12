@@ -82,9 +82,33 @@ jobs:
         run: |
           sudo apptainer exec --writable-tmpfs --bind $PWD:/src ./dependency_image.sif \
             bash -c '
+              set -e
               source /opt/rh/gcc-toolset-11/enable
-              dnf install -y clang-tools-extra 2>&1 | tail -3
-              echo "clang-tidy version: $(clang-tidy --version 2>&1 | head -1)"
+
+              # Rocky 8 mirrors occasionally 404 on repodata for a few minutes
+              # before AlmaLinux mirrors catch up. Retry the install with
+              # backoff up to 3 times — typical transient outages recover
+              # well within that window — then fail clearly with an
+              # infrastructure-error message rather than silently leaving
+              # clang-tidy unavailable.
+              install_ok=0
+              for attempt in 1 2 3; do
+                  if dnf install -y clang-tools-extra 2>&1 | tail -3 && \
+                     command -v clang-tidy >/dev/null 2>&1; then
+                      install_ok=1
+                      break
+                  fi
+                  echo "clang-tidy install attempt $attempt failed; sleeping ${attempt}0s..."
+                  sleep $((attempt * 10))
+                  dnf clean all >/dev/null 2>&1 || true
+              done
+
+              if [ $install_ok -ne 1 ] || ! command -v clang-tidy >/dev/null 2>&1; then
+                  echo "::error::clang-tidy could not be installed (Rocky 8 mirror 404). This is an infrastructure issue, not a code issue. Re-run the job."
+                  exit 2
+              fi
+
+              echo "clang-tidy version: $(clang-tidy --version | head -1)"
               cd /src
               # Fetch nlohmann/json header (used by ResultsJSON.H, normally via CMake FetchContent)
               NLOHMANN_VERSION="v3.11.3"
