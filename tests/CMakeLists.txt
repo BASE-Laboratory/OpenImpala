@@ -559,6 +559,23 @@ set_tests_properties(tTortuosityMLMG_dirY PROPERTIES
     TIMEOUT 300
 )
 
+# MLMG masked-porous regression: deliberately heterogeneous geometry to lock
+# in the eps=1e-11 default. Pre-fix this test would NaN out of the boundary
+# flux guard.
+add_test(
+    NAME tTortuosityMLMG_masked
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tTortuosityMLMG>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tTortuosityMLMG_masked.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tTortuosityMLMG_masked PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
 # ==============================================================================
 # Unit Tests (Catch2 — fast, no MPI/AMReX required)
 # ==============================================================================

@@ -390,7 +390,11 @@ def tortuosity(
         AMReX box decomposition size.  ``'auto'`` picks a value based on the
         domain dimensions.
     mlmg_eps, mlmg_maxiter, mlmg_max_coarsening_level
-        Tuning knobs for ``solver='mlmg'``.  ``None`` leaves the C++ default.
+        Tuning knobs for ``solver='mlmg'``.  ``None`` leaves the C++ default
+        (``mlmg_eps=1e-11``, two orders tighter than HYPRE's default because
+        MLMG's relative residual norm is referenced to a different baseline —
+        see TortuosityMLMG.H for the derivation).  Loosen ``mlmg_eps`` only
+        for trivial geometries; tightening it further is rarely needed.
 
     Returns
     -------
