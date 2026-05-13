@@ -31,6 +31,12 @@ class TestParseSolver:
         assert _parse_solver("pcg") == _core.SolverType.PCG
         assert _parse_solver("PFMG") == _core.SolverType.PFMG
 
+    def test_auto_selects_mlmg(self):
+        """``'auto'`` resolves to MLMG (the matrix-free default)."""
+        assert _parse_solver("auto") == "mlmg"
+        assert _parse_solver("AUTO") == "mlmg"
+        assert _parse_solver("mlmg") == "mlmg"
+
     def test_enum_passthrough(self):
         assert _parse_solver(_core.SolverType.SMG) == _core.SolverType.SMG
 
