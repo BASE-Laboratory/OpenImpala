@@ -1,6 +1,7 @@
+
 # OpenImpala
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/7a1902a0-a000-4111-b76b-226147ec6e30" alt="Logo" width="300">
+  <img width="1729" height="910" alt="Banner" src="https://github.com/user-attachments/assets/8af54b12-c3c2-4c9a-8416-d2eacb626a9d" />
 </p>
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/01_hello_openimpala.ipynb)
