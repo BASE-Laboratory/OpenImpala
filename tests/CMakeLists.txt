@@ -559,6 +559,9 @@ set_tests_properties(tTortuosityMLMG_dirY PROPERTIES
     TIMEOUT 300
 )
 
+# Masked porous-media MLMG coverage lives in python/tests/test_mlmg_porespy.py,
+# which exercises the user-facing facade against a real porespy blob structure.
+
 # ==============================================================================
 # Unit Tests (Catch2 — fast, no MPI/AMReX required)
 # ==============================================================================

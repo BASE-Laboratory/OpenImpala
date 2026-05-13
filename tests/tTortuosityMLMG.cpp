@@ -6,6 +6,10 @@
 // Test cases (selected via inputs):
 //   uniform:  All cells = phase 0, tau = (N-1)/N
 //   twophase: Alternating layers with equal D, tau = (N-1)/N
+//
+// Masked porous-media coverage lives in python/tests/test_mlmg_porespy.py,
+// which runs the actual user-facing facade against a real porespy blob
+// structure.
 
 #include "TortuosityMLMG.H"
 #include "Tortuosity.H"

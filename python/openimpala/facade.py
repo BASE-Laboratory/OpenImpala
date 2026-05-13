@@ -153,21 +153,25 @@ def _ensure_initialized():
 def _parse_solver(s):
     """Parse a solver string or SolverType enum value.
 
-    The special value ``"auto"`` selects PCG — the optimal solver for
-    single-phase steady-state diffusion (the Laplacian with harmonic-mean
-    face coefficients is symmetric positive-definite). Works on both CPU
-    and GPU wheels.
+    The special value ``"auto"`` (and ``"mlmg"``) selects AMReX's matrix-free
+    geometric multigrid solver. Profiling on representative porous media
+    (notebooks/profiling_and_tuning.ipynb) shows MLMG is the only solver
+    that scales near-linearly with voxel count (p ~ 1.08 vs p ~ 3.4 for
+    HYPRE Krylov methods), has the lowest memory footprint (no matrix
+    assembly), and runs entirely on GPU device kernels when available.
 
-    The value ``"mlmg"`` selects AMReX's matrix-free geometric multigrid
-    solver. Bypasses HYPRE entirely; the most performant choice on GPU
-    hardware for structured-grid problems and fully matrix-free (no
-    assembly cost).
+    Fallback Krylov solvers (PCG, FlexGMRES, BiCGSTAB, GMRES) and their
+    multigrid preconditioners (SMG, PFMG) remain available by name. The
+    recommended HYPRE fallback for users hitting MLMG convergence issues
+    is ``solver="pcg", preconditioner="smg"`` — slower but robust against
+    masked rows arising from porous-media inputs.
     """
     _core = _get_core()
     if isinstance(s, _core.SolverType):
         return s
-    # "mlmg" is handled as a special string, not a SolverType enum
-    if isinstance(s, str) and s.strip().lower() == "mlmg":
+    # "auto" and "mlmg" both map to the matrix-free MLMG path.
+    key = s.strip().lower() if isinstance(s, str) else s
+    if isinstance(key, str) and key in ("mlmg", "auto"):
         return "mlmg"
     solver_map = {
         "jacobi": _core.SolverType.Jacobi,
@@ -177,12 +181,12 @@ def _parse_solver(s):
         "bicgstab": _core.SolverType.BiCGSTAB,
         "smg": _core.SolverType.SMG,
         "pfmg": _core.SolverType.PFMG,
-        "hypre": _core.SolverType.FlexGMRES,  # convenience alias
-        "auto": _core.SolverType.PCG,  # SPD-optimal for single-phase diffusion
+        "hypre": _core.SolverType.FlexGMRES,  # convenience alias for fastest HYPRE
     }
-    key = s.strip().lower()
-    if key not in solver_map:
-        raise ValueError(f"Unknown solver '{s}'. Options: {list(solver_map) + ['mlmg']}")
+    if not isinstance(key, str) or key not in solver_map:
+        raise ValueError(
+            f"Unknown solver '{s}'. Options: {list(solver_map) + ['mlmg', 'auto']}"
+        )
     return solver_map[key]
 
 
@@ -371,13 +375,15 @@ def tortuosity(
     direction : str or Direction
         Flow direction ('x', 'y', 'z').
     solver : str or SolverType
-        Solver algorithm.  ``'auto'`` (default) selects HYPRE PCG, the
-        optimal choice for the symmetric Poisson-like operator with
-        harmonic-mean face coefficients on both CPU and GPU.  ``'mlmg'``
-        uses AMReX's matrix-free geometric multigrid (often the fastest
-        option on GPU hardware).  Other HYPRE options: ``'flexgmres'``,
-        ``'gmres'``, ``'bicgstab'``, ``'pcg'``, ``'smg'``, ``'pfmg'``,
-        ``'jacobi'``.
+        Solver algorithm.  ``'auto'`` (default) selects AMReX MLMG —
+        matrix-free geometric multigrid that scales near-linearly with
+        voxel count (p ~ 1.08), has the lowest memory footprint, and runs
+        on GPU device kernels when available.  Explicit aliases:
+        ``'mlmg'`` (same as ``'auto'``); HYPRE Krylov methods
+        ``'flexgmres'``, ``'pcg'``, ``'gmres'``, ``'bicgstab'``; standalone
+        HYPRE multigrid ``'smg'``, ``'pfmg'``, ``'jacobi'``.  Recommended
+        HYPRE fallback for diagnostic comparison:
+        ``solver='pcg', preconditioner='smg'``.
     preconditioner : str or PrecondType, keyword-only
         Multigrid preconditioner for Krylov solvers (PCG/GMRES/FlexGMRES/BiCGSTAB):
         ``'smg'`` (default) or ``'pfmg'``.  Ignored for standalone SMG/PFMG/Jacobi
@@ -390,7 +396,11 @@ def tortuosity(
         AMReX box decomposition size.  ``'auto'`` picks a value based on the
         domain dimensions.
     mlmg_eps, mlmg_maxiter, mlmg_max_coarsening_level
-        Tuning knobs for ``solver='mlmg'``.  ``None`` leaves the C++ default.
+        Tuning knobs for ``solver='mlmg'``.  ``None`` leaves the C++ default
+        (``mlmg_eps=1e-11``, two orders tighter than HYPRE's default because
+        MLMG's relative residual norm is referenced to a different baseline —
+        see TortuosityMLMG.H for the derivation).  Loosen ``mlmg_eps`` only
+        for trivial geometries; tightening it further is rarely needed.
 
     Returns
     -------
