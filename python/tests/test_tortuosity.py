@@ -57,13 +57,33 @@ class TestTortuosityFacade:
     """High-level tortuosity() function tests."""
 
     def test_uniform_block(self):
+        # Pinned to solver="pcg" because the analytical answer tau = (N-1)/N
+        # is the HYPRE cell-centred-Dirichlet result. MLMG uses face-centred
+        # Dirichlet (ghost-cell BCs) and would converge to tau = 1.0 instead;
+        # that case is covered by the C++ tTortuosityMLMG_uniform test.
+        N = 16
+        data = np.zeros((N, N, N), dtype=np.int32)
+        from openimpala.facade import tortuosity
+
+        result = tortuosity(data, phase=0, direction="x", solver="pcg", max_grid_size=N)
+        expected = (N - 1.0) / N
+        assert result.tortuosity == pytest.approx(expected, rel=1e-6)
+        assert result.solver_converged is True
+
+    def test_uniform_block_mlmg_default(self):
+        # Mirror of test_uniform_block on the default (MLMG) backend. MLMG's
+        # face-centred Dirichlet discretisation gives tau = 1.0 exactly for a
+        # uniform medium, not (N-1)/N. Tolerance is loose because MLMG's
+        # residual on a 16^3 single-box decomposition is ~1e-11 absolute but
+        # the integrated discretisation error at the boundary can be a few %
+        # at this small N; the C++ tTortuosityMLMG_uniform test at 32^3 hits
+        # 1e-3 cleanly.
         N = 16
         data = np.zeros((N, N, N), dtype=np.int32)
         from openimpala.facade import tortuosity
 
         result = tortuosity(data, phase=0, direction="x", max_grid_size=N)
-        expected = (N - 1.0) / N
-        assert result.tortuosity == pytest.approx(expected, rel=1e-6)
+        assert result.tortuosity == pytest.approx(1.0, abs=0.05)
         assert result.solver_converged is True
 
     def test_non_percolating_raises(self, disconnected_phase):
