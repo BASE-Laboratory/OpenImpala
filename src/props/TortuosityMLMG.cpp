@@ -93,10 +93,15 @@ bool TortuosityMLMG::solve() {
     }
     mlabec.setDomainBC(lo_bc, hi_bc);
 
-    // Set initial guess: linear ramp on active cells, zero on inactive.
-    // Inactive cells (non-percolating phase-target islands) are pinned to
-    // phi=0 by the alpha*a row below; seeding their initial guess at 0
-    // gives MLMG a residual of zero on those rows from V-cycle 1.
+    // Set initial guess: linear ramp in flow direction.
+    //
+    // The ramp seeds the active subdomain well and — critically — encodes
+    // the Dirichlet BC in the ghost cells (the inlet ghost row gets vlo,
+    // the outlet ghost row gets vhi). MLABecLaplacian::setLevelBC reads
+    // those ghost values to apply the BC, so they must NOT be touched by
+    // any mask-driven branch. Inactive interior cells get a non-zero ramp
+    // value at startup but the alpha*a row decoupling below drives them
+    // to phi=0 in a few V-cycles regardless.
     m_mf_solution.setVal(0.0);
     {
         const amrex::Box& domain = m_geom.Domain();
@@ -114,13 +119,8 @@ bool TortuosityMLMG::solve() {
         for (amrex::MFIter mfi(m_mf_solution, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
             const amrex::Box& bx = mfi.growntilebox();
             amrex::Array4<amrex::Real> const phi = m_mf_solution.array(mfi);
-            amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
                 amrex::IntVect iv(i, j, k);
-                if (mask(i, j, k, MaskComp) != cell_active) {
-                    phi(i, j, k) = 0.0;
-                    return;
-                }
                 int idx_in_dir = iv[idir] - dom_lo_dir;
                 amrex::Real frac =
                     static_cast<amrex::Real>(idx_in_dir) / static_cast<amrex::Real>(n_cells - 1);
