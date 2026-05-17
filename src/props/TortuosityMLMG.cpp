@@ -139,22 +139,20 @@ bool TortuosityMLMG::solve() {
     // Set level BC (ghost cell values encode the Dirichlet data)
     mlabec.setLevelBC(0, &m_mf_solution);
 
-    // Set coefficients: alpha*a*phi - beta*div(B*grad phi) = rhs
+    // Operator: alpha*a*phi - beta*div(B*grad phi) = rhs, with alpha=beta=1.
     //
-    // We need alpha != 0 to pin non-percolating cells. With alpha=1:
-    //   active cells:    a=0, rhs=0 -> -div(B grad phi) = 0   (Laplacian)
-    //   inactive cells:  a=1, rhs=0, B=0 on all adjacent faces
-    //                    -> phi = 0   (pinned, decoupled)
+    //   active cells:    a=0, B = harmonic mean of cell D  ->  -div(B grad phi) = 0
+    //   inactive cells:  a=1, B = 0 on all adjacent faces  ->  phi = 0   (pinned)
     //
-    // This is the matrix-free analogue of the HYPRE A_ii=1, A_ij=0, rhs=0
-    // row-decoupling for inactive cells (TortuosityHypre.cpp:1100). Without
-    // it, dead-end phase-target islands form Neumann subdomains with no
-    // Dirichlet contact: MLMG drives the local residual to zero but their
-    // potentials remain indeterminate, breaking the boundary flux balance
-    // that TortuositySolverBase::value() audits.
+    // Matrix-free analogue of HYPRE's A_ii=1, A_ij=0, rhs=0 row-decoupling
+    // (TortuosityHypre.cpp:1100). Without it, dead-end phase-target islands
+    // form Neumann subdomains with no Dirichlet contact: MLMG drives the
+    // local residual to zero but their potentials are indeterminate, which
+    // breaks the boundary flux balance audited in
+    // TortuositySolverBase::value().
     mlabec.setScalars(1.0, 1.0);
 
-    // A-coefficient: 1 on inactive cells (pin to rhs=0), 0 on active cells.
+    // A-coefficient: 0 on active cells, 1 on inactive cells.
     amrex::MultiFab acoef(m_ba, m_dm, 1, 0);
     acoef.setVal(0.0);
 #ifdef AMREX_USE_OMP
@@ -170,10 +168,31 @@ bool TortuosityMLMG::solve() {
     }
     mlabec.setACoeffs(0, acoef);
 
-    // B-coefficients: harmonic mean of cell-centred D, but zeroed on any
-    // face touching an inactive cell. Combined with the A-coefficient pin
-    // above, this fully decouples inactive cells from the active subdomain
-    // and from each other — the operator becomes well-posed everywhere.
+    // Build a masked diffusion coefficient: D on active cells, 0 on inactive
+    // *interior* cells. Ghost cells of dc_masked inherit their parent FAB's
+    // pre-mask values, which preserves the Dirichlet boundary-face harmonic
+    // mean (inner=D, ghost=D -> face=D) since cells outside the domain in
+    // the flow direction never get classified as inactive by the flood fill.
+    // Interior active-to-inactive interfaces give harmonic mean(D, 0) = 0,
+    // which is exactly the decoupling we want.
+    amrex::MultiFab dc_masked(m_ba, m_dm, 1, m_mf_diff_coeff.nGrow());
+    amrex::MultiFab::Copy(dc_masked, m_mf_diff_coeff, 0, 0, 1, m_mf_diff_coeff.nGrow());
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+    for (amrex::MFIter mfi(dc_masked, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.tilebox();
+        amrex::Array4<amrex::Real> const dcm = dc_masked.array(mfi);
+        amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            if (mask(i, j, k, MaskComp) != cell_active) {
+                dcm(i, j, k) = 0.0;
+            }
+        });
+    }
+    dc_masked.FillBoundary(m_geom.periodicity());
+
+    // B-coefficients: face-centred diffusivities via harmonic mean of dc_masked.
     amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> bcoefs;
     for (int d = 0; d < AMREX_SPACEDIM; ++d) {
         amrex::BoxArray edge_ba = m_ba;
@@ -182,48 +201,19 @@ bool TortuosityMLMG::solve() {
         bcoefs[d].setVal(0.0);
     }
 
-    // The active mask has 1 ghost layer, but FillBoundary only updates
-    // periodic ghosts — non-periodic (Dirichlet/Neumann) ghosts stay at
-    // their setVal(cell_inactive) initial value. For boundary faces of
-    // the domain we must therefore consult only the interior cell's mask
-    // status, otherwise inlet/outlet face B-coefficients get spuriously
-    // zeroed and the Dirichlet BC drives zero flux.
-    const amrex::Box domain_cells = m_geom.Domain();
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-    for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        amrex::Array4<const amrex::Real> const dc = m_mf_diff_coeff.const_array(mfi);
-        amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
+    for (amrex::MFIter mfi(dc_masked, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        amrex::Array4<const amrex::Real> const dc = dc_masked.const_array(mfi);
         for (int d = 0; d < AMREX_SPACEDIM; ++d) {
             const amrex::Box& ebx = amrex::surroundingNodes(mfi.tilebox(), d);
             amrex::Array4<amrex::Real> const bf = bcoefs[d].array(mfi);
             const amrex::IntVect shift = amrex::IntVect::TheDimensionVector(d);
-            const int dom_lo_d = domain_cells.smallEnd(d);
-            const int dom_hi_d = domain_cells.bigEnd(d);
             amrex::ParallelFor(ebx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
                 amrex::IntVect iv(i, j, k);
-                amrex::IntVect iv_lo = iv - shift;
-                // Face sits between cells iv_lo and iv in direction d.
-                // Determine which adjacent cells are interior (vs domain ghost).
-                const bool lo_interior = (iv[d] > dom_lo_d);
-                const bool hi_interior = (iv[d] <= dom_hi_d);
-                const bool lo_active = lo_interior && mask(iv_lo, MaskComp) == cell_active;
-                const bool hi_active = hi_interior && mask(iv, MaskComp) == cell_active;
-                // Interior face: both cells must be active.
-                // Boundary face: the single interior cell must be active.
-                bool face_couples;
-                if (lo_interior && hi_interior) {
-                    face_couples = lo_active && hi_active;
-                } else {
-                    face_couples = lo_interior ? lo_active : hi_active;
-                }
-                if (!face_couples) {
-                    bf(i, j, k) = 0.0;
-                    return;
-                }
-                amrex::Real D_lo = lo_interior ? dc(iv_lo) : dc(iv);
-                amrex::Real D_hi = hi_interior ? dc(iv) : dc(iv_lo);
+                amrex::Real D_lo = dc(iv - shift);
+                amrex::Real D_hi = dc(iv);
                 if (D_lo + D_hi > 0.0) {
                     bf(i, j, k) = 2.0 * D_lo * D_hi / (D_lo + D_hi);
                 } else {
@@ -234,8 +224,8 @@ bool TortuosityMLMG::solve() {
     }
     mlabec.setBCoeffs(0, amrex::GetArrOfConstPtrs(bcoefs));
 
-    // RHS = 0 everywhere: pinned inactive cells satisfy 1*phi = 0,
-    // active cells satisfy -div(B grad phi) = 0 (Laplacian).
+    // RHS = 0 everywhere: active cells satisfy -div(B grad phi) = 0,
+    // inactive cells satisfy 1*phi = 0 (pinned).
     amrex::MultiFab rhs(m_ba, m_dm, 1, 0);
     rhs.setVal(0.0);
 
