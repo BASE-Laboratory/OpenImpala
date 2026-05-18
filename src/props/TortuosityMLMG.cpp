@@ -69,6 +69,14 @@ TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArra
 bool TortuosityMLMG::solve() {
     BL_PROFILE("TortuosityMLMG::solve");
 
+    const bool log = (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor());
+    auto trace = [&](const char* msg) {
+        if (log) {
+            amrex::Print() << "  [TortuosityMLMG] " << msg << std::endl;
+        }
+    };
+    trace("solve() entered");
+
     const int idir = static_cast<int>(m_dir);
 
     // --- Set up the MLABecLaplacian operator ---
@@ -77,7 +85,9 @@ bool TortuosityMLMG::solve() {
     amrex::LPInfo lp_info;
     lp_info.setMaxCoarseningLevel(m_max_coarsening_level);
 
+    trace("constructing MLABecLaplacian");
     amrex::MLABecLaplacian mlabec({m_geom}, {m_ba}, {m_dm}, lp_info);
+    trace("MLABecLaplacian constructed");
 
     // Domain boundary conditions: Dirichlet in flow dir, Neumann on sides
     std::array<amrex::LinOpBCType, AMREX_SPACEDIM> lo_bc;
@@ -136,8 +146,9 @@ bool TortuosityMLMG::solve() {
     }
     m_mf_solution.FillBoundary(m_geom.periodicity());
 
-    // Set level BC (ghost cell values encode the Dirichlet data)
+    trace("setting level BC");
     mlabec.setLevelBC(0, &m_mf_solution);
+    trace("level BC set");
 
     // Operator: alpha*a*phi - beta*div(B*grad phi) = rhs, with alpha=beta=1.
     //
@@ -166,7 +177,9 @@ bool TortuosityMLMG::solve() {
             a_arr(i, j, k) = (mask(i, j, k, MaskComp) == cell_active) ? 0.0 : 1.0;
         });
     }
+    trace("calling setACoeffs");
     mlabec.setACoeffs(0, acoef);
+    trace("setACoeffs done");
 
     // Build a masked diffusion coefficient: D on active cells, 0 on inactive
     // *interior* cells. Ghost cells of dc_masked inherit their parent FAB's
@@ -222,7 +235,9 @@ bool TortuosityMLMG::solve() {
             });
         }
     }
+    trace("calling setBCoeffs");
     mlabec.setBCoeffs(0, amrex::GetArrOfConstPtrs(bcoefs));
+    trace("setBCoeffs done");
 
     // RHS = 0 everywhere: active cells satisfy -div(B grad phi) = 0,
     // inactive cells satisfy 1*phi = 0 (pinned).
@@ -230,15 +245,18 @@ bool TortuosityMLMG::solve() {
     rhs.setVal(0.0);
 
     // --- Run MLMG solver ---
+    trace("constructing MLMG");
     amrex::MLMG mlmg(mlabec);
     mlmg.setMaxIter(m_maxiter);
-    mlmg.setVerbose(m_verbose);
+    mlmg.setVerbose(std::max(m_verbose, 1));
     mlmg.setBottomVerbose(0);
+    trace("calling mlmg.solve");
 
     amrex::Real res_norm = -1.0;
     try {
         res_norm = mlmg.solve({&m_mf_solution}, {&rhs}, m_eps, 0.0);
         m_converged = true;
+        trace("mlmg.solve returned");
     } catch (const std::exception& e) {
         if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "TortuosityMLMG: MLMG solver failed: " << e.what() << std::endl;
