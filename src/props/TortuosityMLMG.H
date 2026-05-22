@@ -92,20 +92,20 @@ public:
 private:
     // MLMG solver parameters.
     //
-    // Default eps is 1e-11 (two orders tighter than HYPRE's 1e-9) because the
-    // two solvers measure residual against different reference norms. HYPRE
-    // encodes Dirichlet boundary values in the RHS vector, so its relative
-    // tolerance is normalised by ||b|| ~ sqrt(N), giving an N-scaled absolute
-    // residual that the integrated boundary-flux conservation guard (1e-4
-    // relative in TortuositySolverBase::value()) can rely on. MLMG applies
-    // Dirichlet via ghost cells with rhs=0, so its relative tolerance is
-    // normalised by ||r_initial||, which on a heterogeneous porous medium is
-    // O(1). At eps=1e-9 that leaves a per-cell residual of ~1e-9 absolute;
-    // integrated over a porous plane it accumulates past 1e-4 relative on the
-    // through-flux. Tightening to 1e-11 restores parity with HYPRE while
-    // adding only a few V-cycles.
-    amrex::Real m_eps = 1.0e-11;
-    int m_maxiter = 200;
+    // eps = 1e-7: tight enough to keep the per-cell residual well under the
+    // 1e-4 boundary-flux conservation tolerance in TortuositySolverBase::
+    // value(), loose enough to be achievable in <200 V-cycles on a porous
+    // medium with the active-mask alpha*a pin (which degrades geometric
+    // coarsening — coarse cells averaging mixed active/inactive don't
+    // preserve fine-grid physics). The earlier 1e-11 default was unreachable
+    // on porespy / real microstructures; MLMG would stall around 1e-5 and
+    // amrex::Abort.
+    //
+    // maxiter = 400: pinning slows asymptotic convergence enough that 200
+    // can leave bigger / heterogeneous domains short of eps. Doubling stays
+    // well inside the bake-off's per-solver wall-time budget.
+    amrex::Real m_eps = 1.0e-7;
+    int m_maxiter = 400;
     int m_max_coarsening_level = 30;
 };
 
