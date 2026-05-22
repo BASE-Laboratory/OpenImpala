@@ -102,8 +102,8 @@ void init_solvers(py::module_& m) {
              }),
              py::arg("img"), py::arg("vf"), py::arg("phase"), py::arg("dir"),
              py::arg("results_path"), py::arg("vlo") = 0.0, py::arg("vhi") = 1.0,
-             py::arg("verbose") = 0, py::arg("write_plotfile") = false, py::arg("eps") = 1.0e-11,
-             py::arg("maxiter") = 200, py::arg("max_coarsening_level") = 30, py::keep_alive<1, 2>())
+             py::arg("verbose") = 0, py::arg("write_plotfile") = false, py::arg("eps") = 1.0e-7,
+             py::arg("maxiter") = 400, py::arg("max_coarsening_level") = 30, py::keep_alive<1, 2>())
 
         .def(
             "value",

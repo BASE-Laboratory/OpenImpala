@@ -250,6 +250,11 @@ bool TortuosityMLMG::solve() {
     mlmg.setMaxIter(m_maxiter);
     mlmg.setVerbose(std::max(m_verbose, 1));
     mlmg.setBottomVerbose(0);
+    // Without this, MLMG calls amrex::Abort() (= SIGABRT) on non-convergence,
+    // bypassing our try/catch and killing the host process. With it, MLMG
+    // throws std::runtime_error which we catch and translate to NaN, the
+    // same convention TortuosityHypre uses.
+    mlmg.setThrowException(true);
     trace("calling mlmg.solve");
 
     amrex::Real res_norm = -1.0;
