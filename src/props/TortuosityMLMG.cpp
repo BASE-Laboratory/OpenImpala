@@ -63,6 +63,12 @@ constexpr int cell_active = 1;
 // either 0 (active/inactive interface) or 1 (active/active), exactly the
 // HYPRE row-decoupling analogue but encoded geometrically so MG
 // coarsening preserves it.
+//
+// CRITICAL: out-of-domain queries must return FLUID (-1), not body (+1).
+// EB2::Build uses ngrow ghost cells, so it queries the IF beyond the
+// domain box. Returning body there makes domain-boundary face apertures
+// zero, which overrides the Dirichlet/Neumann domain BCs set via
+// setDomainBC — the solve converges to phi=const with zero flux.
 struct ActiveMaskIF {
     int nx;
     int ny;
@@ -81,7 +87,7 @@ struct ActiveMaskIF {
         const int j = static_cast<int>(std::floor((y - ploy) / dy));
         const int k = static_cast<int>(std::floor((z - ploz) / dz));
         if (i < 0 || i >= nx || j < 0 || j >= ny || k < 0 || k >= nz) {
-            return amrex::Real(1.0);
+            return amrex::Real(-1.0);
         }
         const std::size_t idx = static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) *
                                     static_cast<std::size_t>(nx) +
