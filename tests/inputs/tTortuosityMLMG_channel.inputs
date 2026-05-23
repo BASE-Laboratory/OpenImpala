@@ -1,0 +1,36 @@
+# TortuosityMLMG Test: Channel with isolated pore island
+#
+# Geometry:  32^3 domain. A 4-wide channel of phase 0 runs along Z through
+#            a solid (phase 1) matrix. A 2^3 island of phase 0 sits isolated
+#            in the solid, disconnected from the channel. The flood fill marks
+#            the island as inactive; the EB body excludes it from the operator.
+#
+# Analytical: The channel is a uniform conducting path, so tau depends only
+#             on the channel geometry. For a 4x4 channel in a 32x32 cross-
+#             section: active_vf = 4*4/32*32 = 1/64, D_eff = active_vf * D,
+#             tau = active_vf / D_eff = 1.0 (uniform medium in the channel).
+#             MLMG applies Dirichlet at external faces so tau = 1.0.
+#
+# Validates:  EB masking of isolated pore islands + correct tortuosity on
+#             the percolating subdomain.
+
+domain_size = 32
+box_size = 16
+verbose = 2
+num_phases_fill = 3
+direction = Z
+
+# Channel occupies the full Z-length; tau = 1.0 for uniform D within it
+expected_tau = 1.0
+tau_tolerance = 0.01
+
+resultsdir = ./tTortuosityMLMG_channel_results
+
+# --- MLMG Solver Controls ---
+mlmg.eps = 1e-11
+mlmg.maxiter = 200
+
+# --- Multi-phase configuration ---
+tortuosity.active_phases = 0
+tortuosity.phase_diffusivities = 1.0
+tortuosity.remspot_passes = 0

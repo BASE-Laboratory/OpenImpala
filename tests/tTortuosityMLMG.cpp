@@ -7,6 +7,13 @@
 //   uniform:  All cells = phase 0, tau = (N-1)/N
 //   twophase: Alternating layers with equal D, tau = (N-1)/N
 //
+// Test cases (selected via inputs):
+//   num_phases_fill=1: All cells = phase 0, tau = 1.0
+//   num_phases_fill=2: Alternating layers with equal D, tau = 1.0
+//   num_phases_fill=3: 4-wide channel of phase 0 through phase 1 solid,
+//                      plus a 2^3 isolated pore island (inactive via flood
+//                      fill). Exercises EB masking of dead-end pores.
+//
 // Masked porous-media coverage lives in python/tests/test_mlmg_porespy.py,
 // which runs the actual user-facing facade against a real porespy blob
 // structure.
@@ -91,8 +98,8 @@ int main(int argc, char* argv[]) {
 
         if (num_phases_fill == 1) {
             mf_phase.setVal(0);
-        } else {
-            // Alternating layers along X
+        } else if (num_phases_fill == 2) {
+            // Alternating layers along flow direction
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
@@ -103,6 +110,47 @@ int main(int argc, char* argv[]) {
                 amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
                     int coord = (dir_idx == 0) ? i : (dir_idx == 1) ? j : k;
                     phase_arr(i, j, k, 0) = (coord % 2 == 0) ? 0 : 1;
+                });
+            }
+        } else if (num_phases_fill == 3) {
+            // Channel + isolated island: exercises EB masking.
+            // Phase 1 (solid) everywhere, then carve out:
+            //   - A 4-wide channel of phase 0 running the full domain length
+            //     along the flow direction (centred at x=14..17, y=14..17)
+            //   - A 2^3 isolated island of phase 0 at (2..3, 2..3, 2..3),
+            //     disconnected from the channel — flood fill marks it inactive
+            mf_phase.setVal(1);
+            const int ch_lo = domain_size / 2 - 2; // 14 for N=32
+            const int ch_hi = domain_size / 2 + 1; // 17 for N=32
+            const int is_lo = 2;
+            const int is_hi = 3;
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+            for (amrex::MFIter mfi(mf_phase, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                const amrex::Box& bx = mfi.growntilebox();
+                amrex::Array4<int> const phase_arr = mf_phase.array(mfi);
+                amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+                    // Channel: phase 0 where lateral coords are in [ch_lo, ch_hi]
+                    int lat0, lat1;
+                    if (direction == OpenImpala::Direction::X) {
+                        lat0 = j;
+                        lat1 = k;
+                    } else if (direction == OpenImpala::Direction::Y) {
+                        lat0 = i;
+                        lat1 = k;
+                    } else {
+                        lat0 = i;
+                        lat1 = j;
+                    }
+                    if (lat0 >= ch_lo && lat0 <= ch_hi && lat1 >= ch_lo && lat1 <= ch_hi) {
+                        phase_arr(i, j, k, 0) = 0;
+                    }
+                    // Isolated island: phase 0 cube disconnected from channel
+                    if (i >= is_lo && i <= is_hi && j >= is_lo && j <= is_hi && k >= is_lo &&
+                        k <= is_hi) {
+                        phase_arr(i, j, k, 0) = 0;
+                    }
                 });
             }
         }

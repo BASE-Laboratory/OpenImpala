@@ -559,6 +559,21 @@ set_tests_properties(tTortuosityMLMG_dirY PROPERTIES
     TIMEOUT 300
 )
 
+# MLMG channel with isolated pore island: exercises EB masking of dead-end pores
+add_test(
+    NAME tTortuosityMLMG_channel
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tTortuosityMLMG>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tTortuosityMLMG_channel.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tTortuosityMLMG_channel PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
+
 # Masked porous-media MLMG coverage lives in python/tests/test_mlmg_porespy.py,
 # which exercises the user-facing facade against a real porespy blob structure.
 

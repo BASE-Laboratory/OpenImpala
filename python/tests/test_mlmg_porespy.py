@@ -1,16 +1,10 @@
 """MLMG-on-porous-media regression tests.
 
-The MLMG solver references its relative residual against ``||r_initial||``
-(``rhs = 0`` for the steady-state Laplacian) rather than against ``||b||``
-as HYPRE does. On heterogeneous porous geometry that leaves a per-cell
-absolute residual that, integrated over a plane, used to trip the boundary
-flux conservation guard (``1e-4`` relative) at the default ``eps = 1e-9``.
-
-The default was tightened to ``eps = 1e-11`` in ``TortuosityMLMG.H`` and
-mirrored in the pybind11 binding. These tests lock that in by running the
-same user-facing call (``oi.tortuosity(...)``) on a real porespy blob
-structure — the exact workload the bake-off in
-``notebooks/profiling_and_tuning.ipynb`` exercises.
+Validates the EB-based MLMG solver (``MLEBABecLap``) on heterogeneous
+porous geometry where non-percolating phase-target islands are carved
+out as an EB body region. The embedded-boundary framework preserves MG
+coarsening quality across levels, recovering the O(N) iteration count
+that the earlier alpha*a pin could not achieve (see issue #289).
 
 Skipped if porespy is not installed (it is not a hard dependency of the
 openimpala wheel itself, only of the wheel-test job).
@@ -29,7 +23,9 @@ def porous_blobs():
     """Deterministic porespy blob structure at 32^3, ~50% porosity.
 
     Small enough that the test runs in ~5 s on CPU CI yet heterogeneous
-    enough to trip the pre-fix flux guard.
+    enough to exercise the EB masking path (porespy blobs at 50% porosity
+    always produce isolated pore islands that the flood fill marks
+    inactive).
     """
     np.random.seed(42)
     im = porespy.generators.blobs(shape=[32, 32, 32], porosity=0.5, blobiness=1.5)
@@ -38,11 +34,11 @@ def porous_blobs():
 
 class TestMLMGOnPorousMedia:
     def test_mlmg_returns_finite_tau(self, porous_blobs):
-        """The headline regression: MLMG on porous data must not NaN.
+        """MLMG on porous data must return a finite, physical tortuosity.
 
-        Pre-fix, the boundary flux guard rejected MLMG's result on this
-        geometry. Post-fix, ``tau`` is a finite, positive number greater
-        than 1 (tortuosity is always >= 1 for a porous medium).
+        Pre-EB-fix, the boundary flux guard rejected MLMG's result on
+        this geometry (non-percolating islands were indeterminate).
+        Post-fix, ``tau`` is a finite, positive number greater than 1.
         """
         res = oi.tortuosity(porous_blobs, phase=0, direction="z", solver="mlmg")
         assert np.isfinite(res.tortuosity)
@@ -54,8 +50,8 @@ class TestMLMGOnPorousMedia:
 
         Both solve the identical 7-point discretisation with harmonic-mean
         face coefficients; they only differ in how the linear system is
-        solved. Agreement to ~1% relative confirms MLMG is not just
-        converging to *something* but to the correct answer.
+        solved. Agreement to ~1% relative confirms the EB-based MLMG is
+        converging to the correct answer, not just *an* answer.
         """
         mlmg = oi.tortuosity(porous_blobs, phase=0, direction="z", solver="mlmg")
         hypre = oi.tortuosity(
@@ -68,6 +64,22 @@ class TestMLMGOnPorousMedia:
             f"MLMG and HYPRE+SMG disagree on porous geometry: "
             f"MLMG={mlmg.tortuosity:.6f}, HYPRE+SMG={hypre.tortuosity:.6f}, "
             f"rel_diff={rel_diff:.2%}"
+        )
+
+    def test_mlmg_converges_in_bounded_iterations(self, porous_blobs):
+        """EB-aware MG coarsening must keep the iteration count low.
+
+        With the alpha*a pin (pre-EB), MLMG needed ~250 iterations on
+        this geometry (~5% reduction per V-cycle). With EB coarsening,
+        the iteration count should be bounded by a small constant
+        regardless of problem size — the acceptance criterion from #289
+        is <=20 V-cycles at 32^3.
+        """
+        res = oi.tortuosity(porous_blobs, phase=0, direction="z", solver="mlmg")
+        assert res.solver_converged
+        assert res.iterations <= 20, (
+            f"MLMG took {res.iterations} iterations on 32^3 porespy "
+            f"(target <=20). EB coarsening may not be working correctly."
         )
 
     def test_mlmg_directional_symmetry(self, porous_blobs):
