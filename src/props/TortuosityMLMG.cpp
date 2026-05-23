@@ -75,15 +75,12 @@ struct ActiveMaskIF {
     amrex::Real dz;
     const int* mask;
 
-    AMREX_GPU_HOST_DEVICE
-    inline amrex::Real operator()(amrex::RealArray const& p) const noexcept {
-        const int i = static_cast<int>(std::floor((p[0] - plox) / dx));
-        const int j = static_cast<int>(std::floor((p[1] - ploy) / dy));
-        const int k = static_cast<int>(std::floor((p[2] - ploz) / dz));
-        // Outside the domain box: treat as body. AMReX's domain-edge BC
-        // (Dirichlet in flow dir, Neumann lateral) takes over before the
-        // EB sees these samples, so the value here is largely cosmetic;
-        // returning +1 keeps the IF well-defined.
+    [[nodiscard]] AMREX_GPU_HOST_DEVICE
+    inline amrex::Real operator()(AMREX_D_DECL(amrex::Real x, amrex::Real y,
+                                               amrex::Real z)) const noexcept {
+        const int i = static_cast<int>(std::floor((x - plox) / dx));
+        const int j = static_cast<int>(std::floor((y - ploy) / dy));
+        const int k = static_cast<int>(std::floor((z - ploz) / dz));
         if (i < 0 || i >= nx || j < 0 || j >= ny || k < 0 || k >= nz) {
             return amrex::Real(1.0);
         }
@@ -93,6 +90,11 @@ struct ActiveMaskIF {
             static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
             static_cast<std::size_t>(i);
         return mask[idx] == cell_active ? amrex::Real(-1.0) : amrex::Real(1.0);
+    }
+
+    [[nodiscard]] AMREX_GPU_HOST_DEVICE
+    inline amrex::Real operator()(const amrex::RealArray& p) const noexcept {
+        return this->operator()(AMREX_D_DECL(p[0], p[1], p[2]));
     }
 };
 } // namespace
