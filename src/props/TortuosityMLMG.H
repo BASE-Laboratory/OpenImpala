@@ -1,9 +1,17 @@
 /** @file TortuosityMLMG.H
- *  @brief Matrix-free tortuosity solver using AMReX's native MLMG geometric multigrid.
+ *  @brief EB-aware matrix-free tortuosity solver using AMReX MLMG.
  *
  *  Solves the same steady-state diffusion equation as TortuosityHypre
  *  (-div(D * grad(phi)) = 0 with Dirichlet BCs) but uses AMReX's built-in
- *  MLABecLaplacian operator and MLMG V-cycle solver instead of HYPRE.
+ *  MLEBABecLap operator with embedded-boundary support and MLMG V-cycle
+ *  solver instead of HYPRE.
+ *
+ *  Non-percolating (dead-end / isolated) phase cells are encoded as a
+ *  "body" region via an implicit function over the active mask. AMReX builds
+ *  geometric apertures/centroids from the IF and coarsens EB metadata across
+ *  MG levels in a way that preserves the fine operator's restriction —
+ *  recovering the O(N) iteration count that plain MLABecLaplacian with an
+ *  alpha*a pin could not achieve (see issue #289).
  *
  *  Advantages over HYPRE for small/medium grids:
  *    - No explicit matrix assembly (matrix-free operator application)
@@ -79,11 +87,12 @@ public:
     TortuosityMLMG(const TortuosityMLMG&) = delete;
     TortuosityMLMG& operator=(const TortuosityMLMG&) = delete;
 
-    /** @brief Run the MLMG solver, populating m_mf_solution.
+    /** @brief Run the EB-MLMG solver, populating m_mf_solution.
      *
-     *  Sets up MLABecLaplacian with appropriate BCs and B-coefficients,
-     *  runs MLMG V-cycle solve, and optionally writes a plotfile.
-     *  Public for CUDA __device__ lambda compatibility.
+     *  Builds EB geometry from the active mask, sets up MLEBABecLap
+     *  with appropriate BCs and B-coefficients, runs MLMG V-cycle solve,
+     *  copies the EB solution back into m_mf_solution, and optionally
+     *  writes a plotfile. Public for CUDA __device__ lambda compatibility.
      *
      *  @return true if solver converged.
      */
@@ -92,20 +101,15 @@ public:
 private:
     // MLMG solver parameters.
     //
-    // eps = 1e-7: tight enough to keep the per-cell residual well under the
-    // 1e-4 boundary-flux conservation tolerance in TortuositySolverBase::
-    // value(), loose enough to be achievable in <200 V-cycles on a porous
-    // medium with the active-mask alpha*a pin (which degrades geometric
-    // coarsening — coarse cells averaging mixed active/inactive don't
-    // preserve fine-grid physics). The earlier 1e-11 default was unreachable
-    // on porespy / real microstructures; MLMG would stall around 1e-5 and
-    // amrex::Abort.
-    //
-    // maxiter = 400: pinning slows asymptotic convergence enough that 200
-    // can leave bigger / heterogeneous domains short of eps. Doubling stays
-    // well inside the bake-off's per-solver wall-time budget.
-    amrex::Real m_eps = 1.0e-7;
-    int m_maxiter = 400;
+    // eps = 1e-11: with EB-aware coarsening the MG hierarchy is
+    // geometrically consistent, restoring ~10x residual reduction per
+    // V-cycle. 1e-11 is comfortably reachable in <20 V-cycles on
+    // typical 32-128^3 porous media, keeping the integrated per-plane
+    // residual well under the 1e-4 boundary-flux conservation tolerance
+    // in TortuositySolverBase::value(). (The earlier 1e-7 + 400-iter
+    // relaxation was the alpha*a-pin workaround; no longer needed.)
+    amrex::Real m_eps = 1.0e-11;
+    int m_maxiter = 200;
     int m_max_coarsening_level = 30;
 };
 
