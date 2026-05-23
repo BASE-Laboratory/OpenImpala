@@ -559,11 +559,24 @@ set_tests_properties(tTortuosityMLMG_dirY PROPERTIES
     TIMEOUT 300
 )
 
-# TODO (#289): add a C++ test with inactive cells (channel + isolated
-# pore island) once the NaN in computePlaneFluxes is diagnosed. The
-# EB solve converges correctly (residual 0 in 1 iter) but the post-solve
-# flux integration produces NaN plane fluxes — needs data-dump debugging.
-# For now, EB masking coverage is provided by python/tests/test_mlmg_porespy.py.
+# MLMG channel with isolated pore island: exercises EB masking of dead-end pores.
+# NOTE: computePlaneFluxes produces NaN on this geometry (the EB solve and
+# boundary fluxes are correct; the NaN is in the interior plane-flux
+# accumulation). TortuositySolverBase::value() falls back to boundary fluxes
+# when plane fluxes are invalid, so the tau calculation is correct.
+add_test(
+    NAME tTortuosityMLMG_channel
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:tTortuosityMLMG>
+            ${CMAKE_SOURCE_DIR}/tests/inputs/tTortuosityMLMG_channel.inputs
+            amrex.verbose=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(tTortuosityMLMG_channel PROPERTIES
+    ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    TIMEOUT 300
+)
 
 # Masked porous-media MLMG coverage lives in python/tests/test_mlmg_porespy.py,
 # which exercises the user-facing facade against a real porespy blob structure.

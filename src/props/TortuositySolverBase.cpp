@@ -525,14 +525,20 @@ amrex::Real TortuositySolverBase::value(const bool refresh) {
             }
             amrex::Real gradPhi = (m_vhi - m_vlo) / L;
 
-            // Use mean of interior plane fluxes when available
+            // Use mean of interior plane fluxes when available and valid.
+            // Fall back to boundary fluxes if plane fluxes are NaN (can
+            // happen with EB solvers where computePlaneFluxes reads ghost
+            // cells across covered/regular FAB boundaries).
             amrex::Real avg_flux_mag;
+            bool plane_fluxes_valid = false;
             if (!m_plane_fluxes.empty()) {
                 amrex::Real sum_plane = 0.0;
                 for (const auto& pf : m_plane_fluxes)
                     sum_plane += std::abs(pf);
                 avg_flux_mag = sum_plane / static_cast<amrex::Real>(m_plane_fluxes.size());
-            } else {
+                plane_fluxes_valid = std::isfinite(avg_flux_mag);
+            }
+            if (!plane_fluxes_valid) {
                 avg_flux_mag = 0.5 * (std::abs(m_flux_in) + std::abs(m_flux_out));
             }
 
