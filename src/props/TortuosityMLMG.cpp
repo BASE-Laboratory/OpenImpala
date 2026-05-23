@@ -75,25 +75,23 @@ struct ActiveMaskIF {
     amrex::Real dz;
     const int* mask;
 
-    [[nodiscard]] AMREX_GPU_HOST_DEVICE
-    inline amrex::Real operator()(AMREX_D_DECL(amrex::Real x, amrex::Real y,
-                                               amrex::Real z)) const noexcept {
+    [[nodiscard]] AMREX_GPU_HOST_DEVICE inline amrex::Real
+    operator()(AMREX_D_DECL(amrex::Real x, amrex::Real y, amrex::Real z)) const noexcept {
         const int i = static_cast<int>(std::floor((x - plox) / dx));
         const int j = static_cast<int>(std::floor((y - ploy) / dy));
         const int k = static_cast<int>(std::floor((z - ploz) / dz));
         if (i < 0 || i >= nx || j < 0 || j >= ny || k < 0 || k >= nz) {
             return amrex::Real(1.0);
         }
-        const std::size_t idx =
-            static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) *
-                static_cast<std::size_t>(nx) +
-            static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
-            static_cast<std::size_t>(i);
+        const std::size_t idx = static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) *
+                                    static_cast<std::size_t>(nx) +
+                                static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
+                                static_cast<std::size_t>(i);
         return mask[idx] == cell_active ? amrex::Real(-1.0) : amrex::Real(1.0);
     }
 
-    [[nodiscard]] AMREX_GPU_HOST_DEVICE
-    inline amrex::Real operator()(const amrex::RealArray& p) const noexcept {
+    [[nodiscard]] AMREX_GPU_HOST_DEVICE inline amrex::Real
+    operator()(const amrex::RealArray& p) const noexcept {
         return this->operator()(AMREX_D_DECL(p[0], p[1], p[2]));
     }
 };
@@ -123,8 +121,8 @@ TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArra
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "TortuosityMLMG: Initialized with eps=" << m_eps
-                       << ", maxiter=" << m_maxiter
-                       << ", max_coarsening=" << m_max_coarsening_level << std::endl;
+                       << ", maxiter=" << m_maxiter << ", max_coarsening=" << m_max_coarsening_level
+                       << std::endl;
     }
 }
 
@@ -141,9 +139,8 @@ bool TortuosityMLMG::solve() {
     const int nx = domain.length(0);
     const int ny = domain.length(1);
     const int nz = domain.length(2);
-    const std::size_t total_cells = static_cast<std::size_t>(nx) *
-                                    static_cast<std::size_t>(ny) *
-                                    static_cast<std::size_t>(nz);
+    const std::size_t total_cells =
+        static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz);
 
     // -----------------------------------------------------------------
     // Step 1: gather a global host-side mask cube.
@@ -189,16 +186,8 @@ bool TortuosityMLMG::solve() {
     // Step 2: build EB from the mask.
     // -----------------------------------------------------------------
     const amrex::Real* dx = m_geom.CellSize();
-    ActiveMaskIF if_obj{nx,
-                        ny,
-                        nz,
-                        m_geom.ProbLo(0),
-                        m_geom.ProbLo(1),
-                        m_geom.ProbLo(2),
-                        dx[0],
-                        dx[1],
-                        dx[2],
-                        device_mask.data()};
+    ActiveMaskIF if_obj{nx,    ny,    nz,    m_geom.ProbLo(0),  m_geom.ProbLo(1), m_geom.ProbLo(2),
+                        dx[0], dx[1], dx[2], device_mask.data()};
     auto gshop = amrex::EB2::makeShop(if_obj);
 
     // required_coarsening_level = 0, max_coarsening_level for EB
@@ -214,8 +203,7 @@ bool TortuosityMLMG::solve() {
     // so we get volume fractions, apertures, and boundary data — all
     // needed by MLEBABecLap.
     const amrex::Vector<int> ng{2, 2, 2};
-    amrex::EBFArrayBoxFactory factory(eb_level, m_geom, m_ba, m_dm, ng,
-                                      amrex::EBSupport::full);
+    amrex::EBFArrayBoxFactory factory(eb_level, m_geom, m_ba, m_dm, ng, amrex::EBSupport::full);
 
     // -----------------------------------------------------------------
     // Step 3: build MLEBABecLap operator and coefficients.
@@ -302,6 +290,46 @@ bool TortuosityMLMG::solve() {
     // No mask-driven zeroing: the EB factory carries the apertures, so
     // active/inactive interface faces get aperture=0 automatically and
     // the B value there is irrelevant.
+    //
+    // m_mf_diff_coeff's domain-boundary ghost cells are uninitialized
+    // (buildDiffusionCoeffField reads phase ghosts that from_numpy's
+    // FillBoundary doesn't fill for non-periodic dirs). MLABecLaplacian
+    // silently overrides boundary-face B with its internal stencil, but
+    // MLEBABecLap uses user-provided B directly — so garbage ghost D
+    // → harmonic_mean(garbage,D_inner) → wrong boundary-face B → the
+    // solve converges to phi=const instead of the Dirichlet-driven ramp.
+    // Fix: extrapolate domain-boundary ghosts from the nearest interior
+    // cell before computing face B.
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        if (m_geom.isPeriodic(d)) {
+            continue;
+        }
+        const amrex::IntVect e = amrex::IntVect::TheDimensionVector(d);
+        const int dom_lo = domain.smallEnd(d);
+        const int dom_hi = domain.bigEnd(d);
+        for (amrex::MFIter mfi(m_mf_diff_coeff); mfi.isValid(); ++mfi) {
+            const amrex::Box& fabbox = mfi.fabbox();
+            amrex::Array4<amrex::Real> const dc = m_mf_diff_coeff.array(mfi);
+            amrex::Box lo_box = fabbox;
+            lo_box.setSmall(d, fabbox.smallEnd(d));
+            lo_box.setBig(d, dom_lo - 1);
+            if (!lo_box.isEmpty()) {
+                amrex::ParallelFor(lo_box, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                    amrex::IntVect iv(i, j, k);
+                    dc(iv) = dc(iv + e);
+                });
+            }
+            amrex::Box hi_box = fabbox;
+            hi_box.setSmall(d, dom_hi + 1);
+            hi_box.setBig(d, fabbox.bigEnd(d));
+            if (!hi_box.isEmpty()) {
+                amrex::ParallelFor(hi_box, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                    amrex::IntVect iv(i, j, k);
+                    dc(iv) = dc(iv - e);
+                });
+            }
+        }
+    }
     amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> bcoefs;
     for (int d = 0; d < AMREX_SPACEDIM; ++d) {
         amrex::BoxArray edge_ba = m_ba;
