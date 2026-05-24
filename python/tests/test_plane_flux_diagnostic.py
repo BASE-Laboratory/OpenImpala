@@ -17,12 +17,18 @@ from openimpala import _core
 @pytest.fixture(scope="module")
 def channel_with_island():
     """32^3 domain: 4-wide channel (phase 0) through solid (phase 1),
-    plus a 2^3 isolated pore island at (2..3, 2..3, 2..3)."""
+    plus a 2^3 isolated pore island at (2..3, 2..3, 2..3).
+
+    NumPy shape is (Z, Y, X). The channel must span the full Z range
+    (flow direction) at lateral positions x=14..17, y=14..17.
+    """
     N = 32
     data = np.ones((N, N, N), dtype=np.int32)  # all solid
     ch_lo, ch_hi = N // 2 - 2, N // 2 + 1  # 14..17
-    data[ch_lo : ch_hi + 1, ch_lo : ch_hi + 1, :] = 0  # channel in Z
-    data[2:4, 2:4, 2:4] = 0  # isolated island
+    # Channel: all Z, y=14..17, x=14..17  (runs along Z in AMReX coords)
+    data[:, ch_lo : ch_hi + 1, ch_lo : ch_hi + 1] = 0
+    # Isolated island at AMReX (i=2..3, j=2..3, k=2..3) = numpy [2:4, 2:4, 2:4]
+    data[2:4, 2:4, 2:4] = 0
     return data
 
 
