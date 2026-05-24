@@ -29,7 +29,6 @@
 #include <AMReX_EB2.H>
 #include <AMReX_EB2_IF.H>
 #include <AMReX_EBFabFactory.H>
-#include <AMReX_EBMultiFabUtil.H>
 #include <AMReX_Gpu.H>
 #include <AMReX_GpuLaunch.H>
 #include <AMReX_GpuQualifiers.H>
@@ -414,13 +413,13 @@ bool TortuosityMLMG::solve() {
     }
 
     // Copy EB solution back into the base-class m_mf_solution that
-    // globalFluxes() reads. MLMG may leave covered cells at NaN or a
-    // sentinel value; zero them before the Copy so they don't propagate
-    // through FillBoundary into active-cell ghost positions that
-    // computePlaneFluxes reads.
-    amrex::EB_set_covered(sol_eb, 0.0);
+    // globalFluxes() reads. Covered cells retain whatever value MLMG
+    // left (typically the initial-guess ramp); active cells have the
+    // converged solution. globalFluxes only reads active-mask cells,
+    // so covered-cell values are irrelevant.
     sol_eb.FillBoundary(m_geom.periodicity());
-    amrex::MultiFab::Copy(m_mf_solution, sol_eb, 0, 0, 1, m_mf_solution.nGrow());
+    amrex::MultiFab::Copy(m_mf_solution, sol_eb, 0, 0, 1,
+                          std::min(sol_eb.nGrow(), m_mf_solution.nGrow()));
     m_mf_solution.FillBoundary(m_geom.periodicity());
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
