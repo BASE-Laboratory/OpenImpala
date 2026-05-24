@@ -317,6 +317,30 @@ bool TortuosityMLMG::solve() {
         }
     }
     sol_eb.FillBoundary(m_geom.periodicity());
+
+    // DEBUG: verify ramp was written and ghost values encode Dirichlet BCs
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        const int mid = domain.length(idir) / 2; // z=16
+        for (amrex::MFIter mfi(sol_eb); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.validbox();
+            if (bx.contains(amrex::IntVect(15, 15, 0))) {
+                auto arr = sol_eb.const_array(mfi);
+                amrex::Print() << "  [DEBUG] sol_eb BEFORE setLevelBC:\n"
+                               << "    (15,15,0)=" << arr(15, 15, 0) << "  (should be ~0)\n"
+                               << "    (15,15,-1)=" << arr(15, 15, -1)
+                               << "  (ghost, should be vlo=" << m_vlo << ")\n";
+            }
+            if (bx.contains(amrex::IntVect(15, 15, domain.bigEnd(idir)))) {
+                auto arr = sol_eb.const_array(mfi);
+                int last = domain.bigEnd(idir);
+                amrex::Print() << "    (15,15," << last << ")=" << arr(15, 15, last)
+                               << "  (should be ~1)\n"
+                               << "    (15,15," << last + 1 << ")=" << arr(15, 15, last + 1)
+                               << "  (ghost, should be vhi=" << m_vhi << ")\n";
+            }
+        }
+    }
+
     mlebop.setLevelBC(0, &sol_eb);
 
     // Pure Laplacian: alpha=0, beta=1 -> -div(B grad phi) = rhs.
