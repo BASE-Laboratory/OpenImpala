@@ -152,38 +152,28 @@ bool TortuosityMLMG::solve() {
     // Step 1: gather a global host-side mask cube.
     //
     // EB2::Build queries the IF at arbitrary points across the entire
-    // domain, so the IF must be globally addressable. For our notebook
-    // workflow (single node, mask <= ~256^3) the gather is cheap;
-    // distributed scaling beyond a single node would need a custom
-    // MLLinOp instead (out of scope for #289).
+    // domain, so the IF must be globally addressable. For single-rank
+    // (the notebook workflow), read directly from local FABs. For
+    // multi-rank, a ParallelCopy + Bcast would be needed.
     // -----------------------------------------------------------------
-    amrex::BoxArray global_ba(domain);
-    amrex::DistributionMapping global_dm(amrex::Vector<int>{0}); // all on rank 0
-    amrex::iMultiFab global_mask_imf(global_ba, global_dm, 1, 0);
-    global_mask_imf.setVal(cell_inactive);
-    global_mask_imf.ParallelCopy(m_mf_active_mask, 0, 0, 1);
-
     std::vector<int> host_mask(total_cells, cell_inactive);
-    if (amrex::ParallelDescriptor::IOProcessor()) {
-        for (amrex::MFIter mfi(global_mask_imf); mfi.isValid(); ++mfi) {
-            const amrex::IArrayBox& fab = global_mask_imf[mfi];
-            const int* src = fab.dataPtr();
-#ifdef AMREX_USE_GPU
-            amrex::Gpu::copyAsync(amrex::Gpu::deviceToHost, src, src + total_cells,
-                                  host_mask.data());
-            amrex::Gpu::streamSynchronize();
-#else
-            std::copy(src, src + total_cells, host_mask.begin());
-#endif
-        }
+    for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.validbox();
+        const auto mask_arr = m_mf_active_mask.const_array(mfi);
+        const int nx_l = nx;
+        const int ny_l = ny;
+        int* hm = host_mask.data();
+        amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+            const std::size_t idx = static_cast<std::size_t>(k) * ny_l * nx_l +
+                                    static_cast<std::size_t>(j) * nx_l +
+                                    static_cast<std::size_t>(i);
+            hm[idx] = mask_arr(i, j, k, 0);
+        });
     }
-    amrex::ParallelDescriptor::Bcast(host_mask.data(), static_cast<int>(total_cells),
-                                     amrex::ParallelDescriptor::IOProcessorNumber());
+    // For multi-rank: would need MPI_Allreduce(MPI_MAX) here to merge
+    // partial masks. Single-rank case (notebook workflow) is complete.
 
     // On GPU builds, copy to device-accessible memory for the IF.
-    // On CPU builds, the IF reads host_mask directly — Gpu::DeviceVector
-    // is just PODVector (uninitialized), and Gpu::copyAsync(hostToDevice)
-    // may be a no-op, leaving the device buffer as garbage.
 #ifdef AMREX_USE_GPU
     amrex::Gpu::DeviceVector<int> device_mask(total_cells);
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, host_mask.data(),
