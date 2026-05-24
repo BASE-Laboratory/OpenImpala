@@ -200,6 +200,17 @@ bool TortuosityMLMG::solve() {
     const amrex::Real* dx = m_geom.CellSize();
     ActiveMaskIF if_obj{nx,    ny,    nz,    m_geom.ProbLo(0), m_geom.ProbLo(1), m_geom.ProbLo(2),
                         dx[0], dx[1], dx[2], mask_data_ptr};
+
+    // DEBUG: test IF at known channel position
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        amrex::Real v_channel = if_obj(AMREX_D_DECL(14.5, 14.5, 0.5));
+        amrex::Real v_solid = if_obj(AMREX_D_DECL(0.5, 0.5, 0.5));
+        amrex::Real v_outside = if_obj(AMREX_D_DECL(-0.5, -0.5, -0.5));
+        amrex::Print() << "  [DEBUG] IF(14.5,14.5,0.5)=" << v_channel
+                       << " IF(0.5,0.5,0.5)=" << v_solid << " IF(-0.5,-0.5,-0.5)=" << v_outside
+                       << "\n";
+    }
+
     auto gshop = amrex::EB2::makeShop(if_obj);
 
     // required_coarsening_level = 0, max_coarsening_level for EB
