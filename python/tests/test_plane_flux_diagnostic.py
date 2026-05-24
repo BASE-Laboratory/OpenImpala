@@ -53,7 +53,20 @@ class TestPlaneFluxDiagnostic:
         assert np.isfinite(flux_out), f"flux_out is {flux_out}"
         assert abs(flux_in) > 1e-10, f"flux_in is near-zero: {flux_in}"
 
-    def test_channel_plane_fluxes_diagnosed(self, channel_with_island):
+    def test_channel_hypre_for_comparison(self, channel_with_island):
+        """Run HYPRE (pcg+smg) on the same channel to check if globalFluxes
+        works at all on partial-domain geometries. If HYPRE also gives NaN,
+        the bug is in globalFluxes, not in the EB code path."""
+        res = oi.tortuosity(
+            channel_with_island, phase=0, direction="z",
+            solver="pcg", preconditioner="smg", verbose=1,
+        )
+        print(f"\nHYPRE channel: tau={res.tortuosity:.6f}  "
+              f"converged={res.solver_converged}  iters={res.iterations}")
+        print(f"HYPRE flux_in={res.flux_in:.6e}  flux_out={res.flux_out:.6e}")
+        assert np.isfinite(res.tortuosity), (
+            f"HYPRE also NaN on channel geometry — globalFluxes bug, not EB"
+        )
         """Dump all 31 plane fluxes to identify which ones are NaN."""
         img = _core.VoxelImage.from_numpy(channel_with_island, 16)
         vf = _core.VolumeFraction(img, 0, 0).value_vf()
