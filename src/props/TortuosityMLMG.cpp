@@ -456,6 +456,18 @@ bool TortuosityMLMG::solve() {
         m_converged = false;
     }
 
+    // DEBUG: read sol_eb at a known REGULAR channel cell AFTER solve
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        for (amrex::MFIter mfi(sol_eb); mfi.isValid(); ++mfi) {
+            if (mfi.validbox().contains(amrex::IntVect(15, 15, 16))) {
+                auto arr = sol_eb.const_array(mfi);
+                amrex::Print() << "  [DEBUG] sol_eb AFTER solve: (15,15,0)=" << arr(15, 15, 0)
+                               << " (15,15,16)=" << arr(15, 15, 16)
+                               << " (15,15,31)=" << arr(15, 15, 31) << "\n";
+            }
+        }
+    }
+
     m_final_res_norm = res_norm;
     m_num_iterations = mlmg.getNumIters();
     if (m_converged && res_norm >= m_eps) {
