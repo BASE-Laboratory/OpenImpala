@@ -234,7 +234,11 @@ int main(int argc, char* argv[]) {
         if (test_passed && tort) {
             const auto& plane_fluxes = tort->getPlaneFluxes();
             amrex::Real max_dev = tort->getPlaneFluxMaxDeviation();
-            constexpr amrex::Real plane_flux_tol = 1.0e-6;
+            amrex::Real plane_flux_tol = 1.0e-6;
+            {
+                amrex::ParmParse pp;
+                pp.query("plane_flux_tol", plane_flux_tol);
+            }
 
             if (!plane_fluxes.empty() && max_dev > plane_flux_tol) {
                 test_passed = false;
