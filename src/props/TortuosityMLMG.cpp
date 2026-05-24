@@ -216,20 +216,6 @@ bool TortuosityMLMG::solve() {
     // required_coarsening_level = 0, max_coarsening_level for EB
     // mirrors MLMG's. EB2 pushes the new IndexSpace onto a global
     // stack — we erase it at the end of solve() to avoid leaking
-    // Disable small-cell redistribution. Our IF is a cell-binary step
-    // function, so cut cells at channel/solid boundaries have vfrac ≈ 0.25
-    // at corners (2/8 vertices fluid). AMReX's default small_volfrac
-    // threshold marks these as "small" and merges them into neighbors,
-    // converting them to COVERED. If any were active channel cells, the
-    // subsequent EB_set_covered zeros their solution, and globalFluxes
-    // (which uses the active mask, not EB flags) reads zero where it
-    // expects a ramp value — producing NaN fluxes. Setting small_volfrac
-    // to 0 prevents any merging; all cut cells keep their partial vfrac
-    // and the MLMG EB stencil handles them correctly.
-    {
-        amrex::ParmParse pp_eb2("eb2");
-        pp_eb2.add("small_volfrac", 0.0);
-    }
     amrex::EB2::Build(gshop, m_geom, 0, m_max_coarsening_level);
 
     const amrex::EB2::IndexSpace& eb_is = amrex::EB2::IndexSpace::top();
@@ -240,6 +226,29 @@ bool TortuosityMLMG::solve() {
     // needed by MLEBABecLap.
     const amrex::Vector<int> ng{2, 2, 2};
     amrex::EBFArrayBoxFactory factory(eb_level, m_geom, m_ba, m_dm, ng, amrex::EBSupport::full);
+
+    // DEBUG: check EB classification
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        const auto& vfrac = factory.getVolFrac();
+        amrex::Real vf_min = vfrac.min(0);
+        amrex::Real vf_max = vfrac.max(0);
+        int n_regular = 0, n_covered = 0, n_cut = 0;
+        for (amrex::MFIter mfi(vfrac); mfi.isValid(); ++mfi) {
+            const auto& flag = factory.getMultiEBCellFlagFab()[mfi];
+            const amrex::Box& bx = mfi.validbox();
+            amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+                if (flag(amrex::IntVect(i, j, k)).isRegular())
+                    ++n_regular;
+                else if (flag(amrex::IntVect(i, j, k)).isCovered())
+                    ++n_covered;
+                else
+                    ++n_cut;
+            });
+        }
+        amrex::Print() << "  [DEBUG] EB: vfrac min=" << vf_min << " max=" << vf_max
+                       << " regular=" << n_regular << " cut=" << n_cut << " covered=" << n_covered
+                       << "\n";
+    }
 
     // -----------------------------------------------------------------
     // Step 3: build MLEBABecLap operator and coefficients.
