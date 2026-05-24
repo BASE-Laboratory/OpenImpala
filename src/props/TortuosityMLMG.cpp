@@ -170,6 +170,16 @@ bool TortuosityMLMG::solve() {
             hm[idx] = mask_arr(i, j, k, 0);
         });
     }
+
+    // DEBUG: verify mask was read correctly
+    {
+        int n_active_in_mask =
+            static_cast<int>(std::count(host_mask.begin(), host_mask.end(), cell_active));
+        if (amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "  [DEBUG] host_mask: n_active=" << n_active_in_mask << " / "
+                           << total_cells << "\n";
+        }
+    }
     // For multi-rank: would need MPI_Allreduce(MPI_MAX) here to merge
     // partial masks. Single-rank case (notebook workflow) is complete.
 
@@ -412,7 +422,8 @@ bool TortuosityMLMG::solve() {
     if (amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Real sol_min = sol_eb.min(0);
         amrex::Real sol_max = sol_eb.max(0);
-        amrex::Print() << "  [DEBUG] sol_eb min=" << sol_min << " max=" << sol_max << "\n";
+        std::fprintf(stderr, "  [DEBUG] sol_eb min=%g max=%g\n", sol_min, sol_max);
+        std::fflush(stderr);
     }
 
     // Copy EB solution back into the base-class m_mf_solution that
@@ -425,7 +436,8 @@ bool TortuosityMLMG::solve() {
     if (amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Real dst_min = m_mf_solution.min(0);
         amrex::Real dst_max = m_mf_solution.max(0);
-        amrex::Print() << "  [DEBUG] m_mf_solution min=" << dst_min << " max=" << dst_max << "\n";
+        std::fprintf(stderr, "  [DEBUG] m_mf_solution min=%g max=%g\n", dst_min, dst_max);
+        std::fflush(stderr);
     }
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
