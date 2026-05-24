@@ -200,7 +200,20 @@ bool TortuosityMLMG::solve() {
     // required_coarsening_level = 0, max_coarsening_level for EB
     // mirrors MLMG's. EB2 pushes the new IndexSpace onto a global
     // stack — we erase it at the end of solve() to avoid leaking
-    // metadata across successive calls.
+    // Disable small-cell redistribution. Our IF is a cell-binary step
+    // function, so cut cells at channel/solid boundaries have vfrac ≈ 0.25
+    // at corners (2/8 vertices fluid). AMReX's default small_volfrac
+    // threshold marks these as "small" and merges them into neighbors,
+    // converting them to COVERED. If any were active channel cells, the
+    // subsequent EB_set_covered zeros their solution, and globalFluxes
+    // (which uses the active mask, not EB flags) reads zero where it
+    // expects a ramp value — producing NaN fluxes. Setting small_volfrac
+    // to 0 prevents any merging; all cut cells keep their partial vfrac
+    // and the MLMG EB stencil handles them correctly.
+    {
+        amrex::ParmParse pp_eb2("eb2");
+        pp_eb2.add("small_volfrac", 0.0);
+    }
     amrex::EB2::Build(gshop, m_geom, 0, m_max_coarsening_level);
 
     const amrex::EB2::IndexSpace& eb_is = amrex::EB2::IndexSpace::top();
