@@ -295,14 +295,6 @@ bool TortuosityMLMG::solve() {
         }
         mlmg.getFluxes({amrex::GetArrOfPtrs(mlmg_fluxes)});
 
-        const amrex::Real* cell_dx = m_geom.CellSize();
-        amrex::Real face_area = 1.0;
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-            if (d != idir) {
-                face_area *= cell_dx[d];
-            }
-        }
-
         const int dom_lo_idir = domain.smallEnd(idir);
         const int n_cells_dir = domain.length(idir);
         const int n_faces = n_cells_dir - 1;
@@ -340,8 +332,8 @@ bool TortuosityMLMG::solve() {
         }
         amrex::ParallelDescriptor::ReduceRealSum(local_flux_in);
         amrex::ParallelDescriptor::ReduceRealSum(local_flux_out);
-        m_flux_in = local_flux_in * face_area;
-        m_flux_out = local_flux_out * face_area;
+        m_flux_in = local_flux_in;
+        m_flux_out = local_flux_out;
 
         // Interior plane fluxes: integrate mlmg_fluxes[idir] at each
         // interior cross-section (faces 1 through N-1).
@@ -367,7 +359,7 @@ bool TortuosityMLMG::solve() {
         amrex::ParallelDescriptor::ReduceRealSum(plane_flux.data(), n_faces);
         m_plane_fluxes.resize(n_faces);
         for (int f = 0; f < n_faces; ++f) {
-            m_plane_fluxes[f] = plane_flux[f] * face_area;
+            m_plane_fluxes[f] = plane_flux[f];
         }
 
         // Compute plane flux deviation for diagnostics.
