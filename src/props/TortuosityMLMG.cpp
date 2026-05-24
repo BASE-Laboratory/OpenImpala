@@ -180,20 +180,26 @@ bool TortuosityMLMG::solve() {
     amrex::ParallelDescriptor::Bcast(host_mask.data(), static_cast<int>(total_cells),
                                      amrex::ParallelDescriptor::IOProcessorNumber());
 
-    // Copy to a device-accessible buffer that the IF can read. Kept
-    // alive until after EB2::Build returns (the EB metadata caches the
-    // IF results, so device_mask can go out of scope after Build).
+    // On GPU builds, copy to device-accessible memory for the IF.
+    // On CPU builds, the IF reads host_mask directly — Gpu::DeviceVector
+    // is just PODVector (uninitialized), and Gpu::copyAsync(hostToDevice)
+    // may be a no-op, leaving the device buffer as garbage.
+#ifdef AMREX_USE_GPU
     amrex::Gpu::DeviceVector<int> device_mask(total_cells);
     amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, host_mask.data(),
                           host_mask.data() + total_cells, device_mask.data());
     amrex::Gpu::streamSynchronize();
+    const int* mask_data_ptr = device_mask.data();
+#else
+    const int* mask_data_ptr = host_mask.data();
+#endif
 
     // -----------------------------------------------------------------
     // Step 2: build EB from the mask.
     // -----------------------------------------------------------------
     const amrex::Real* dx = m_geom.CellSize();
-    ActiveMaskIF if_obj{nx,    ny,    nz,    m_geom.ProbLo(0),  m_geom.ProbLo(1), m_geom.ProbLo(2),
-                        dx[0], dx[1], dx[2], device_mask.data()};
+    ActiveMaskIF if_obj{nx,    ny,    nz,    m_geom.ProbLo(0), m_geom.ProbLo(1), m_geom.ProbLo(2),
+                        dx[0], dx[1], dx[2], mask_data_ptr};
     auto gshop = amrex::EB2::makeShop(if_obj);
 
     // required_coarsening_level = 0, max_coarsening_level for EB
