@@ -140,6 +140,10 @@ if(BUILD_TESTING)
             "${PYTHON_TEST_DIR}/test_percolation.py")
         openimpala_add_pytest(pytest_tortuosity
             "${PYTHON_TEST_DIR}/test_tortuosity.py")
+        openimpala_add_pytest(pytest_mlmg_porespy
+            "${PYTHON_TEST_DIR}/test_mlmg_porespy.py")
+        openimpala_add_pytest(pytest_plane_flux_diagnostic
+            "${PYTHON_TEST_DIR}/test_plane_flux_diagnostic.py")
 
         message(STATUS "Python tests registered with CTest (label: python)")
     else()
