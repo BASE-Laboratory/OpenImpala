@@ -95,11 +95,6 @@ TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArra
     m_maxiter = maxiter;
     m_max_coarsening_level = max_coarsening_level;
 
-    // EB cut cells at the active/inactive boundary introduce small
-    // geometric flux errors (~0.3% for typical geometries). Loosen
-    // the boundary flux conservation tolerance from the HYPRE default
-    // of 1e-4 to 1e-2.
-    m_flux_tol = 1.0e-2;
 
     amrex::ParmParse pp_mlmg("mlmg");
     pp_mlmg.query("eps", m_eps);
@@ -282,7 +277,126 @@ bool TortuosityMLMG::solve() {
         m_converged = false;
     }
 
-    // Copy EB solution back into base-class m_mf_solution for globalFluxes.
+    // -----------------------------------------------------------------
+    // Step 7: extract operator-consistent fluxes from MLMG.
+    //
+    // mlmg.getFluxes() returns the EXACT fluxes the solver computed
+    // (-beta * B * aperture * grad phi), which conserve to solver
+    // tolerance. Using these instead of recomputing in globalFluxes()
+    // avoids the stencil mismatch between the EB operator (which uses
+    // apertures) and globalFluxes' harmonic-mean D computation.
+    // -----------------------------------------------------------------
+    if (m_converged) {
+        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> mlmg_fluxes;
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            amrex::BoxArray fba = m_ba;
+            fba.surroundingNodes(d);
+            mlmg_fluxes[d].define(fba, m_dm, 1, 0, amrex::MFInfo(), factory);
+        }
+        mlmg.getFluxes({amrex::GetArrOfPtrs(mlmg_fluxes)});
+
+        const amrex::Real* cell_dx = m_geom.CellSize();
+        amrex::Real face_area = 1.0;
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            if (d != idir) {
+                face_area *= cell_dx[d];
+            }
+        }
+
+        const int dom_lo_idir = domain.smallEnd(idir);
+        const int n_cells_dir = domain.length(idir);
+        const int n_faces = n_cells_dir - 1;
+
+        // Boundary fluxes: integrate mlmg_fluxes[idir] at inlet/outlet.
+        amrex::Real local_flux_in = 0.0;
+        amrex::Real local_flux_out = 0.0;
+        for (amrex::MFIter mfi(mlmg_fluxes[idir]); mfi.isValid(); ++mfi) {
+            const amrex::Box& fbx = mfi.validbox();
+            auto const& fl = mlmg_fluxes[idir].const_array(mfi);
+
+            amrex::Box lo_face = fbx;
+            lo_face.setSmall(idir, dom_lo_idir);
+            lo_face.setBig(idir, dom_lo_idir);
+            if (!lo_face.isEmpty()) {
+                amrex::ReduceOps<amrex::ReduceOpSum> ro;
+                amrex::ReduceData<amrex::Real> rd(ro);
+                ro.eval(lo_face, rd,
+                        [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                        -> amrex::GpuTuple<amrex::Real> { return {fl(i, j, k)}; });
+                local_flux_in += amrex::get<0>(rd.value());
+            }
+
+            amrex::Box hi_face = fbx;
+            hi_face.setSmall(idir, dom_lo_idir + n_cells_dir);
+            hi_face.setBig(idir, dom_lo_idir + n_cells_dir);
+            if (!hi_face.isEmpty()) {
+                amrex::ReduceOps<amrex::ReduceOpSum> ro;
+                amrex::ReduceData<amrex::Real> rd(ro);
+                ro.eval(hi_face, rd,
+                        [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                        -> amrex::GpuTuple<amrex::Real> { return {fl(i, j, k)}; });
+                local_flux_out += amrex::get<0>(rd.value());
+            }
+        }
+        amrex::ParallelDescriptor::ReduceRealSum(local_flux_in);
+        amrex::ParallelDescriptor::ReduceRealSum(local_flux_out);
+        m_flux_in = local_flux_in * face_area;
+        m_flux_out = local_flux_out * face_area;
+
+        // Interior plane fluxes: integrate mlmg_fluxes[idir] at each
+        // interior cross-section (faces 1 through N-1).
+        std::vector<amrex::Real> plane_flux(n_faces, 0.0);
+        for (amrex::MFIter mfi(mlmg_fluxes[idir]); mfi.isValid(); ++mfi) {
+            const amrex::Box& fbx = mfi.validbox();
+            auto const& fl = mlmg_fluxes[idir].const_array(mfi);
+            for (int f = 0; f < n_faces; ++f) {
+                int face_k = dom_lo_idir + 1 + f;
+                amrex::Box face_box = fbx;
+                face_box.setSmall(idir, face_k);
+                face_box.setBig(idir, face_k);
+                if (!face_box.isEmpty()) {
+                    amrex::ReduceOps<amrex::ReduceOpSum> ro;
+                    amrex::ReduceData<amrex::Real> rd(ro);
+                    ro.eval(face_box, rd,
+                            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                            -> amrex::GpuTuple<amrex::Real> { return {fl(i, j, k)}; });
+                    plane_flux[f] += amrex::get<0>(rd.value());
+                }
+            }
+        }
+        amrex::ParallelDescriptor::ReduceRealSum(plane_flux.data(), n_faces);
+        m_plane_fluxes.resize(n_faces);
+        for (int f = 0; f < n_faces; ++f) {
+            m_plane_fluxes[f] = plane_flux[f] * face_area;
+        }
+
+        // Compute plane flux deviation for diagnostics.
+        amrex::Real sum_pf = 0.0;
+        for (const auto& pf : m_plane_fluxes)
+            sum_pf += pf;
+        amrex::Real mean_pf = sum_pf / static_cast<amrex::Real>(n_faces);
+        amrex::Real max_dev = 0.0;
+        for (const auto& pf : m_plane_fluxes) {
+            amrex::Real dev = std::abs(pf - mean_pf);
+            if (dev > max_dev)
+                max_dev = dev;
+        }
+        amrex::Real abs_mean = std::abs(mean_pf);
+        constexpr amrex::Real tiny = 1.0e-15;
+        m_plane_flux_max_dev = (abs_mean > tiny) ? max_dev / abs_mean : 0.0;
+
+        if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "  Interior Plane Flux Check (" << n_faces << " faces):\n"
+                           << "    Mean Plane Flux = " << std::scientific << mean_pf << "\n"
+                           << "    Max |F_i - mean| / |mean| = " << m_plane_flux_max_dev
+                           << std::defaultfloat << "\n";
+        }
+
+        m_fluxes_precomputed = true;
+    }
+
+    // Copy EB solution back into base-class m_mf_solution for
+    // writeSolutionPlotfile and any downstream consumers.
     sol_eb.FillBoundary(m_geom.periodicity());
     amrex::MultiFab::Copy(m_mf_solution, sol_eb, 0, 0, 1,
                           std::min(sol_eb.nGrow(), m_mf_solution.nGrow()));

@@ -458,7 +458,9 @@ amrex::Real TortuositySolverBase::value(const bool refresh) {
             return m_value;
         }
 
-        globalFluxes();
+        if (!m_fluxes_precomputed) {
+            globalFluxes();
+        }
 
         // Flux conservation check.
         //

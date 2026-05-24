@@ -181,12 +181,12 @@ protected:
     std::vector<amrex::Real> m_plane_fluxes;
     amrex::Real m_plane_flux_max_dev = 0.0;
 
-    // Boundary flux conservation tolerance. HYPRE with exact matrix
-    // assembly conserves to solver tolerance (~1e-9), so 1e-4 is safe.
-    // EB cut-cell solvers introduce small geometric flux errors at
-    // irregular boundaries (~0.3% for typical channel geometries), so
-    // subclasses like TortuosityMLMG set a looser threshold.
+    // Boundary flux conservation tolerance.
     amrex::Real m_flux_tol = 1.0e-4;
+
+    // If true, solve() pre-computed m_flux_in/out/m_plane_fluxes and
+    // value() should skip calling globalFluxes().
+    bool m_fluxes_precomputed = false;
 };
 
 } // namespace OpenImpala
