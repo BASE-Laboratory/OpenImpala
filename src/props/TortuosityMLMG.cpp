@@ -445,6 +445,17 @@ bool TortuosityMLMG::solve() {
     // catch translates to NaN at the Python boundary.
     mlmg.setThrowException(true);
 
+    // DEBUG: check sol_eb right before and after solve
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        for (amrex::MFIter mfi(sol_eb); mfi.isValid(); ++mfi) {
+            if (mfi.validbox().contains(amrex::IntVect(15, 15, 16))) {
+                auto arr = sol_eb.const_array(mfi);
+                amrex::Print() << "  [DEBUG] sol_eb JUST BEFORE solve: (15,15,16)="
+                               << arr(15, 15, 16) << "\n";
+            }
+        }
+    }
+
     amrex::Real res_norm = -1.0;
     try {
         res_norm = mlmg.solve({&sol_eb}, {&rhs}, m_eps, 0.0);
@@ -461,9 +472,8 @@ bool TortuosityMLMG::solve() {
         for (amrex::MFIter mfi(sol_eb); mfi.isValid(); ++mfi) {
             if (mfi.validbox().contains(amrex::IntVect(15, 15, 16))) {
                 auto arr = sol_eb.const_array(mfi);
-                amrex::Print() << "  [DEBUG] sol_eb AFTER solve: (15,15,0)=" << arr(15, 15, 0)
-                               << " (15,15,16)=" << arr(15, 15, 16)
-                               << " (15,15,31)=" << arr(15, 15, 31) << "\n";
+                amrex::Print() << "  [DEBUG] sol_eb JUST AFTER solve: (15,15,16)="
+                               << arr(15, 15, 16) << "\n";
             }
         }
     }
