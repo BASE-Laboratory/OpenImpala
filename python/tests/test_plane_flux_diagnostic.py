@@ -61,9 +61,8 @@ class TestPlaneFluxDiagnostic:
             channel_with_island, phase=0, direction="z",
             solver="pcg", preconditioner="smg", verbose=1,
         )
-        print(f"\nHYPRE channel: tau={res.tortuosity:.6f}  "
+        print(f"\nHYPRE channel: tau={res.tortuosity}  "
               f"converged={res.solver_converged}  iters={res.iterations}")
-        print(f"HYPRE flux_in={res.flux_in:.6e}  flux_out={res.flux_out:.6e}")
         assert np.isfinite(res.tortuosity), (
             f"HYPRE also NaN on channel geometry — globalFluxes bug, not EB"
         )
