@@ -367,113 +367,101 @@ bool TortuosityMLMG::solve() {
         amrex::BoxArray edge_ba = m_ba;
         edge_ba.surroundingNodes(d);
         bcoefs[d].define(edge_ba, m_dm, 1, 0, amrex::MFInfo(), factory);
-        // Set B=1 everywhere. The EB apertures handle active/inactive
-        // decoupling geometrically — setting B=0 at channel/solid faces
-        // via harmonic mean would double-count and may cause 0/0 in the
-        // EB stencil (aperture * B / vfrac where aperture=0, B=0, vfrac
-        // is small for cut cells).
         bcoefs[d].setVal(1.0);
     }
-}
-else {
-    bf(i, j, k) = 0.0;
-}
-});
-}
-}
-mlebop.setBCoeffs(0, amrex::GetArrOfConstPtrs(bcoefs));
+    mlebop.setBCoeffs(0, amrex::GetArrOfConstPtrs(bcoefs));
 
-// RHS = 0 (steady-state Laplacian, no source).
-amrex::MultiFab rhs(m_ba, m_dm, 1, 0, amrex::MFInfo(), factory);
-rhs.setVal(0.0);
+    // RHS = 0 (steady-state Laplacian, no source).
+    amrex::MultiFab rhs(m_ba, m_dm, 1, 0, amrex::MFInfo(), factory);
+    rhs.setVal(0.0);
 
-// -----------------------------------------------------------------
-// Step 6: run MLMG.
-// -----------------------------------------------------------------
-amrex::MLMG mlmg(mlebop);
-mlmg.setMaxIter(m_maxiter);
-mlmg.setVerbose(m_verbose);
-mlmg.setBottomVerbose(0);
-// Throw instead of amrex::Abort on non-convergence so the existing
-// catch translates to NaN at the Python boundary.
-mlmg.setThrowException(true);
+    // -----------------------------------------------------------------
+    // Step 6: run MLMG.
+    // -----------------------------------------------------------------
+    amrex::MLMG mlmg(mlebop);
+    mlmg.setMaxIter(m_maxiter);
+    mlmg.setVerbose(m_verbose);
+    mlmg.setBottomVerbose(0);
+    // Throw instead of amrex::Abort on non-convergence so the existing
+    // catch translates to NaN at the Python boundary.
+    mlmg.setThrowException(true);
 
-// DEBUG: check sol_eb right before and after solve
-if (amrex::ParallelDescriptor::IOProcessor()) {
-    for (amrex::MFIter mfi(sol_eb); mfi.isValid(); ++mfi) {
-        if (mfi.validbox().contains(amrex::IntVect(15, 15, 16))) {
-            auto arr = sol_eb.const_array(mfi);
-            amrex::Print() << "  [DEBUG] sol_eb JUST BEFORE solve: (15,15,16)=" << arr(15, 15, 16)
-                           << "\n";
+    // DEBUG: check sol_eb right before and after solve
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        for (amrex::MFIter mfi(sol_eb); mfi.isValid(); ++mfi) {
+            if (mfi.validbox().contains(amrex::IntVect(15, 15, 16))) {
+                auto arr = sol_eb.const_array(mfi);
+                amrex::Print() << "  [DEBUG] sol_eb JUST BEFORE solve: (15,15,16)="
+                               << arr(15, 15, 16) << "\n";
+            }
         }
     }
-}
 
-amrex::Real res_norm = -1.0;
-try {
-    res_norm = mlmg.solve({&sol_eb}, {&rhs}, m_eps, 0.0);
-    m_converged = true;
-} catch (const std::exception& e) {
-    if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "TortuosityMLMG: MLMG solver failed: " << e.what() << std::endl;
+    amrex::Real res_norm = -1.0;
+    try {
+        res_norm = mlmg.solve({&sol_eb}, {&rhs}, m_eps, 0.0);
+        m_converged = true;
+    } catch (const std::exception& e) {
+        if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "TortuosityMLMG: MLMG solver failed: " << e.what() << std::endl;
+        }
+        m_converged = false;
     }
-    m_converged = false;
-}
 
-// DEBUG: read sol_eb at a known REGULAR channel cell AFTER solve
-if (amrex::ParallelDescriptor::IOProcessor()) {
-    for (amrex::MFIter mfi(sol_eb); mfi.isValid(); ++mfi) {
-        if (mfi.validbox().contains(amrex::IntVect(15, 15, 16))) {
-            auto arr = sol_eb.const_array(mfi);
-            amrex::Print() << "  [DEBUG] sol_eb JUST AFTER solve: (15,15,16)=" << arr(15, 15, 16)
-                           << "\n";
+    // DEBUG: read sol_eb at a known REGULAR channel cell AFTER solve
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        for (amrex::MFIter mfi(sol_eb); mfi.isValid(); ++mfi) {
+            if (mfi.validbox().contains(amrex::IntVect(15, 15, 16))) {
+                auto arr = sol_eb.const_array(mfi);
+                amrex::Print() << "  [DEBUG] sol_eb JUST AFTER solve: (15,15,16)="
+                               << arr(15, 15, 16) << "\n";
+            }
         }
     }
-}
 
-m_final_res_norm = res_norm;
-m_num_iterations = mlmg.getNumIters();
-if (m_converged && res_norm >= m_eps) {
-    m_converged = false;
-}
+    m_final_res_norm = res_norm;
+    m_num_iterations = mlmg.getNumIters();
+    if (m_converged && res_norm >= m_eps) {
+        m_converged = false;
+    }
 
-// DEBUG: check sol_eb min/max before and after Copy
-if (amrex::ParallelDescriptor::IOProcessor()) {
-    amrex::Real sol_min = sol_eb.min(0);
-    amrex::Real sol_max = sol_eb.max(0);
-    std::fprintf(stderr, "  [DEBUG] sol_eb min=%g max=%g\n", sol_min, sol_max);
-    std::fflush(stderr);
-}
+    // DEBUG: check sol_eb min/max before and after Copy
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        amrex::Real sol_min = sol_eb.min(0);
+        amrex::Real sol_max = sol_eb.max(0);
+        std::fprintf(stderr, "  [DEBUG] sol_eb min=%g max=%g\n", sol_min, sol_max);
+        std::fflush(stderr);
+    }
 
-// Copy EB solution back into the base-class m_mf_solution that
-// globalFluxes() reads.
-sol_eb.FillBoundary(m_geom.periodicity());
-amrex::MultiFab::Copy(m_mf_solution, sol_eb, 0, 0, 1,
-                      std::min(sol_eb.nGrow(), m_mf_solution.nGrow()));
-m_mf_solution.FillBoundary(m_geom.periodicity());
+    // Copy EB solution back into the base-class m_mf_solution that
+    // globalFluxes() reads.
+    sol_eb.FillBoundary(m_geom.periodicity());
+    amrex::MultiFab::Copy(m_mf_solution, sol_eb, 0, 0, 1,
+                          std::min(sol_eb.nGrow(), m_mf_solution.nGrow()));
+    m_mf_solution.FillBoundary(m_geom.periodicity());
 
-if (amrex::ParallelDescriptor::IOProcessor()) {
-    amrex::Real dst_min = m_mf_solution.min(0);
-    amrex::Real dst_max = m_mf_solution.max(0);
-    std::fprintf(stderr, "  [DEBUG] m_mf_solution min=%g max=%g\n", dst_min, dst_max);
-    std::fflush(stderr);
-}
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        amrex::Real dst_min = m_mf_solution.min(0);
+        amrex::Real dst_max = m_mf_solution.max(0);
+        std::fprintf(stderr, "  [DEBUG] m_mf_solution min=%g max=%g\n", dst_min, dst_max);
+        std::fflush(stderr);
+    }
 
-if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-    amrex::Print() << "  MLMG solve: residual=" << std::scientific << res_norm << std::defaultfloat
-                   << ", iterations=" << m_num_iterations << ", converged=" << m_converged
-                   << std::endl;
-}
+    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
+        amrex::Print() << "  MLMG solve: residual=" << std::scientific << res_norm
+                       << std::defaultfloat << ", iterations=" << m_num_iterations
+                       << ", converged=" << m_converged << std::endl;
+    }
 
-if (m_write_plotfile && m_converged) {
-    writeSolutionPlotfile("tortuosity_mlmg_" + std::to_string(idir));
-}
+    if (m_write_plotfile && m_converged) {
+        writeSolutionPlotfile("tortuosity_mlmg_" + std::to_string(idir));
+    }
 
-// Pop the EB IndexSpace we pushed in step 2 — otherwise successive
-// TortuosityMLMG solves leak EB metadata on the global stack.
-amrex::EB2::IndexSpace::pop();
+    // Pop the EB IndexSpace we pushed in step 2 — otherwise successive
+    // TortuosityMLMG solves leak EB metadata on the global stack.
+    amrex::EB2::IndexSpace::pop();
 
-return m_converged;
+    return m_converged;
 }
 
 } // namespace OpenImpala
