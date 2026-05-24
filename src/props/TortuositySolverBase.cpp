@@ -479,7 +479,7 @@ amrex::Real TortuositySolverBase::value(const bool refresh) {
         //     fixed relative tolerance at 128³+ even when the solve is
         //     numerically fine. This is now warning-only: it reports the
         //     deviation in the log but does NOT NaN the result.
-        constexpr amrex::Real flux_tol = 1.0e-4;
+        const amrex::Real flux_tol = m_flux_tol;
         constexpr amrex::Real plane_dev_warn = 1.0e-3;
         bool flux_conserved = true;
         amrex::Real flux_mag_in = std::abs(m_flux_in);

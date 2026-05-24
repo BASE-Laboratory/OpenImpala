@@ -95,6 +95,12 @@ TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArra
     m_maxiter = maxiter;
     m_max_coarsening_level = max_coarsening_level;
 
+    // EB cut cells at the active/inactive boundary introduce small
+    // geometric flux errors (~0.3% for typical geometries). Loosen
+    // the boundary flux conservation tolerance from the HYPRE default
+    // of 1e-4 to 1e-2.
+    m_flux_tol = 1.0e-2;
+
     amrex::ParmParse pp_mlmg("mlmg");
     pp_mlmg.query("eps", m_eps);
     pp_mlmg.query("maxiter", m_maxiter);
