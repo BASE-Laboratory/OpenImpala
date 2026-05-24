@@ -408,15 +408,25 @@ bool TortuosityMLMG::solve() {
         m_converged = false;
     }
 
+    // DEBUG: check sol_eb min/max before and after Copy
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        amrex::Real sol_min = sol_eb.min(0);
+        amrex::Real sol_max = sol_eb.max(0);
+        amrex::Print() << "  [DEBUG] sol_eb min=" << sol_min << " max=" << sol_max << "\n";
+    }
+
     // Copy EB solution back into the base-class m_mf_solution that
-    // globalFluxes() reads. Covered cells retain whatever value MLMG
-    // left (typically the initial-guess ramp); active cells have the
-    // converged solution. globalFluxes only reads active-mask cells,
-    // so covered-cell values are irrelevant.
+    // globalFluxes() reads.
     sol_eb.FillBoundary(m_geom.periodicity());
     amrex::MultiFab::Copy(m_mf_solution, sol_eb, 0, 0, 1,
                           std::min(sol_eb.nGrow(), m_mf_solution.nGrow()));
     m_mf_solution.FillBoundary(m_geom.periodicity());
+
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        amrex::Real dst_min = m_mf_solution.min(0);
+        amrex::Real dst_max = m_mf_solution.max(0);
+        amrex::Print() << "  [DEBUG] m_mf_solution min=" << dst_min << " max=" << dst_max << "\n";
+    }
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "  MLMG solve: residual=" << std::scientific << res_norm
