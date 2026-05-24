@@ -295,6 +295,29 @@ bool TortuosityMLMG::solve() {
         }
         mlmg.getFluxes({amrex::GetArrOfPtrs(mlmg_fluxes)});
 
+        // DEBUG: check getFluxes scaling at a known interior face
+        if (amrex::ParallelDescriptor::IOProcessor()) {
+            for (amrex::MFIter mfi(mlmg_fluxes[idir]); mfi.isValid(); ++mfi) {
+                amrex::IntVect probe(15, 15, 16);
+                if (idir == 0) {
+                    probe = amrex::IntVect(16, 15, 15);
+                } else if (idir == 1) {
+                    probe = amrex::IntVect(15, 16, 15);
+                }
+                if (mfi.validbox().contains(probe)) {
+                    auto fl = mlmg_fluxes[idir].const_array(mfi);
+                    auto sl = sol_eb.const_array(mfi);
+                    amrex::IntVect cell_lo = probe;
+                    cell_lo[idir] -= 1;
+                    amrex::IntVect cell_hi = probe;
+                    amrex::Print()
+                        << "  [DEBUG] getFluxes at face " << probe << " = " << fl(probe) << "\n"
+                        << "    phi_lo=" << sl(cell_lo) << " phi_hi=" << sl(cell_hi)
+                        << " manual_flux=" << -(sl(cell_hi) - sl(cell_lo)) / dx[idir] << "\n";
+                }
+            }
+        }
+
         const int dom_lo_idir = domain.smallEnd(idir);
         const int n_cells_dir = domain.length(idir);
         const int n_faces = n_cells_dir - 1;
