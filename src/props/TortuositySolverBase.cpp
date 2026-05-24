@@ -238,30 +238,6 @@ void TortuositySolverBase::globalFluxes() {
     m_mf_active_mask.FillBoundary(m_geom.periodicity());
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
-    // DEBUG: check for NaN in solution and diff_coeff at active cells
-    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-        int n_active = 0, n_soln_nan = 0, n_dc_nan = 0, n_dc_zero = 0;
-        for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
-            const amrex::Box& bx = mfi.validbox();
-            const auto mask_arr = m_mf_active_mask.const_array(mfi);
-            const auto soln_arr = m_mf_solution.const_array(mfi);
-            const auto dc_arr = m_mf_diff_coeff.const_array(mfi);
-            amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
-                if (mask_arr(i, j, k, 0) == cell_active) {
-                    ++n_active;
-                    if (!std::isfinite(soln_arr(i, j, k)))
-                        ++n_soln_nan;
-                    if (!std::isfinite(dc_arr(i, j, k)))
-                        ++n_dc_nan;
-                    if (dc_arr(i, j, k) == 0.0)
-                        ++n_dc_zero;
-                }
-            });
-        }
-        amrex::Print() << "  [globalFluxes DEBUG] active=" << n_active << " soln_nan=" << n_soln_nan
-                       << " dc_nan=" << n_dc_nan << " dc_zero=" << n_dc_zero << "\n";
-    }
-
     amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum> flux_reduce_op;
     amrex::ReduceData<amrex::Real, amrex::Real> flux_reduce_data(flux_reduce_op);
 

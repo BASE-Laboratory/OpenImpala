@@ -576,7 +576,6 @@ add_test(
 set_tests_properties(tTortuosityMLMG_channel PROPERTIES
     ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
     TIMEOUT 300
-    WILL_FAIL TRUE
 )
 
 # Masked porous-media MLMG coverage lives in python/tests/test_mlmg_porespy.py,
