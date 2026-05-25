@@ -21,8 +21,10 @@ num_phases_fill = 3
 direction = Z
 
 # Channel occupies the full Z-length; tau = 1.0 for uniform D within it
+# Channel occupies 4x4 / 32x32 = 1.5625% of cross-section
 expected_tau = 1.0
 tau_tolerance = 0.01
+min_active_vf = 0.01
 
 # EB cut cells at channel boundary produce ~0.3% plane flux variance
 # (different effective stencil at irregular faces). Loosen from the

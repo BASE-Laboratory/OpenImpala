@@ -220,7 +220,12 @@ int main(int argc, char* argv[]) {
         // --- Check active volume fraction ---
         if (test_passed && tort) {
             amrex::Real active_vf = tort->getActiveVolumeFraction();
-            if (active_vf < 0.99) {
+            amrex::Real min_active_vf = 0.99;
+            {
+                amrex::ParmParse pp;
+                pp.query("min_active_vf", min_active_vf);
+            }
+            if (active_vf < min_active_vf) {
                 test_passed = false;
                 fail_reason =
                     "Active volume fraction unexpectedly low: " + std::to_string(active_vf);
