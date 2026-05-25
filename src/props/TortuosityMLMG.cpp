@@ -43,10 +43,12 @@ constexpr int MaskComp = 0;
 constexpr int cell_inactive = 0;
 constexpr int cell_active = 1;
 
-// Implicit function for EB: returns < 0 for fluid (active/percolating)
-// and > 0 for body (inactive/non-percolating). Out-of-domain queries
-// return fluid so that domain-boundary face apertures stay open and
-// setDomainBC's Dirichlet/Neumann conditions apply normally.
+// Implicit function for EB. Returns < 0 (fluid) if ANY of the 8 cells
+// sharing the query vertex is active, +1 (body) otherwise. This ensures
+// all active cells have all-fluid vertices → fully REGULAR (vfrac=1),
+// pushing cut cells to the inactive (solid) side. Since globalFluxes
+// only reads active cells, the flux stencil is identical to a standard
+// non-EB Laplacian — no cut-cell precision loss.
 struct ActiveMaskIF {
     int nx;
     int ny;
@@ -54,24 +56,38 @@ struct ActiveMaskIF {
     amrex::Real plox;
     amrex::Real ploy;
     amrex::Real ploz;
-    amrex::Real dx;
-    amrex::Real dy;
-    amrex::Real dz;
+    amrex::Real invdx;
+    amrex::Real invdy;
+    amrex::Real invdz;
     const int* mask;
 
     [[nodiscard]] AMREX_GPU_HOST_DEVICE inline amrex::Real
     operator()(AMREX_D_DECL(amrex::Real x, amrex::Real y, amrex::Real z)) const noexcept {
-        const int i = static_cast<int>(std::floor((x - plox) / dx));
-        const int j = static_cast<int>(std::floor((y - ploy) / dy));
-        const int k = static_cast<int>(std::floor((z - ploz) / dz));
-        if (i < 0 || i >= nx || j < 0 || j >= ny || k < 0 || k >= nz) {
-            return amrex::Real(-1.0);
+        constexpr amrex::Real eps = 1.0e-6;
+        const int i0 = static_cast<int>(std::floor((x - eps - plox) * invdx));
+        const int i1 = static_cast<int>(std::floor((x + eps - plox) * invdx));
+        const int j0 = static_cast<int>(std::floor((y - eps - ploy) * invdy));
+        const int j1 = static_cast<int>(std::floor((y + eps - ploy) * invdy));
+        const int k0 = static_cast<int>(std::floor((z - eps - ploz) * invdz));
+        const int k1 = static_cast<int>(std::floor((z + eps - ploz) * invdz));
+        for (int kk = k0; kk <= k1; ++kk) {
+            for (int jj = j0; jj <= j1; ++jj) {
+                for (int ii = i0; ii <= i1; ++ii) {
+                    if (ii < 0 || ii >= nx || jj < 0 || jj >= ny || kk < 0 || kk >= nz) {
+                        return amrex::Real(-1.0);
+                    }
+                    const std::size_t idx =
+                        static_cast<std::size_t>(kk) * static_cast<std::size_t>(ny) *
+                            static_cast<std::size_t>(nx) +
+                        static_cast<std::size_t>(jj) * static_cast<std::size_t>(nx) +
+                        static_cast<std::size_t>(ii);
+                    if (mask[idx] == cell_active) {
+                        return amrex::Real(-1.0);
+                    }
+                }
+            }
         }
-        const std::size_t idx = static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) *
-                                    static_cast<std::size_t>(nx) +
-                                static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
-                                static_cast<std::size_t>(i);
-        return mask[idx] == cell_active ? amrex::Real(-1.0) : amrex::Real(1.0);
+        return amrex::Real(1.0);
     }
 
     [[nodiscard]] AMREX_GPU_HOST_DEVICE inline amrex::Real
@@ -95,10 +111,6 @@ TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArra
     m_maxiter = maxiter;
     m_max_coarsening_level = max_coarsening_level;
 
-    // EB cut cells introduce ~0.3% boundary flux mismatch (different
-    // effective stencil at irregular faces vs globalFluxes' harmonic
-    // mean). The tau value is unaffected (uses mean of |in|+|out|).
-    m_flux_tol = 1.0e-2;
     amrex::ParmParse pp_mlmg("mlmg");
     pp_mlmg.query("eps", m_eps);
     pp_mlmg.query("maxiter", m_maxiter);
@@ -158,8 +170,9 @@ bool TortuosityMLMG::solve() {
     // Step 2: build EB from the mask.
     // -----------------------------------------------------------------
     const amrex::Real* dx = m_geom.CellSize();
-    ActiveMaskIF if_obj{nx,    ny,    nz,    m_geom.ProbLo(0), m_geom.ProbLo(1), m_geom.ProbLo(2),
-                        dx[0], dx[1], dx[2], mask_data_ptr};
+    ActiveMaskIF if_obj{
+        nx,          ny,          nz,          m_geom.ProbLo(0), m_geom.ProbLo(1), m_geom.ProbLo(2),
+        1.0 / dx[0], 1.0 / dx[1], 1.0 / dx[2], mask_data_ptr};
     auto gshop = amrex::EB2::makeShop(if_obj);
     amrex::EB2::Build(gshop, m_geom, 0, m_max_coarsening_level);
 

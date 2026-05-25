@@ -26,10 +26,6 @@ expected_tau = 1.0
 tau_tolerance = 0.01
 min_active_vf = 0.01
 
-# EB cut cells at channel boundary produce ~0.3% plane flux variance
-# (different effective stencil at irregular faces). Loosen from the
-# default 1e-6 used for HYPRE/uniform tests.
-plane_flux_tol = 0.01
 
 resultsdir = ./tTortuosityMLMG_channel_results
 
