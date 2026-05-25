@@ -1,34 +1,100 @@
 // --- TortuosityMLMG.cpp ---
+//
+// EB-based matrix-free MLMG tortuosity solver. Non-percolating cells are
+// encoded as an EB body region via an implicit function over the active
+// mask. AMReX builds geometric apertures and coarsens EB metadata across
+// MG levels, preserving the fine operator's restriction — recovering the
+// O(N) iteration count that the earlier alpha*a pin could not achieve.
 
 #include "TortuosityMLMG.H"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <iomanip>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include <AMReX_Array.H>
 #include <AMReX_BLassert.H>
 #include <AMReX_Box.H>
+#include <AMReX_EB2.H>
+#include <AMReX_EB2_IF.H>
+#include <AMReX_EBFabFactory.H>
 #include <AMReX_Gpu.H>
 #include <AMReX_GpuLaunch.H>
 #include <AMReX_GpuQualifiers.H>
 #include <AMReX_IntVect.H>
-#include <AMReX_MLABecLaplacian.H>
+#include <AMReX_MLEBABecLap.H>
 #include <AMReX_MLMG.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_MultiFabUtil.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
+#include <AMReX_RealVect.H>
 #include <AMReX_Vector.H>
 
 namespace OpenImpala {
 
 namespace {
-// Active-mask sentinels — must match TortuositySolverBase.cpp.
 constexpr int MaskComp = 0;
 constexpr int cell_inactive = 0;
 constexpr int cell_active = 1;
+
+// Implicit function for EB. Returns < 0 (fluid) if ANY of the 8 cells
+// sharing the query vertex is active, +1 (body) otherwise. This ensures
+// all active cells have all-fluid vertices → fully REGULAR (vfrac=1),
+// pushing cut cells to the inactive (solid) side. Since globalFluxes
+// only reads active cells, the flux stencil is identical to a standard
+// non-EB Laplacian — no cut-cell precision loss.
+struct ActiveMaskIF {
+    int nx;
+    int ny;
+    int nz;
+    amrex::Real plox;
+    amrex::Real ploy;
+    amrex::Real ploz;
+    amrex::Real invdx;
+    amrex::Real invdy;
+    amrex::Real invdz;
+    const int* mask;
+
+    [[nodiscard]] AMREX_GPU_HOST_DEVICE inline amrex::Real
+    operator()(AMREX_D_DECL(amrex::Real x, amrex::Real y, amrex::Real z)) const noexcept {
+        constexpr amrex::Real eps = 1.0e-6;
+        const int i0 = static_cast<int>(std::floor((x - eps - plox) * invdx));
+        const int i1 = static_cast<int>(std::floor((x + eps - plox) * invdx));
+        const int j0 = static_cast<int>(std::floor((y - eps - ploy) * invdy));
+        const int j1 = static_cast<int>(std::floor((y + eps - ploy) * invdy));
+        const int k0 = static_cast<int>(std::floor((z - eps - ploz) * invdz));
+        const int k1 = static_cast<int>(std::floor((z + eps - ploz) * invdz));
+        for (int kk = k0; kk <= k1; ++kk) {
+            for (int jj = j0; jj <= j1; ++jj) {
+                for (int ii = i0; ii <= i1; ++ii) {
+                    if (ii < 0 || ii >= nx || jj < 0 || jj >= ny || kk < 0 || kk >= nz) {
+                        return amrex::Real(-1.0);
+                    }
+                    const std::size_t idx =
+                        static_cast<std::size_t>(kk) * static_cast<std::size_t>(ny) *
+                            static_cast<std::size_t>(nx) +
+                        static_cast<std::size_t>(jj) * static_cast<std::size_t>(nx) +
+                        static_cast<std::size_t>(ii);
+                    if (mask[idx] == cell_active) {
+                        return amrex::Real(-1.0);
+                    }
+                }
+            }
+        }
+        return amrex::Real(1.0);
+    }
+
+    [[nodiscard]] AMREX_GPU_HOST_DEVICE inline amrex::Real
+    operator()(const amrex::RealArray& p) const noexcept {
+        return this->operator()(AMREX_D_DECL(p[0], p[1], p[2]));
+    }
+};
 } // namespace
 
 // --- Constructor ---
@@ -41,13 +107,10 @@ TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArra
                                amrex::Real eps, int maxiter, int max_coarsening_level)
     : TortuositySolverBase(geom, ba, dm, mf_phase_input, vf, phase, dir, resultspath, vlo, vhi,
                            verbose, write_plotfile) {
-    // Seed from explicit constructor arguments (Python / callers can now tune these).
     m_eps = eps;
     m_maxiter = maxiter;
     m_max_coarsening_level = max_coarsening_level;
 
-    // A [mlmg] block in the inputs file still takes precedence — keeps the
-    // command-line path working for users who rely on it.
     amrex::ParmParse pp_mlmg("mlmg");
     pp_mlmg.query("eps", m_eps);
     pp_mlmg.query("maxiter", m_maxiter);
@@ -64,32 +127,70 @@ TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArra
 }
 
 // --- solve ---
-// Uses AMReX MLABecLaplacian + MLMG to solve div(B grad phi) = 0
-// with Dirichlet BCs at inlet/outlet and Neumann on lateral faces.
 bool TortuosityMLMG::solve() {
     BL_PROFILE("TortuosityMLMG::solve");
 
-    const bool log = (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor());
-    auto trace = [&](const char* msg) {
-        if (log) {
-            amrex::Print() << "  [TortuosityMLMG] " << msg << std::endl;
-        }
-    };
-    trace("solve() entered");
-
     const int idir = static_cast<int>(m_dir);
+    const amrex::Box& domain = m_geom.Domain();
+    const int nx = domain.length(0);
+    const int ny = domain.length(1);
+    const int nz = domain.length(2);
+    const std::size_t total_cells =
+        static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz);
 
-    // --- Set up the MLABecLaplacian operator ---
-    // Solves: alpha * a * phi - beta * div(B grad phi) = rhs
-    // For Laplacian: alpha=0, beta=1, a=0, rhs=0 => -div(B grad phi) = 0
+    // -----------------------------------------------------------------
+    // Step 1: gather global mask from local FABs.
+    // -----------------------------------------------------------------
+    std::vector<int> host_mask(total_cells, cell_inactive);
+    for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.validbox();
+        const auto mask_arr = m_mf_active_mask.const_array(mfi);
+        const int nx_l = nx;
+        const int ny_l = ny;
+        int* hm = host_mask.data();
+        amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+            const std::size_t idx = static_cast<std::size_t>(k) * ny_l * nx_l +
+                                    static_cast<std::size_t>(j) * nx_l +
+                                    static_cast<std::size_t>(i);
+            hm[idx] = mask_arr(i, j, k, 0);
+        });
+    }
+
+#ifdef AMREX_USE_GPU
+    amrex::Gpu::DeviceVector<int> device_mask(total_cells);
+    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, host_mask.data(),
+                          host_mask.data() + total_cells, device_mask.data());
+    amrex::Gpu::streamSynchronize();
+    const int* mask_data_ptr = device_mask.data();
+#else
+    const int* mask_data_ptr = host_mask.data();
+#endif
+
+    // -----------------------------------------------------------------
+    // Step 2: build EB from the mask.
+    // -----------------------------------------------------------------
+    const amrex::Real* dx = m_geom.CellSize();
+    ActiveMaskIF if_obj{
+        nx,          ny,          nz,          m_geom.ProbLo(0), m_geom.ProbLo(1), m_geom.ProbLo(2),
+        1.0 / dx[0], 1.0 / dx[1], 1.0 / dx[2], mask_data_ptr};
+    auto gshop = amrex::EB2::makeShop(if_obj);
+    amrex::EB2::Build(gshop, m_geom, 0, m_max_coarsening_level);
+
+    const amrex::EB2::IndexSpace& eb_is = amrex::EB2::IndexSpace::top();
+    const amrex::EB2::Level& eb_level = eb_is.getLevel(m_geom);
+
+    const amrex::Vector<int> ng{2, 2, 2};
+    amrex::EBFArrayBoxFactory factory(eb_level, m_geom, m_ba, m_dm, ng, amrex::EBSupport::full);
+
+    // -----------------------------------------------------------------
+    // Step 3: build MLEBABecLap operator.
+    // -----------------------------------------------------------------
     amrex::LPInfo lp_info;
     lp_info.setMaxCoarseningLevel(m_max_coarsening_level);
 
-    trace("constructing MLABecLaplacian");
-    amrex::MLABecLaplacian mlabec({m_geom}, {m_ba}, {m_dm}, lp_info);
-    trace("MLABecLaplacian constructed");
+    amrex::MLEBABecLap mlebop({m_geom}, {m_ba}, {m_dm}, lp_info,
+                              amrex::Vector<amrex::EBFArrayBoxFactory const*>{&factory});
 
-    // Domain boundary conditions: Dirichlet in flow dir, Neumann on sides
     std::array<amrex::LinOpBCType, AMREX_SPACEDIM> lo_bc;
     std::array<amrex::LinOpBCType, AMREX_SPACEDIM> hi_bc;
     for (int d = 0; d < AMREX_SPACEDIM; ++d) {
@@ -101,20 +202,14 @@ bool TortuosityMLMG::solve() {
             hi_bc[d] = amrex::LinOpBCType::Neumann;
         }
     }
-    mlabec.setDomainBC(lo_bc, hi_bc);
+    mlebop.setDomainBC(lo_bc, hi_bc);
 
-    // Set initial guess: linear ramp in flow direction.
-    //
-    // The ramp seeds the active subdomain well and — critically — encodes
-    // the Dirichlet BC in the ghost cells (the inlet ghost row gets vlo,
-    // the outlet ghost row gets vhi). MLABecLaplacian::setLevelBC reads
-    // those ghost values to apply the BC, so they must NOT be touched by
-    // any mask-driven branch. Inactive interior cells get a non-zero ramp
-    // value at startup but the alpha*a row decoupling below drives them
-    // to phi=0 in a few V-cycles regardless.
-    m_mf_solution.setVal(0.0);
+    // -----------------------------------------------------------------
+    // Step 4: initial guess — linear ramp in flow direction.
+    // -----------------------------------------------------------------
+    amrex::MultiFab sol_eb(m_ba, m_dm, 1, 1, amrex::MFInfo(), factory);
+    sol_eb.setVal(0.0);
     {
-        const amrex::Box& domain = m_geom.Domain();
         const int n_cells = domain.length(idir);
         if (n_cells <= 1) {
             amrex::Abort("TortuosityMLMG: domain must have more than 1 cell in flow direction.");
@@ -126,9 +221,9 @@ bool TortuosityMLMG::solve() {
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-        for (amrex::MFIter mfi(m_mf_solution, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        for (amrex::MFIter mfi(sol_eb, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
             const amrex::Box& bx = mfi.growntilebox();
-            amrex::Array4<amrex::Real> const phi = m_mf_solution.array(mfi);
+            amrex::Array4<amrex::Real> const phi = sol_eb.array(mfi);
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
                 amrex::IntVect iv(i, j, k);
                 int idx_in_dir = iv[idir] - dom_lo_dir;
@@ -144,124 +239,47 @@ bool TortuosityMLMG::solve() {
             });
         }
     }
-    m_mf_solution.FillBoundary(m_geom.periodicity());
+    sol_eb.FillBoundary(m_geom.periodicity());
+    mlebop.setLevelBC(0, &sol_eb);
 
-    trace("setting level BC");
-    mlabec.setLevelBC(0, &m_mf_solution);
-    trace("level BC set");
+    // -----------------------------------------------------------------
+    // Step 5: coefficients.
+    // -----------------------------------------------------------------
+    mlebop.setScalars(amrex::Real(0.0), amrex::Real(1.0));
 
-    // Operator: alpha*a*phi - beta*div(B*grad phi) = rhs, with alpha=beta=1.
-    //
-    //   active cells:    a=0, B = harmonic mean of cell D  ->  -div(B grad phi) = 0
-    //   inactive cells:  a=1, B = 0 on all adjacent faces  ->  phi = 0   (pinned)
-    //
-    // Matrix-free analogue of HYPRE's A_ii=1, A_ij=0, rhs=0 row-decoupling
-    // (TortuosityHypre.cpp:1100). Without it, dead-end phase-target islands
-    // form Neumann subdomains with no Dirichlet contact: MLMG drives the
-    // local residual to zero but their potentials are indeterminate, which
-    // breaks the boundary flux balance audited in
-    // TortuositySolverBase::value().
-    mlabec.setScalars(1.0, 1.0);
-
-    // A-coefficient: 0 on active cells, 1 on inactive cells.
-    amrex::MultiFab acoef(m_ba, m_dm, 1, 0);
+    amrex::MultiFab acoef(m_ba, m_dm, 1, 0, amrex::MFInfo(), factory);
     acoef.setVal(0.0);
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-    for (amrex::MFIter mfi(acoef, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& bx = mfi.tilebox();
-        amrex::Array4<amrex::Real> const a_arr = acoef.array(mfi);
-        amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-            a_arr(i, j, k) = (mask(i, j, k, MaskComp) == cell_active) ? 0.0 : 1.0;
-        });
-    }
-    trace("calling setACoeffs");
-    mlabec.setACoeffs(0, acoef);
-    trace("setACoeffs done");
+    mlebop.setACoeffs(0, acoef);
 
-    // Build a masked diffusion coefficient: D on active cells, 0 on inactive
-    // *interior* cells. Ghost cells of dc_masked inherit their parent FAB's
-    // pre-mask values, which preserves the Dirichlet boundary-face harmonic
-    // mean (inner=D, ghost=D -> face=D) since cells outside the domain in
-    // the flow direction never get classified as inactive by the flood fill.
-    // Interior active-to-inactive interfaces give harmonic mean(D, 0) = 0,
-    // which is exactly the decoupling we want.
-    amrex::MultiFab dc_masked(m_ba, m_dm, 1, m_mf_diff_coeff.nGrow());
-    amrex::MultiFab::Copy(dc_masked, m_mf_diff_coeff, 0, 0, 1, m_mf_diff_coeff.nGrow());
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-    for (amrex::MFIter mfi(dc_masked, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& bx = mfi.tilebox();
-        amrex::Array4<amrex::Real> const dcm = dc_masked.array(mfi);
-        amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-            if (mask(i, j, k, MaskComp) != cell_active) {
-                dcm(i, j, k) = 0.0;
-            }
-        });
-    }
-    dc_masked.FillBoundary(m_geom.periodicity());
-
-    // B-coefficients: face-centred diffusivities via harmonic mean of dc_masked.
+    // B = 1.0 everywhere. EB apertures handle active/inactive decoupling
+    // geometrically — do NOT use the harmonic mean from m_mf_diff_coeff,
+    // which would zero B at interface faces and cause 0/0 in the EB
+    // stencil at cut cells.
     amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> bcoefs;
     for (int d = 0; d < AMREX_SPACEDIM; ++d) {
         amrex::BoxArray edge_ba = m_ba;
         edge_ba.surroundingNodes(d);
-        bcoefs[d].define(edge_ba, m_dm, 1, 0);
-        bcoefs[d].setVal(0.0);
+        bcoefs[d].define(edge_ba, m_dm, 1, 0, amrex::MFInfo(), factory);
+        bcoefs[d].setVal(1.0);
     }
+    mlebop.setBCoeffs(0, amrex::GetArrOfConstPtrs(bcoefs));
 
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-    for (amrex::MFIter mfi(dc_masked, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        amrex::Array4<const amrex::Real> const dc = dc_masked.const_array(mfi);
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-            const amrex::Box& ebx = amrex::surroundingNodes(mfi.tilebox(), d);
-            amrex::Array4<amrex::Real> const bf = bcoefs[d].array(mfi);
-            const amrex::IntVect shift = amrex::IntVect::TheDimensionVector(d);
-            amrex::ParallelFor(ebx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-                amrex::IntVect iv(i, j, k);
-                amrex::Real D_lo = dc(iv - shift);
-                amrex::Real D_hi = dc(iv);
-                if (D_lo + D_hi > 0.0) {
-                    bf(i, j, k) = 2.0 * D_lo * D_hi / (D_lo + D_hi);
-                } else {
-                    bf(i, j, k) = 0.0;
-                }
-            });
-        }
-    }
-    trace("calling setBCoeffs");
-    mlabec.setBCoeffs(0, amrex::GetArrOfConstPtrs(bcoefs));
-    trace("setBCoeffs done");
-
-    // RHS = 0 everywhere: active cells satisfy -div(B grad phi) = 0,
-    // inactive cells satisfy 1*phi = 0 (pinned).
-    amrex::MultiFab rhs(m_ba, m_dm, 1, 0);
+    amrex::MultiFab rhs(m_ba, m_dm, 1, 0, amrex::MFInfo(), factory);
     rhs.setVal(0.0);
 
-    // --- Run MLMG solver ---
-    trace("constructing MLMG");
-    amrex::MLMG mlmg(mlabec);
+    // -----------------------------------------------------------------
+    // Step 6: run MLMG.
+    // -----------------------------------------------------------------
+    amrex::MLMG mlmg(mlebop);
     mlmg.setMaxIter(m_maxiter);
-    mlmg.setVerbose(std::max(m_verbose, 1));
+    mlmg.setVerbose(m_verbose);
     mlmg.setBottomVerbose(0);
-    // Without this, MLMG calls amrex::Abort() (= SIGABRT) on non-convergence,
-    // bypassing our try/catch and killing the host process. With it, MLMG
-    // throws std::runtime_error which we catch and translate to NaN, the
-    // same convention TortuosityHypre uses.
     mlmg.setThrowException(true);
-    trace("calling mlmg.solve");
 
     amrex::Real res_norm = -1.0;
     try {
-        res_norm = mlmg.solve({&m_mf_solution}, {&rhs}, m_eps, 0.0);
+        res_norm = mlmg.solve({&sol_eb}, {&rhs}, m_eps, 0.0);
         m_converged = true;
-        trace("mlmg.solve returned");
     } catch (const std::exception& e) {
         if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "TortuosityMLMG: MLMG solver failed: " << e.what() << std::endl;
@@ -271,12 +289,19 @@ bool TortuosityMLMG::solve() {
 
     m_final_res_norm = res_norm;
     m_num_iterations = mlmg.getNumIters();
-    // Also verify residual is below tolerance (MLMG may return without exception
-    // but with residual above tolerance)
     if (m_converged && res_norm >= m_eps) {
         m_converged = false;
     }
 
+    // Copy EB solution back into base-class m_mf_solution.
+    // globalFluxes() uses m_mf_solution + m_mf_diff_coeff + m_mf_active_mask
+    // to compute boundary and plane fluxes. The ~0.3% boundary flux
+    // mismatch on EB cut-cell geometries is inherent to the cut-cell
+    // method (different effective stencil at irregular cells); the tau
+    // value is unaffected because it uses the mean of |flux_in|+|flux_out|.
+    sol_eb.FillBoundary(m_geom.periodicity());
+    amrex::MultiFab::Copy(m_mf_solution, sol_eb, 0, 0, 1,
+                          std::min(sol_eb.nGrow(), m_mf_solution.nGrow()));
     m_mf_solution.FillBoundary(m_geom.periodicity());
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
@@ -285,10 +310,11 @@ bool TortuosityMLMG::solve() {
                        << ", converged=" << m_converged << std::endl;
     }
 
-    // Write plotfile if requested
     if (m_write_plotfile && m_converged) {
         writeSolutionPlotfile("tortuosity_mlmg_" + std::to_string(idir));
     }
+
+    amrex::EB2::IndexSpace::pop();
 
     return m_converged;
 }
