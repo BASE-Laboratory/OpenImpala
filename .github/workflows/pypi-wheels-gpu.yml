@@ -136,9 +136,9 @@ jobs:
             -DAMReX_PARTICLES=OFF
             -DAMReX_TINY_PROFILE=ON
             -DAMReX_GPU_BACKEND=CUDA
-            '-DAMReX_CUDA_ARCH=75;80'
+            '-DAMReX_CUDA_ARCH=80'
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-            '-DCMAKE_CUDA_ARCHITECTURES=75-real;80-real;90-virtual'
+            '-DCMAKE_CUDA_ARCHITECTURES=80-real;90-virtual'
             -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++
             '-DCMAKE_CUDA_FLAGS=-Xfatbin --compress-all' &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
@@ -175,7 +175,7 @@ jobs:
             CMAKE_CXX_COMPILER="mpicxx"
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
-            CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=75-real;80-real;90-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+            CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=80-real;90-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
             CUDAFLAGS="-Xfatbin --compress-all"
             SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
 
