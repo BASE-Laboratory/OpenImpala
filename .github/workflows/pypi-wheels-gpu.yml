@@ -139,7 +139,8 @@ jobs:
             '-DAMReX_CUDA_ARCH=75;80'
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
             '-DCMAKE_CUDA_ARCHITECTURES=75-real;80-real;90-virtual'
-            -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++ &&
+            -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++
+            '-DCMAKE_CUDA_FLAGS=-Xfatbin --compress-all' &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
             strip --strip-debug /usr/local/lib/libamrex_3d.a /usr/local/lib/libHYPRE.a /usr/local/lib/libhdf5*.a /usr/local/lib/libtiff.a 2>/dev/null || true &&
@@ -175,6 +176,7 @@ jobs:
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
             CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=75-real;80-real;90-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+            CUDAFLAGS="-Xfatbin --compress-all"
             SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
 
           # Vendor libraries but exclude host-specific MPI, OpenMP, Fortran runtime,
