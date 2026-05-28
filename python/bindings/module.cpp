@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
@@ -49,9 +50,20 @@ void init_config(py::module_& m);
 // =========================================================================
 static void init_amrex() {
     if (!amrex::Initialized()) {
-        // Initialise with an empty argument list (no ParmParse input)
-        int argc = 0;
-        char** argv = nullptr;
+        // Initialise with ParmParse defaults that play nicely with EB on
+        // smaller GPUs (T4 on Colab has ~15 GB and AMReX's default arena
+        // tries to grab most of it upfront; with EB metadata the
+        // preallocation can OOM). Use lazy allocation instead.
+        std::vector<std::string> argv_storage = {
+            "openimpala",
+            "amrex.the_arena_init_size=0",
+        };
+        std::vector<char*> argv_ptrs;
+        for (auto& s : argv_storage) {
+            argv_ptrs.push_back(s.data());
+        }
+        int argc = static_cast<int>(argv_ptrs.size());
+        char** argv = argv_ptrs.data();
         amrex::Initialize(argc, argv);
     }
 }
