@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-quotefix-v10
+          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-eb-v11
 
       - name: Build GPU wheels
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -136,7 +136,7 @@ jobs:
             -DAMReX_PARTICLES=OFF
             -DAMReX_TINY_PROFILE=ON
             -DAMReX_GPU_BACKEND=CUDA
-            '-DAMReX_CUDA_ARCH=80'
+            '-DAMReX_CUDA_ARCH=75;80'
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
             '-DCMAKE_CUDA_ARCHITECTURES=80-real;75-virtual'
             -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++
