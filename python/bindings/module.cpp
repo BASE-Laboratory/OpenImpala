@@ -59,10 +59,15 @@ static void init_amrex() {
             "amrex.the_arena_init_size=0",
         };
         std::vector<char*> argv_ptrs;
+        argv_ptrs.reserve(argv_storage.size() + 1);
         for (auto& s : argv_storage) {
             argv_ptrs.push_back(s.data());
         }
-        int argc = static_cast<int>(argv_ptrs.size());
+        // POSIX/MPI convention: argv must be NULL-terminated. Without
+        // this, opal_argv_join (called by MPI_Init) reads past the end
+        // and segfaults intermittently depending on heap layout.
+        argv_ptrs.push_back(nullptr);
+        int argc = static_cast<int>(argv_storage.size());
         char** argv = argv_ptrs.data();
         amrex::Initialize(argc, argv);
     }
