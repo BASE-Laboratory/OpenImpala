@@ -23,15 +23,19 @@ for linear solves.
     └────────────────┘  └────────────────┘  └──────────────────┘
 
     TiffReader.H/cpp     TortuosityHypre      ResultsJSON.H
-    HDF5Reader.H/cpp     EffDiffusivityHypre   → BPX, BattINFO
-    RawReader.H/cpp      VolumeFraction        → JSON + text output
-    DatReader.H/cpp      PercolationCheck
-                         TortuosityDirect
+    HDF5Reader.H/cpp     TortuosityMLMG        → BPX, BattINFO
+    RawReader.H/cpp      EffDiffusivityHypre   → JSON + text output
+    DatReader.H/cpp      VolumeFraction
+                         PercolationCheck
                                │
                     ┌──────────▼──────────┐
-                    │  Fortran Kernels    │  ← Computational hot path
-                    │  (*_F.H ↔ *.F90)   │     Matrix fill, flux calc
+                    │  C++ Kernels        │  ← Computational hot path
+                    │  (TortuosityKernels │     Matrix fill, flux calc
+                    │   .H, AMReX GPU)    │     (AMReX ParallelFor/Array4)
                     └─────────────────────┘
+
+A Python layer (`python/`) wraps the C++ libraries via pybind11 and adds a
+NumPy-native high-level API plus a pure-Python SciPy/CuPy fallback.
 ```
 
 ### Module Relationships
@@ -41,17 +45,28 @@ MultiFab). All readers produce the same output type — a phase-labeled voxel
 grid. The readers are independent of the physics layer.
 
 **Physics solvers** (`src/props/`) operate on `iMultiFab` phase data:
-- `TortuosityHypre` — Solves ∇·(D∇φ) = 0 with Dirichlet BCs to get τ
+- `TortuosityHypre` — Solves ∇·(D∇φ) = 0 with Dirichlet BCs to get τ, using
+  HYPRE structured-grid Krylov solvers + SMG/PFMG multigrid preconditioners
+- `TortuosityMLMG` — Same PDE via AMReX's matrix-free MLMG geometric multigrid
+  (embedded boundary for inactive cells); ~3× less memory, fastest on GPU
 - `EffectiveDiffusivityHypre` — Solves cell problem ∇·(D∇χ) = -∇·(Dê) for
   the effective diffusivity tensor via homogenization
 - `PercolationCheck` — Flood-fill connectivity check (no solver needed)
 - `VolumeFraction` — Phase counting with MPI reduction
 - `TortuosityDirect` — Legacy iterative solver (Forward Euler, not HYPRE)
 
-**Fortran interop** — The HYPRE matrix fill and flux calculations are in
-Fortran 90 for performance. C interface headers (`*_F.H`) bridge C++ ↔ Fortran
-with explicit documentation of index convention differences (C: 0-based,
-Fortran: 1-based).
+`TortuosityHypre`, `TortuosityMLMG`, and `TortuosityDirect` share
+`TortuositySolverBase`, which factors out the solver-independent work:
+building the diffusion-coefficient field, removing isolated cells, the
+flood-fill activity mask, and post-solve boundary-flux integration →
+conservation check → τ. Each backend just implements `solve()`.
+
+**Native C++ kernels** — The HYPRE/MLMG matrix fill and flux calculations were
+historically Fortran 90 but have been **migrated to native C++**
+(`TortuosityKernels.H`, using AMReX `ParallelFor`/`Array4`) so the hot path
+runs on CPU and GPU (CUDA/HIP) from a single source. There are no `.F90` /
+`*_F.H` files in the tree; CMake still lists Fortran as a language for AMReX
+compatibility only.
 
 **Configuration** is via AMReX `ParmParse` (text `inputs` files). Key types:
 - `PhysicsConfig.H` — Maps solver output to physical quantities (diffusion,
@@ -60,14 +75,20 @@ Fortran: 1-based).
 
 ### Key Data Flow
 
+`Diffusion.cpp` selects one of four modes via the `calculation_method` /
+`dry_run` / `rev.do_study` inputs: `dry_run` (percolation + volume fraction
+only), REV study, `homogenization` (D_eff tensor), or `flow_through`
+(tortuosity).
+
 ```
-TIFF/HDF5/RAW file
+TIFF/HDF5/RAW/DAT file
   → Reader.threshold() → iMultiFab (phase IDs: 0, 1, ...)
     → PercolationCheck (is phase connected inlet→outlet?)
     → VolumeFraction (what fraction is this phase?)
-    → TortuosityHypre or EffDiffusivityHypre
-      → Fortran kernel fills HYPRE matrix (harmonic mean face coefficients)
-      → HYPRE solve (FlexGMRES, PCG, etc.)
+    → TortuosityHypre / TortuosityMLMG  (flow_through)
+      or EffectiveDiffusivityHypre + DeffTensor  (homogenization)
+      → C++ kernel fills system (harmonic mean face coefficients)
+      → solve (HYPRE FlexGMRES/PCG/… or AMReX MLMG V-cycle)
       → Flux integration → D_eff, tortuosity
         → ResultsJSON → results.json + results.txt
 ```
@@ -79,8 +100,9 @@ Inter-cell face diffusivities use the harmonic mean of adjacent cell values:
 ```
 D_face = 2 * D_left * D_right / (D_left + D_right)
 ```
-This is physically correct for series resistance and appears in both
-`TortuosityHypreFill.F90` and `EffDiffFillMtx.F90`.
+This is physically correct for series resistance and appears in the C++
+matrix-fill paths of `TortuosityHypre`, `TortuosityMLMG`, and
+`EffectiveDiffusivityHypre`.
 
 ### Tortuosity Definition
 ```
@@ -138,22 +160,43 @@ make -j$(nproc) && ctest --output-on-failure
 | File | Purpose |
 |------|---------|
 | `Diffusion.cpp` | **Main application entry point** — orchestrates full pipeline |
-| `Tortuosity.H` | Base class + enums (Direction, CellType, SolverType) |
-| `TortuosityHypre.H/cpp` | HYPRE-based tortuosity solver (primary solver) |
+| `Tortuosity.H` | Base interface + enums (Direction, CellType, SolverType) |
+| `TortuositySolverBase.H/cpp` | Shared solver setup + flux/τ post-processing (base class) |
+| `TortuosityHypre.H/cpp` | HYPRE structured-grid tortuosity solver |
+| `TortuosityMLMG.H/cpp` | Matrix-free AMReX MLMG tortuosity solver (EB, GPU-native) |
 | `TortuosityDirect.H/cpp` | Legacy iterative tortuosity solver (Forward Euler) |
-| `EffectiveDiffusivityHypre.H/cpp` | Effective diffusivity tensor via homogenization |
+| `TortuosityKernels.H` | C++ hot-path kernels (isolated-cell removal, face flux, flux integration) |
+| `HypreStructSolver.H/cpp` | HYPRE lifecycle/infrastructure shared by HYPRE solvers |
+| `EffectiveDiffusivityHypre.H/cpp` | Cell-problem solver for χ fields (homogenization) |
+| `DeffTensor.H/cpp` | Assembles 3×3 D_eff tensor from χ gradients |
 | `VolumeFraction.H/cpp` | Phase volume fraction calculator |
 | `PercolationCheck.H/cpp` | Flood-fill percolation connectivity check |
+| `FloodFill.H/cpp` | GPU-parallel flood-fill (used by percolation/components/mask) |
+| `ConnectedComponents.H/cpp` | Labels contiguous regions of a phase |
+| `SpecificSurfaceArea.H/cpp` | Interface area via Cauchy–Crofton stereology |
+| `ParticleSizeDistribution.H/cpp` | Equivalent-sphere radii from components |
+| `ThroughThicknessProfile.H/cpp` | Per-slice volume fraction along a direction |
+| `REVStudy.H/cpp` | Representative Elementary Volume convergence study |
 | `PhysicsConfig.H` | Physics type mapping (diffusion ↔ conductivity ↔ thermal) |
+| `SolverConfig.H` | String↔enum parsing (solver type, direction) |
+| `BoundaryCondition.H` | BC enums/abstraction (Dirichlet/Neumann/Periodic) |
+| `MacroGeometry.H` | Electrode thickness / cross-section / volume helpers |
 | `ResultsJSON.H` | Structured JSON output (BPX/BattINFO compatible) |
 
-### Source — Fortran Kernels (`src/props/`)
+> **Note:** The HYPRE/MLMG matrix-fill and flux kernels were historically
+> Fortran 90 (`*_F.H` ↔ `*.F90`) but have been migrated to native C++ in
+> `TortuosityKernels.H` (AMReX `ParallelFor`/`Array4`, CPU+GPU). No Fortran
+> source files remain in the repository.
+
+### Source — Python layer (`python/`)
 | File | Purpose |
 |------|---------|
-| `TortuosityHypreFill_F.H` / `.F90` | HYPRE matrix fill for tortuosity (7-pt stencil) |
-| `EffDiffFillMtx_F.H` / `.F90` | HYPRE matrix fill for effective diffusivity cell problem |
-| `Tortuosity_filcc_F.H` / `.F90` | Cell type ID, ghost cell fill, initial conditions |
-| `Tortuosity_poisson_3d_F.H` / `.F90` | Flux calculation and Forward Euler update (legacy solver) |
+| `openimpala/facade.py` | High-level NumPy-native API (tortuosity, volume_fraction, …) |
+| `openimpala/session.py` | `Session` context manager — AMReX init/finalize (re-entrant) |
+| `openimpala/_solver.py` | Pure-Python SciPy/CuPy fallback backend (no compiled `_core`) |
+| `openimpala/cli.py` | `openimpala` CLI entry point |
+| `bindings/*.cpp` | pybind11 `_core` module (module/io/props/solvers/config/enums) |
+| `bindings/VoxelImage.H` | NumPy → AMReX `iMultiFab` bridge struct |
 
 ### Tests (`tests/`)
 | File | Purpose |
@@ -162,12 +205,15 @@ make -j$(nproc) && ctest --output-on-failure
 | `tEffectiveDiffusivity.cpp` | D_eff tensor on real TIFF data |
 | `tVolumeFraction.cpp` | Volume fraction validation |
 | `tPercolationCheck.cpp` | Flood-fill connectivity check |
+| `tTortuosityMLMG.cpp` | Matrix-free MLMG solver (directional/geometry variants) |
 | `tMultiPhaseTransport.cpp` | Synthetic geometry tests (analytical validation) |
-| `tTiffReader.cpp` | TIFF I/O correctness |
-| `tHDF5Reader.cpp` | HDF5 I/O correctness |
-| `tRawReader.cpp` | RAW binary I/O correctness |
-| `tests/unit/` | Catch2 unit tests (PhysicsConfig, ResultsJSON) |
+| `tSynthetic*.cpp` | Synthetic VF / percolation / D_eff / microstructure / REV tests |
+| `tTiffReader.cpp` / `tHDF5Reader.cpp` / `tRawReader.cpp` / `tDatReader.cpp` | I/O correctness |
+| `tests/inputs/tDiffusion_*.inputs` | End-to-end `Diffusion` integration tests (dry-run, tiff, hdf5, REV, …) |
+| `tests/unit/` | Catch2 unit tests (PhysicsConfig, ResultsJSON, MacroGeometry) |
+| `tests/validation/` | V&V scripts (Hashin–Shtrikman bounds, sphere packing, Berea sandstone) |
 | `tests/benchmarks/` | Python scripts for generating benchmark datasets |
+| `python/tests/` | pytest suite for the Python API and bindings |
 
 ### Regression Benchmarks
 Three CTest benchmarks with exact analytical solutions on discrete grids:
@@ -182,10 +228,13 @@ Three CTest benchmarks with exact analytical solutions on discrete grids:
 - **LibTIFF** — TIFF image reading
 - **nlohmann/json** — JSON output (fetched via CMake FetchContent)
 - **Catch2 v3** — Test framework (fetched via CMake FetchContent)
+- **pybind11** — C++ ↔ Python bindings for the `_core` extension (Python wheels)
+- **NumPy / SciPy** (+ optional **CuPy**) — Python API and pure-Python fallback solver
 
 ## Code Style
 - C++17, 100-column limit, 4-space indent (LLVM-based via `.clang-format`)
 - All code in `namespace OpenImpala`
 - Headers use `#ifndef` include guards (not `#pragma once`)
 - Doxygen `@file` / `@brief` / `@param` comments on all public APIs
-- Fortran files are NOT processed by clang-format or clang-tidy
+- Hot-path kernels are native C++ (AMReX `ParallelFor`/`Array4`) for CPU+GPU;
+  there are no Fortran source files (the historical `.F90` kernels were ported)
