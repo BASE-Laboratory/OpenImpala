@@ -156,15 +156,17 @@ bool TortuosityMLMG::solve() {
         });
     }
 
-#ifdef AMREX_USE_GPU
-    amrex::Gpu::DeviceVector<int> device_mask(total_cells);
-    amrex::Gpu::copyAsync(amrex::Gpu::hostToDevice, host_mask.data(),
-                          host_mask.data() + total_cells, device_mask.data());
+    // EB2::Build evaluates the implicit function (ActiveMaskIF, above) on the
+    // HOST while generating the geometry, and that IF dereferences this mask.
+    // On a GPU build a plain DeviceVector pointer would therefore be read from
+    // CPU code and segfault before the solve even starts. Use managed (unified)
+    // memory: a single pointer that is valid on both host and device, so the IF
+    // works wherever AMReX chooses to evaluate it. (On CPU-only builds
+    // ManagedVector degrades to an ordinary host allocation.)
+    amrex::Gpu::ManagedVector<int> managed_mask(total_cells);
+    std::copy(host_mask.begin(), host_mask.end(), managed_mask.begin());
     amrex::Gpu::streamSynchronize();
-    const int* mask_data_ptr = device_mask.data();
-#else
-    const int* mask_data_ptr = host_mask.data();
-#endif
+    const int* mask_data_ptr = managed_mask.data();
 
     // -----------------------------------------------------------------
     // Step 2: build EB from the mask.
