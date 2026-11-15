@@ -225,7 +225,8 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
         -DpyAMReX_pybind11_internal=OFF -DpyAMReX_amrex_internal=OFF \
         -DAMReX_SPACEDIM=3 -DAMReX_MPI=ON -DAMReX_OMP=ON \
         -DCMAKE_BUILD_TYPE=Release
-    cmake --build build-ci --target pip_wheel --parallel "$(nproc)"
+    # setup.py uses this environment flag when recording the wheel dependencies.
+    AMREX_MPI=ON cmake --build build-ci --target pip_wheel --parallel "$(nproc)"
     "$PYTHON" -m pip install build-ci/amrex-whl/*.whl
 
     cd ..
@@ -353,7 +354,7 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     echo "Checking OpenMPI lib ($MPI_LIB)..."; ldd "$MPI_LIB"
     echo "--- Basic dependency container tests passed. ---"
     echo "Checking Python 3.11 and pyAMReX..."
-    python3.11 -c "import amrex; print('pyAMReX loaded successfully!')"
+    python3.11 -c "import amrex.space3d; print('3D pyAMReX loaded successfully!')"
 
 %runscript
     echo "Container with build environment (GCC 11) and runtime dependencies for OpenImpala."
