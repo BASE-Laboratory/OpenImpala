@@ -82,15 +82,11 @@ bool TortuosityMLMG::solve() {
     op.setDomainBC(lo_bc, hi_bc);
 
     // -----------------------------------------------------------------
-    // Step 4: initial guess — linear ramp in flow direction.
+    // Set the Dirichlet face values in the exterior ghost cells.
     // -----------------------------------------------------------------
     auto& solution = m_mf_solution;
     solution.setVal(0.0);
     {
-        const int n_cells = domain.length(idir);
-        if (n_cells <= 1) {
-            amrex::Abort("TortuosityMLMG: domain must have more than 1 cell in flow direction.");
-        }
         const int dom_lo_dir = domain.smallEnd(idir);
         const int dom_hi_dir = domain.bigEnd(idir);
         const amrex::Real vlo = m_vlo;
@@ -103,14 +99,10 @@ bool TortuosityMLMG::solve() {
             amrex::Array4<amrex::Real> const phi = solution.array(mfi);
             amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
                 amrex::IntVect iv(i, j, k);
-                int idx_in_dir = iv[idir] - dom_lo_dir;
-                amrex::Real frac = (idx_in_dir + 0.5) / n_cells;
-                if (iv[idir] >= dom_lo_dir && iv[idir] <= dom_hi_dir) {
-                    phi(i, j, k) = vlo + frac * (vhi - vlo);
-                } else if (iv[idir] < dom_lo_dir) {
-                    phi(i, j, k) = vlo;
-                } else {
-                    phi(i, j, k) = vhi;
+                if (iv[idir] < dom_lo_dir) {
+                    phi(iv) = vlo;
+                } else if (iv[idir] > dom_hi_dir) {
+                    phi(iv) = vhi;
                 }
             });
         }
@@ -123,7 +115,11 @@ bool TortuosityMLMG::solve() {
     // -----------------------------------------------------------------
     // An inactive voxel is an isolated row. Pin its potential and give its
     // faces zero conductance so it cannot carry any current.
-    op.setScalars(1., 1.);
+    // The pin only fixes an isolated unknown. Scale it to the macroscopic
+    // diffusion operator so its coarse-grid average does not overwhelm the
+    // diffusion mode on long connected paths.
+    const amrex::Real length = m_geom.ProbLength(idir);
+    op.setScalars(1. / (length * length), 1.);
     amrex::MultiFab acoef(m_ba, m_dm, 1, 0);
     for (amrex::MFIter mfi(acoef); mfi.isValid(); ++mfi) {
         auto a = acoef.array(mfi);

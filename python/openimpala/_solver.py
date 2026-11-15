@@ -368,7 +368,7 @@ def solve_tortuosity(
     percolates, active_vf, active_mask = percolation_check(data, phase, direction)
     if not percolates:
         from .exceptions import PercolationError
-        dir_names = {0: "x", 1: "y", 2: "z"}
+        dir_names = {0: "z", 1: "y", 2: "x"}
         raise PercolationError(
             f"Phase {phase} does not percolate in the {dir_names[direction]} direction. "
             f"The solver cannot converge when the conducting phase is "

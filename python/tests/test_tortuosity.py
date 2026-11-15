@@ -3,6 +3,8 @@
 Includes the analytical uniform-block benchmark: tau = 1.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -82,6 +84,18 @@ class TestTortuosityFacade:
         assert result.solver_converged
         assert result.tortuosity == pytest.approx(1.0094612463163157, rel=1e-6)
         assert result.flux_in == pytest.approx(result.flux_out, rel=1e-6)
+
+    def test_porous_volume_against_taufactor(self):
+        from openimpala.facade import tortuosity
+
+        # Seed 42, 24^3 Gaussian noise smoothed at sigma=1.2, thresholded at
+        # the 45th percentile. Keep six-connected pores spanning axis 0.
+        with np.load(Path(__file__).parent / "data" / "porous24.npz") as fixture:
+            image = fixture["pore"].astype(np.int32)
+        result = tortuosity(image, phase=1, direction="z")
+        # TauFactor 1.2.1, CPU, same mask and axis, conv_crit=1e-5.
+        assert result.solver_converged
+        assert result.tortuosity == pytest.approx(2.10421252, rel=1e-6)
 
     def test_non_percolating_raises(self, disconnected_phase):
         from openimpala.facade import tortuosity
