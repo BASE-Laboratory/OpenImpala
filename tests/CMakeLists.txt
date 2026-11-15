@@ -336,7 +336,7 @@ set_tests_properties(tMultiPhaseTransport_periodic_sides PROPERTIES
 #   parallel — layers parallel to flow (Voigt/arithmetic bound)
 # ==============================================================================
 
-# Uniform dense block: single-phase, tau = 0.96875
+# Uniform dense block: single-phase, tau = 1
 add_test(
     NAME tRegressionBenchmark_uniform
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
@@ -351,7 +351,7 @@ set_tests_properties(tRegressionBenchmark_uniform PROPERTIES
     TIMEOUT 300
 )
 
-# Series resistance: D_eff = harmonic mean, tau = 1.453125
+# Series resistance: D_eff = harmonic mean, tau = 1.5
 add_test(
     NAME tRegressionBenchmark_series
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
@@ -366,7 +366,7 @@ set_tests_properties(tRegressionBenchmark_series PROPERTIES
     TIMEOUT 300
 )
 
-# Parallel resistance: D_eff = arithmetic mean, tau = 1.291667
+# Parallel resistance: D_eff = arithmetic mean, tau = 4/3
 add_test(
     NAME tRegressionBenchmark_parallel
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
@@ -388,7 +388,7 @@ set_tests_properties(tRegressionBenchmark_parallel PROPERTIES
 # analytical solutions used for FlexGMRES benchmarks.
 # ==============================================================================
 
-# PCG on uniform block: tau = (N-1)/N = 0.96875
+# PCG on uniform block: tau = 1
 add_test(
     NAME tRegressionBenchmark_uniform_PCG
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
@@ -403,7 +403,7 @@ set_tests_properties(tRegressionBenchmark_uniform_PCG PROPERTIES
     TIMEOUT 300
 )
 
-# PCG on series layers: tau = 1.453125
+# PCG on series layers: tau = 1.5
 add_test(
     NAME tRegressionBenchmark_series_PCG
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
@@ -529,7 +529,7 @@ openimpala_add_test(tFloodFill  "${CMAKE_CURRENT_SOURCE_DIR}/tFloodFill.cpp")
 # ==============================================================================
 openimpala_add_test(tTortuosityMLMG  "${CMAKE_CURRENT_SOURCE_DIR}/tTortuosityMLMG.cpp")
 
-# MLMG uniform block: tau = (N-1)/N = 0.96875
+# MLMG uniform block: tau = 1
 add_test(
     NAME tTortuosityMLMG_uniform
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
@@ -559,11 +559,7 @@ set_tests_properties(tTortuosityMLMG_dirY PROPERTIES
     TIMEOUT 300
 )
 
-# MLMG channel with isolated pore island: exercises EB masking of dead-end pores.
-# NOTE: computePlaneFluxes produces NaN on this geometry (the EB solve and
-# boundary fluxes are correct; the NaN is in the interior plane-flux
-# accumulation). TortuositySolverBase::value() falls back to boundary fluxes
-# when plane fluxes are invalid, so the tau calculation is correct.
+# The isolated pore island carries no current in the straight channel.
 add_test(
     NAME tTortuosityMLMG_channel
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1

@@ -5,7 +5,6 @@
 # Laplacian with harmonic-mean face coefficients is symmetric positive-definite.
 #
 # Geometry:  32^3 domain, all voxels = single conducting phase (D=1.0)
-# Analytical: tau = (N-1)/N = 31/32 = 0.96875
 
 domain_size = 32
 box_size = 16
@@ -14,8 +13,7 @@ num_phases_fill = 1
 direction = X
 solver = PCG
 
-# Expected: tau = (N-1)/N = 31/32 = 0.96875
-expected_tau = 0.96875
+expected_tau = 1.0
 tau_tolerance = 0.001
 
 resultsdir = ./tRegressionBenchmark_uniform_PCG_results

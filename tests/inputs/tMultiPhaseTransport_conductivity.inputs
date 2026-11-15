@@ -3,7 +3,6 @@
 # Same as tMultiPhaseTransport.inputs but with physics.type = electrical_conductivity
 # and a non-unit bulk property to validate scaling.
 #
-# Expected tortuosity remains (N-1)/N = 31/32 = 0.96875.
 # With bulk_property = 5.96e7 (copper conductivity in S/m),
 # the effective conductivity should be D_eff_ratio * 5.96e7.
 
@@ -14,7 +13,7 @@ num_phases_fill = 1
 direction = X
 solver = FlexGMRES
 
-expected_tau = 0.96875
+expected_tau = 1.0
 tau_tolerance = 0.001
 
 resultsdir = ./tMultiPhaseTransport_conductivity_results

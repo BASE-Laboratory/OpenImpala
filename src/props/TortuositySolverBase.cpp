@@ -232,7 +232,7 @@ void TortuositySolverBase::globalFluxes() {
     const amrex::Real* dx = m_geom.CellSize();
     const int idir = static_cast<int>(m_dir);
     const amrex::Real dx_dir = dx[idir];
-    amrex::IntVect shift = amrex::IntVect::TheDimensionVector(idir);
+    const amrex::Real vlo = m_vlo, vhi = m_vhi;
 
     m_mf_solution.FillBoundary(m_geom.periodicity());
     m_mf_active_mask.FillBoundary(m_geom.periodicity());
@@ -246,7 +246,6 @@ void TortuositySolverBase::globalFluxes() {
         amrex::Array4<const int> const mask = m_mf_active_mask.const_array(mfi);
         amrex::Array4<const amrex::Real> const soln = m_mf_solution.const_array(mfi);
         amrex::Array4<const amrex::Real> const dc = m_mf_diff_coeff.const_array(mfi);
-        const amrex::IntVect sh = shift;
         const amrex::Real dxd = dx_dir;
 
         amrex::Box domain_lo_face = domain;
@@ -254,24 +253,15 @@ void TortuositySolverBase::globalFluxes() {
         domain_lo_face.setBig(idir, domain.smallEnd(idir));
         amrex::Box lobox_face = domain_lo_face & validBox;
         if (!lobox_face.isEmpty()) {
-            flux_reduce_op.eval(
-                lobox_face, flux_reduce_data,
-                [=] AMREX_GPU_DEVICE(int i, int j,
-                                     int k) noexcept -> amrex::GpuTuple<amrex::Real, amrex::Real> {
-                    amrex::IntVect iv(i, j, k);
-                    if (mask(iv) == cell_active) {
-                        amrex::IntVect iv_inner = iv + sh;
-                        if (mask(iv_inner) == cell_active) {
-                            amrex::Real D_bnd = dc(iv);
-                            amrex::Real D_inn = dc(iv_inner);
-                            amrex::Real D_face =
-                                (D_bnd + D_inn > 0.0) ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn) : 0.0;
-                            amrex::Real grad = (soln(iv_inner) - soln(iv)) / dxd;
-                            return {-D_face * grad, 0.0};
-                        }
-                    }
-                    return {0.0, 0.0};
-                });
+            flux_reduce_op.eval(lobox_face, flux_reduce_data,
+                                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                                -> amrex::GpuTuple<amrex::Real, amrex::Real> {
+                                    amrex::IntVect iv(i, j, k);
+                                    if (mask(iv) == cell_active) {
+                                        return {-2.0 * dc(iv) * (soln(iv) - vlo) / dxd, 0.0};
+                                    }
+                                    return {0.0, 0.0};
+                                });
         }
 
         amrex::Box domain_hi_face = domain;
@@ -279,24 +269,15 @@ void TortuositySolverBase::globalFluxes() {
         domain_hi_face.setBig(idir, domain.bigEnd(idir));
         amrex::Box hibox_face = domain_hi_face & validBox;
         if (!hibox_face.isEmpty()) {
-            flux_reduce_op.eval(
-                hibox_face, flux_reduce_data,
-                [=] AMREX_GPU_DEVICE(int i, int j,
-                                     int k) noexcept -> amrex::GpuTuple<amrex::Real, amrex::Real> {
-                    amrex::IntVect iv(i, j, k);
-                    if (mask(iv) == cell_active) {
-                        amrex::IntVect iv_inner = iv - sh;
-                        if (mask(iv_inner) == cell_active) {
-                            amrex::Real D_bnd = dc(iv);
-                            amrex::Real D_inn = dc(iv_inner);
-                            amrex::Real D_face =
-                                (D_bnd + D_inn > 0.0) ? 2.0 * D_bnd * D_inn / (D_bnd + D_inn) : 0.0;
-                            amrex::Real grad = (soln(iv) - soln(iv_inner)) / dxd;
-                            return {0.0, -D_face * grad};
-                        }
-                    }
-                    return {0.0, 0.0};
-                });
+            flux_reduce_op.eval(hibox_face, flux_reduce_data,
+                                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                                -> amrex::GpuTuple<amrex::Real, amrex::Real> {
+                                    amrex::IntVect iv(i, j, k);
+                                    if (mask(iv) == cell_active) {
+                                        return {0.0, -2.0 * dc(iv) * (vhi - soln(iv)) / dxd};
+                                    }
+                                    return {0.0, 0.0};
+                                });
         }
     }
     auto flux_result = flux_reduce_data.value();

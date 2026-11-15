@@ -170,7 +170,6 @@ def _build_laplacian(
     i3d = np.unravel_index(indices, shape)  # (iz, iy, ix) arrays
 
     # For each cell: if inactive, diagonal=1, rhs=0
-    # If active but on Dirichlet boundary: diagonal=1, rhs=bc_value
     # If active interior: build 7-point stencil
 
     is_active = mask_flat == 1
@@ -181,8 +180,6 @@ def _build_laplacian(
     is_inlet[is_active] = i3d[direction][is_active] == 0
     is_outlet[is_active] = i3d[direction][is_active] == shape[direction] - 1
 
-    is_dirichlet = is_inlet | is_outlet
-    is_interior = is_active & ~is_dirichlet
 
     # --- Inactive cells: A_ii = 1, rhs = 0 ---
     inactive_idx = indices[~is_active]
@@ -190,23 +187,19 @@ def _build_laplacian(
     cols.append(inactive_idx)
     vals.append(np.ones(len(inactive_idx)))
 
-    # --- Dirichlet cells: A_ii = 1, rhs = bc_value ---
-    dirichlet_idx = indices[is_dirichlet]
-    rows.append(dirichlet_idx)
-    cols.append(dirichlet_idx)
-    vals.append(np.ones(len(dirichlet_idx)))
-    rhs[is_inlet] = vlo
-    rhs[is_outlet] = vhi
-
-    # --- Interior active cells: 7-point stencil ---
-    interior_idx = indices[is_interior]
-    if len(interior_idx) > 0:
-        diag = np.zeros(len(interior_idx), dtype=np.float64)
-        D_center = diff_flat[interior_idx]
+    # Exterior faces add a half-cell conductance to the normal voxel row.
+    active_idx = indices[is_active]
+    if len(active_idx) > 0:
+        D_center = diff_flat[active_idx]
+        diag = np.zeros_like(D_center, dtype=np.float64)
+        for boundary, value in ((is_inlet, vlo), (is_outlet, vhi)):
+            weight = 2 * diff_flat[boundary] * dxinv2[direction]
+            diag[boundary[active_idx]] += weight
+            rhs[boundary] += weight * value
 
         for axis, delta, stride in neighbors:
-            nbr_idx = interior_idx + stride
-            coord = i3d[axis][interior_idx] + delta
+            nbr_idx = active_idx + stride
+            coord = i3d[axis][active_idx] + delta
 
             # Check bounds
             in_bounds = (coord >= 0) & (coord < shape[axis])
@@ -217,13 +210,13 @@ def _build_laplacian(
             valid_nbr = nbr_idx[valid]
 
             # Check neighbor is active
-            nbr_active = np.zeros(len(interior_idx), dtype=bool)
+            nbr_active = np.zeros(len(active_idx), dtype=bool)
             nbr_active[valid] = mask_flat[valid_nbr] == 1
 
             # Compute harmonic mean face coefficient for valid+active neighbors
             coupled = nbr_active
-            coupled_idx = interior_idx[coupled]
-            coupled_nbr = interior_idx[coupled] + stride
+            coupled_idx = active_idx[coupled]
+            coupled_nbr = active_idx[coupled] + stride
             D_c = D_center[coupled]
             D_n = diff_flat[coupled_nbr]
 
@@ -240,8 +233,8 @@ def _build_laplacian(
             # Accumulate diagonal (negative of off-diagonal sum)
             diag[coupled] -= coeff
 
-        rows.append(interior_idx)
-        cols.append(interior_idx)
+        rows.append(active_idx)
+        cols.append(active_idx)
         vals.append(diag)
 
     # Assemble sparse matrix
@@ -310,9 +303,9 @@ def _compute_flux(
         grad = (sol[right_sl][both_active] - sol[left_sl][both_active]) / dx[direction]
         plane_fluxes[p] = np.sum(-D_face * grad * cross_area)
 
-    # Flux in = first plane, flux out = last plane
-    flux_in = plane_fluxes[0]
-    flux_out = plane_fluxes[-1]
+    conductance = 2 * active_mask * diff_coeff * cross_area / dx[direction]
+    flux_in = -np.sum(np.take(conductance * sol, 0, axis=direction))
+    flux_out = -np.sum(np.take(conductance * (1.0 - sol), -1, axis=direction))
 
     # Average flux magnitude from all interior planes
     nonzero_planes = plane_fluxes[plane_fluxes != 0.0]

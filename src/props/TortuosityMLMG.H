@@ -1,25 +1,8 @@
 /** @file TortuosityMLMG.H
- *  @brief EB-aware matrix-free tortuosity solver using AMReX MLMG.
+ *  @brief Matrix-free voxel diffusion solver using AMReX MLMG.
  *
- *  Solves the same steady-state diffusion equation as TortuosityHypre
- *  (-div(D * grad(phi)) = 0 with Dirichlet BCs) but uses AMReX's built-in
- *  MLEBABecLap operator with embedded-boundary support and MLMG V-cycle
- *  solver instead of HYPRE.
- *
- *  Non-percolating (dead-end / isolated) phase cells are encoded as a
- *  "body" region via an implicit function over the active mask. AMReX builds
- *  geometric apertures/centroids from the IF and coarsens EB metadata across
- *  MG levels in a way that preserves the fine operator's restriction —
- *  recovering the O(N) iteration count that plain MLABecLaplacian with an
- *  alpha*a pin could not achieve (see issue #289).
- *
- *  Advantages over HYPRE for small/medium grids:
- *    - No explicit matrix assembly (matrix-free operator application)
- *    - Lower memory footprint (~3x less than HYPRE StructMatrix)
- *    - Faster time-to-solution on shared-memory systems (no AMG setup)
- *
- *  For large distributed problems or high-contrast multi-phase media,
- *  TortuosityHypre with algebraic multigrid remains the better choice.
+ *  Conductance vanishes at the interface between active and inactive voxels.
+ *  Exterior Dirichlet faces are half a cell away from the nearest unknown.
  */
 #ifndef TortuosityMLMG_H
 #define TortuosityMLMG_H
@@ -87,27 +70,10 @@ public:
     TortuosityMLMG(const TortuosityMLMG&) = delete;
     TortuosityMLMG& operator=(const TortuosityMLMG&) = delete;
 
-    /** @brief Run the EB-MLMG solver, populating m_mf_solution.
-     *
-     *  Builds EB geometry from the active mask, sets up MLEBABecLap
-     *  with appropriate BCs and B-coefficients, runs MLMG V-cycle solve,
-     *  copies the EB solution back into m_mf_solution, and optionally
-     *  writes a plotfile. Public for CUDA __device__ lambda compatibility.
-     *
-     *  @return true if solver converged.
-     */
+    /** @brief Solve the masked voxel equations and populate m_mf_solution. */
     bool solve() override;
 
 private:
-    // MLMG solver parameters.
-    //
-    // eps = 1e-11: with EB-aware coarsening the MG hierarchy is
-    // geometrically consistent, restoring ~10x residual reduction per
-    // V-cycle. 1e-11 is comfortably reachable in <20 V-cycles on
-    // typical 32-128^3 porous media, keeping the integrated per-plane
-    // residual well under the 1e-4 boundary-flux conservation tolerance
-    // in TortuositySolverBase::value(). (The earlier 1e-7 + 400-iter
-    // relaxation was the alpha*a-pin workaround; no longer needed.)
     amrex::Real m_eps = 1.0e-11;
     int m_maxiter = 200;
     int m_max_coarsening_level = 30;

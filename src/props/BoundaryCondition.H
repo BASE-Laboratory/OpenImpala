@@ -125,17 +125,15 @@ public:
 
 /** @brief Applies Dirichlet BC at domain boundary faces perpendicular to the flow direction.
  *
- *  Active cells on the low/high domain face in the flow direction are pinned:
- *  A_ii = 1, A_ij = 0, rhs = vlo or vhi. Also sets a linear initial guess.
+ *  Boundary rows include the half-cell conductance to the prescribed exterior face.
  */
 class DirichletExternalBC : public BoundaryCondition {
 public:
-    void applyBC(amrex::Real* a, amrex::Real* rhs, amrex::Real* xinit, int nval,
+    void applyBC(amrex::Real* a, amrex::Real* rhs, amrex::Real* /*xinit*/, int nval,
                  const int* active_mask, const int* mask_lo, const int* mask_hi,
-                 const amrex::Real* /*diff_coeff*/, const int* /*dc_lo*/, const int* /*dc_hi*/,
-                 const int* bxlo, const int* bxhi, const int* domlo, const int* domhi,
-                 const amrex::Real* /*dxinv*/, amrex::Real vlo, amrex::Real vhi,
-                 int dir) const override {
+                 const amrex::Real* diff_coeff, const int* dc_lo, const int* dc_hi, const int* bxlo,
+                 const int* bxhi, const int* domlo, const int* domhi, const amrex::Real* dxinv,
+                 amrex::Real vlo, amrex::Real vhi, int dir) const override {
         using namespace bc_detail;
 
         const int mask_nx = mask_hi[0] - mask_lo[0] + 1;
@@ -156,43 +154,21 @@ public:
 
                     const int stn_start = NSTENCIL * m_idx;
 
-                    // Check if on Dirichlet boundary face
-                    bool on_dirichlet = false;
-                    amrex::Real bc_val = 0.0;
-                    if (dir == 0) {
-                        if (i == domlo[0]) {
-                            on_dirichlet = true;
-                            bc_val = vlo;
-                        } else if (i == domhi[0]) {
-                            on_dirichlet = true;
-                            bc_val = vhi;
-                        }
-                    } else if (dir == 1) {
-                        if (j == domlo[1]) {
-                            on_dirichlet = true;
-                            bc_val = vlo;
-                        } else if (j == domhi[1]) {
-                            on_dirichlet = true;
-                            bc_val = vhi;
-                        }
-                    } else if (dir == 2) {
-                        if (k == domlo[2]) {
-                            on_dirichlet = true;
-                            bc_val = vlo;
-                        } else if (k == domhi[2]) {
-                            on_dirichlet = true;
-                            bc_val = vhi;
+                    const int coords[] = {i, j, k};
+                    const int pos = coords[dir];
+                    if (pos == domlo[dir] || pos == domhi[dir]) {
+                        const int nx = dc_hi[0] - dc_lo[0] + 1;
+                        const int ny = dc_hi[1] - dc_lo[1] + 1;
+                        const int idx = i - dc_lo[0] + nx * (j - dc_lo[1] + ny * (k - dc_lo[2]));
+                        const amrex::Real weight = 2.0 * diff_coeff[idx] * dxinv[dir];
+                        // The exterior face is half a cell from the unknown.
+                        for (int side = 0; side < 2; ++side) {
+                            if (pos == (side == 0 ? domlo[dir] : domhi[dir])) {
+                                a[stn_start + STN_C] += weight;
+                                rhs[m_idx] += weight * (side == 0 ? vlo : vhi);
+                            }
                         }
                     }
-
-                    if (on_dirichlet) {
-                        for (int s = 0; s < NSTENCIL; ++s)
-                            a[stn_start + s] = 0.0;
-                        a[stn_start + STN_C] = 1.0;
-                        rhs[m_idx] = bc_val;
-                        xinit[m_idx] = bc_val;
-                    }
-
                     ++m_idx;
                 }
             }

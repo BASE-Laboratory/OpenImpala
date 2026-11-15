@@ -9,19 +9,19 @@ Geometries generated (all 32x32x32 UINT8 RAW files):
 
   1. uniform_block.raw
      All voxels = 1 (single conducting phase).
-     Analytical: tau = (N-1)/N = 0.96875 for N=32.
+     Analytical: tau = 1.
 
   2. layers_series_x.raw
      Alternating single-voxel layers along X (flow direction).
      Phase 0 (voxel=0, D=1.0) and Phase 1 (voxel=1, D=0.5).
      Analytical: D_eff = harmonic mean = 2*D0*D1/(D0+D1) = 2/3
-                 tau = (N-1)*(D0+D1) / (2*N*D0*D1) = 1.453125
+                 tau = 1/D_eff = 1.5
 
   3. layers_parallel_y.raw
      Alternating single-voxel layers along Y (perpendicular to flow).
      Phase 0 (voxel=0, D=1.0) and Phase 1 (voxel=1, D=0.5).
      Analytical: D_eff = arithmetic mean = (D0+D1)/2 = 0.75
-                 tau = 2*(N-1) / (N*(D0+D1)) = 1.291667
+                 tau = 1/D_eff = 4/3
 
 Usage:
     python3 generate_benchmarks.py [--size 32] [--outdir ./benchmark_data]
@@ -120,21 +120,21 @@ def main():
             "generator": generate_uniform_block,
             "description": "Uniform Dense Block (single phase, D=1.0)",
             "D0": 1.0, "D1": 1.0,
-            "tau": (N - 1) / N,
+            "tau": 1.0,
         },
         {
             "name": "layers_series_x",
             "generator": generate_layers_series_x,
             "description": f"Series Resistance (layers along X, D0={D0}, D1={D1})",
             "D0": D0, "D1": D1,
-            "tau": (N - 1) * (D0 + D1) / (2 * N * D0 * D1),
+            "tau": ((N + 1) // 2 / D0 + (N // 2) / D1) / N,
         },
         {
             "name": "layers_parallel_y",
             "generator": generate_layers_parallel_y,
             "description": f"Parallel Resistance (layers along Y, D0={D0}, D1={D1})",
             "D0": D0, "D1": D1,
-            "tau": 2 * (N - 1) / (N * (D0 + D1)),
+            "tau": N / (((N + 1) // 2) * D0 + (N // 2) * D1),
         },
     ]
 
@@ -161,7 +161,6 @@ def main():
     print("Analytical reference values:")
     print(f"  Harmonic mean D_h = 2*{D0}*{D1}/({D0}+{D1}) = {D_h:.6f}")
     print(f"  Arithmetic mean D_a = ({D0}+{D1})/2 = {D_a:.6f}")
-    print(f"  Discrete correction factor: N/(N-1) = {N/(N-1):.6f}")
     print()
     print("Hashin-Shtrikman bounds for reference (VF=0.5):")
     hs_lower = D1 + 0.5 / (1.0 / (D0 - D1) + 0.5 / (3.0 * D1))
