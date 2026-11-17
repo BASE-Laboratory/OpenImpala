@@ -1117,28 +1117,19 @@ bool OpenImpala::TortuosityHypre::checkMatrixProperties() {
                     }
                 }
             } else if (is_dirichlet) {
-                double expected_rhs = ((idir == 0 && i == domain.smallEnd(0)) ||
-                                       (idir == 1 && j == domain.smallEnd(1)) ||
-                                       (idir == 2 && k == domain.smallEnd(2)))
-                                          ? m_vlo
-                                          : m_vhi;
-                if (std::abs(diag_val - 1.0) > tol || std::abs(rhs_val - expected_rhs) > tol) {
-                    if (m_verbose > 0)
-                        amrex::Print() << "CHECK FAILED: Dirichlet cell check fail at "
-                                       << current_cell << " (Aii=" << diag_val << ", b=" << rhs_val
-                                       << ", exp_b=" << expected_rhs << ")" << std::endl;
+                const bool low = current_cell[idir] == domain.smallEnd(idir);
+                const bool high = current_cell[idir] == domain.bigEnd(idir);
+                const double D = m_mf_diff_coeff[mfi](current_cell, 0);
+                const double dx = m_geom.CellSize(idir);
+                const double weight = 2.0 * D / (dx * dx);
+                const double expected_rhs = weight * ((low ? m_vlo : 0.) + (high ? m_vhi : 0.));
+                double row_sum = 0.;
+                for (int s = 0; s < stencil_size; ++s)
+                    row_sum += matrix_buffer[matrix_start_idx + s];
+                const double tolerance = 1.e-12 * std::max(1., std::abs(diag_val));
+                if (std::abs(row_sum - weight * (low + high)) > tolerance ||
+                    std::abs(rhs_val - expected_rhs) > tolerance) {
                     checks_passed_local = false;
-                }
-                for (int s = 0; s < stencil_size; ++s) {
-                    if (s != center_stencil_index &&
-                        std::abs(matrix_buffer[matrix_start_idx + s]) > tol) {
-                        if (m_verbose > 0)
-                            amrex::Print() << "CHECK FAILED: Non-zero off-diag [" << s
-                                           << "] at Dirichlet cell " << current_cell
-                                           << " (Aij=" << matrix_buffer[matrix_start_idx + s] << ")"
-                                           << std::endl;
-                        checks_passed_local = false;
-                    }
                 }
             } else { // Active Interior
                 if (diag_val <= tol) {
@@ -1266,7 +1257,10 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
     amrex::ReduceData<amrex::Real, amrex::Real, amrex::Real, amrex::Real> flux_reduce_data(
         flux_reduce_op);
 
-    amrex::Box lobox_domain = amrex::bdryLo(domain, idir);
+    const bool exterior = m_bc_inlet_outlet_type == BCType::DirichletExternal;
+    const amrex::Real vlo = m_vlo, vhi = m_vhi;
+    amrex::Box lobox_domain = domain;
+    lobox_domain.setBig(idir, domain.smallEnd(idir));
     amrex::Box hibox_domain = domain;
     hibox_domain.setSmall(idir, domain.bigEnd(idir));
     hibox_domain.setBig(idir, domain.bigEnd(idir));
@@ -1282,12 +1276,14 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
             flux_reduce_op.eval(
                 lobox_face, flux_reduce_data,
                 [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
+                    -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
                     amrex::Real fxin = 0.0, cells_in = 0.0;
                     if (mask(i, j, k) == cell_active) {
                         cells_in = 1.0;
                         int si = i + shift[0], sj = j + shift[1], sk = k + shift[2];
-                        if (mask(si, sj, sk) == cell_active) {
+                        if (exterior) {
+                            fxin = -2.0 * dc(i, j, k) * (soln(i, j, k) - vlo) / dx_dir;
+                        } else if (mask(si, sj, sk) == cell_active) {
                             amrex::Real D_bnd = dc(i, j, k);
                             amrex::Real D_inn = dc(si, sj, sk);
                             amrex::Real D_face =
@@ -1305,12 +1301,14 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
             flux_reduce_op.eval(
                 hibox_face, flux_reduce_data,
                 [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
+                    -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
                     amrex::Real fxout = 0.0, cells_out = 0.0;
                     if (mask(i, j, k) == cell_active) {
                         cells_out = 1.0;
                         int si = i - shift[0], sj = j - shift[1], sk = k - shift[2];
-                        if (mask(si, sj, sk) == cell_active) {
+                        if (exterior) {
+                            fxout = -2.0 * dc(i, j, k) * (vhi - soln(i, j, k)) / dx_dir;
+                        } else if (mask(si, sj, sk) == cell_active) {
                             amrex::Real D_bnd = dc(i, j, k);
                             amrex::Real D_inn = dc(si, sj, sk);
                             amrex::Real D_face =

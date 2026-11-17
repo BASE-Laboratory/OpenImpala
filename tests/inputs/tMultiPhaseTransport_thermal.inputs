@@ -7,7 +7,6 @@
 # validates that the thermal conductivity physics type is correctly
 # parsed and that PhysicsConfig interpretation methods work.
 #
-# Expected: tau = (N-1)/N = 31/32 = 0.96875 for N=32 grid
 
 domain_size = 32
 box_size = 16
@@ -16,7 +15,7 @@ num_phases_fill = 1
 direction = X
 solver = FlexGMRES
 
-expected_tau = 0.96875
+expected_tau = 1.0
 tau_tolerance = 0.001
 
 resultsdir = ./tMultiPhaseTransport_thermal_results

@@ -6,7 +6,7 @@
 # Geometry:  32^3 domain, alternating layers perpendicular to flow (series resistance)
 # Phases:    Phase 0 (D=1.0) and Phase 1 (D=0.5), alternating along X
 # Analytical: D_eff = harmonic mean = 2*D0*D1/(D0+D1) = 2/3
-#             tau = VF / D_eff  (with discrete grid correction)
+#             tau = VF / D_eff
 
 domain_size = 32
 box_size = 16
@@ -17,7 +17,7 @@ layer_axis = X
 solver = PCG
 
 # Series resistance analytical result (discrete grid)
-expected_tau = 1.453125
+expected_tau = 1.5
 tau_tolerance = 0.01
 
 resultsdir = ./tRegressionBenchmark_series_PCG_results

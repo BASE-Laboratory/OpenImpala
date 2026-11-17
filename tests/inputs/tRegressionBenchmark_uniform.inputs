@@ -1,8 +1,6 @@
 # Regression Benchmark: Uniform Dense Block
 #
 # Geometry:  32^3 domain, all voxels = single conducting phase (D=1.0)
-# Analytical: For a uniform medium on an N-cell discrete grid, the boundary
-#             treatment gives D_eff = N/(N-1), so tau = (N-1)/N = 31/32.
 # Reference:  Standard homogeneous-medium validation case.
 #
 # This is the simplest possible regression test — if this fails, the solver
@@ -15,8 +13,7 @@ num_phases_fill = 1
 direction = X
 solver = FlexGMRES
 
-# Expected: tau = (N-1)/N = 31/32 = 0.96875
-expected_tau = 0.96875
+expected_tau = 1.0
 tau_tolerance = 0.001
 
 resultsdir = ./tRegressionBenchmark_uniform_results

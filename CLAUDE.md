@@ -48,7 +48,7 @@ grid. The readers are independent of the physics layer.
 - `TortuosityHypre` — Solves ∇·(D∇φ) = 0 with Dirichlet BCs to get τ, using
   HYPRE structured-grid Krylov solvers + SMG/PFMG multigrid preconditioners
 - `TortuosityMLMG` — Same PDE via AMReX's matrix-free MLMG geometric multigrid
-  (embedded boundary for inactive cells); ~3× less memory, fastest on GPU
+  (masked face conductances with $1/L^2$-scaled isolated-voxel pin); ~3× less memory, fastest on GPU
 - `EffectiveDiffusivityHypre` — Solves cell problem ∇·(D∇χ) = -∇·(Dê) for
   the effective diffusivity tensor via homogenization
 - `PercolationCheck` — Flood-fill connectivity check (no solver needed)
@@ -109,13 +109,13 @@ matrix-fill paths of `TortuosityHypre`, `TortuosityMLMG`, and
 τ = active_volume_fraction / D_eff
 ```
 where `D_eff = |average_flux| / (cross_section_area × |∇φ_imposed|)`.
-On a discrete N-cell grid with Dirichlet BCs at cell centers:
-`D_eff = D_bulk × N/(N-1)`, so `τ = (N-1)/N` for a uniform medium.
+With Dirichlet BCs imposed on the exterior domain faces (half-cell boundary conductances):
+`D_eff = D_bulk`, so `τ = 1` for a uniform medium regardless of grid resolution `N`.
 
 ### Boundary Conditions
-- **Flow direction**: Dirichlet (φ=vlo at inlet face, φ=vhi at outlet face)
+- **Flow direction**: Exterior-face Dirichlet (φ=vlo at inlet face, φ=vhi at outlet face)
 - **Lateral directions**: Zero-flux Neumann (no transport across sides)
-- **Inactive cells**: Decoupled from system (A_ii=1, A_ij=0, rhs=0)
+- **Inactive cells**: Decoupled from system (zero inter-cell face conductances; isolated diagonal pin)
 
 ### Phase Data
 Images are segmented into integer phase IDs stored in `amrex::iMultiFab`.
@@ -163,7 +163,7 @@ make -j$(nproc) && ctest --output-on-failure
 | `Tortuosity.H` | Base interface + enums (Direction, CellType, SolverType) |
 | `TortuositySolverBase.H/cpp` | Shared solver setup + flux/τ post-processing (base class) |
 | `TortuosityHypre.H/cpp` | HYPRE structured-grid tortuosity solver |
-| `TortuosityMLMG.H/cpp` | Matrix-free AMReX MLMG tortuosity solver (EB, GPU-native) |
+| `TortuosityMLMG.H/cpp` | Matrix-free AMReX MLMG tortuosity solver (masked voxel faces, GPU-native) |
 | `TortuosityDirect.H/cpp` | Legacy iterative tortuosity solver (Forward Euler) |
 | `TortuosityKernels.H` | C++ hot-path kernels (isolated-cell removal, face flux, flux integration) |
 | `HypreStructSolver.H/cpp` | HYPRE lifecycle/infrastructure shared by HYPRE solvers |
@@ -217,9 +217,9 @@ make -j$(nproc) && ctest --output-on-failure
 
 ### Regression Benchmarks
 Three CTest benchmarks with exact analytical solutions on discrete grids:
-- **Uniform block**: τ = (N-1)/N — basic solver sanity check
-- **Series layers**: τ = (N-1)(D₀+D₁)/(2N·D₀·D₁) — Reuss/harmonic bound
-- **Parallel layers**: τ = 2(N-1)/(N(D₀+D₁)) — Voigt/arithmetic bound
+- **Uniform block**: τ = 1 — basic solver sanity check
+- **Series layers**: τ = (D₀+D₁)/(2·D₀·D₁) — Reuss/harmonic bound
+- **Parallel layers**: τ = 2/(D₀+D₁) — Voigt/arithmetic bound
 
 ## External Dependencies
 - **AMReX** — Parallel mesh infrastructure (BoxArray, iMultiFab, Geometry, MPI)

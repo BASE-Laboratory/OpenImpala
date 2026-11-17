@@ -174,15 +174,15 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
         -DAMReX_MPI=ON \
         -DAMReX_OMP=ON \
         -DAMReX_EB=ON \
-        -DAMReX_FORTRAN=ON \
+        -DAMReX_PARTICLES=ON \
+        -DAMReX_PIC=ON \
+        -DAMReX_FORTRAN=OFF \
         ${AMREX_GPU_FLAGS} \
         -DCMAKE_C_COMPILER=$(which mpicc) \
         -DCMAKE_CXX_COMPILER=$(which mpicxx) \
-        -DCMAKE_Fortran_COMPILER=$(which mpif90) \
         -DBUILD_SHARED_LIBS=ON \
         -DCMAKE_CXX_FLAGS="-O3 -march=x86-64-v2" \
         -DCMAKE_C_FLAGS="-O3 -march=x86-64-v2" \
-        -DCMAKE_Fortran_FLAGS="-O3 -march=x86-64-v2" \
         -DCMAKE_PREFIX_PATH="${HDF5_INSTALL_PREFIX};${LIBTIFF_INSTALL_PREFIX}" \
     || { echo "*** AMReX Configure Failed!"; exit 1; }
     echo "--- Building AMReX (make) ---"
@@ -206,29 +206,29 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     # and both pyAMReX and OpenImpala's _core must share the exact same
     # pybind11 version for cross-module type casting to work.
     python3.11 -m pip install --upgrade pip
-    python3.11 -m pip install "cmake>=3.24" "pybind11>=2.13,<3" numpy build packaging wheel setuptools pytest
+    python3.11 -m pip install "cmake>=3.24,<4" "pybind11>=2.13,<3" numpy scipy build packaging wheel setuptools pytest
 
     # Ensure pip's cmake is prioritized in the PATH
     export PATH=/usr/local/bin:$PATH
 
-    # Tell pyAMReX to link against the C++ AMReX library we just built
-    export pyAMReX_amrex_internal=OFF
+    # Configure the upstream pip_wheel target explicitly. Its setup.py build
+    # otherwise starts a second CMake configure with independent defaults.
+    PYTHON=$(command -v python3.11)
+    PYTHON_INCLUDE=$("$PYTHON" -c "import sysconfig; print(sysconfig.get_path('include'))")
+    test -f "$PYTHON_INCLUDE/Python.h"
     export CMAKE_PREFIX_PATH="${AMREX_INSTALL_PREFIX}:${HDF5_INSTALL_PREFIX}:${LIBTIFF_INSTALL_PREFIX}"
-    export AMREX_MPI=ON
-    export AMREX_OMP=ON
     export CC=$(which mpicc)
     export CXX=$(which mpicxx)
+    cmake -S . -B build-ci \
+        -DPython_EXECUTABLE="$PYTHON" -DPython_INCLUDE_DIR="$PYTHON_INCLUDE" \
+        -Dpybind11_DIR="$("$PYTHON" -m pybind11 --cmakedir)" \
+        -DpyAMReX_pybind11_internal=OFF -DpyAMReX_amrex_internal=OFF \
+        -DAMReX_SPACEDIM=3 -DAMReX_MPI=ON -DAMReX_OMP=ON \
+        -DCMAKE_BUILD_TYPE=Release
+    # setup.py uses this environment flag when recording the wheel dependencies.
+    AMREX_MPI=ON cmake --build build-ci --target pip_wheel --parallel "$(nproc)"
+    MPICC=$(which mpicc) "$PYTHON" -m pip install --no-binary=mpi4py build-ci/amrex-whl/*.whl
 
-    # Force pyAMReX to use the pip-installed pybind11 instead of fetching
-    # its own via FetchContent. This ensures both pyAMReX and OpenImpala's
-    # _core extension share identical pybind11 internals, which is required
-    # for cross-module py::cast<amrex::iMultiFab&>() to work.
-    PYBIND11_DIR=$(python3.11 -m pybind11 --cmakedir)
-    export CMAKE_ARGS="-DpyAMReX_pybind11_internal=OFF -Dpybind11_DIR=${PYBIND11_DIR}"
-
-    # Build and install directly into the system Python 3.11 site-packages
-    python3.11 -m pip install -v .
-    
     cd ..
     rm -rf pyamrex
 
@@ -306,11 +306,14 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     export LD_LIBRARY_PATH=${AMREX_HOME}/lib:${HYPRE_HOME}/lib:${LIBTIFF_INSTALL_PREFIX}/lib:${HDF5_HOME}/lib:${OPENMPI_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
     export CMAKE_PREFIX_PATH=${AMREX_HOME}:${HYPRE_HOME}:${LIBTIFF_INSTALL_PREFIX}:${HDF5_HOME}:${OPENMPI_INSTALL_PREFIX}:${CMAKE_PREFIX_PATH}
     export OMPI_MCA_btl_vader_single_copy_mechanism=none; export OMPI_MCA_rmaps_base_oversubscribe=1
+    export OMPI_ALLOW_RUN_AS_ROOT=1; export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
     export PATH=/usr/local/bin:${AMREX_HOME}/bin:${HYPRE_HOME}/bin:${LIBTIFF_INSTALL_PREFIX}/bin:${HDF5_HOME}/bin:${OPENMPI_INSTALL_PREFIX}/bin:${PATH}
 
 %test
     set -e
     source /opt/rh/gcc-toolset-11/enable
+    export OMPI_MCA_btl_vader_single_copy_mechanism=none; export OMPI_MCA_rmaps_base_oversubscribe=1
+    export OMPI_ALLOW_RUN_AS_ROOT=1; export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
     export HDF5_VERSION=1.12.3
     export HDF5_INSTALL_PREFIX=/opt/hdf5/${HDF5_VERSION}
     export AMREX_VERSION=25.03
@@ -354,7 +357,7 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     echo "Checking OpenMPI lib ($MPI_LIB)..."; ldd "$MPI_LIB"
     echo "--- Basic dependency container tests passed. ---"
     echo "Checking Python 3.11 and pyAMReX..."
-    python3.11 -c "import amrex; print('pyAMReX loaded successfully!')"
+    python3.11 -c "import amrex.space3d; print('3D pyAMReX loaded successfully!')"
 
 %runscript
     echo "Container with build environment (GCC 11) and runtime dependencies for OpenImpala."

@@ -154,11 +154,7 @@ def _parse_solver(s):
     """Parse a solver string or SolverType enum value.
 
     The special value ``"auto"`` (and ``"mlmg"``) selects AMReX's matrix-free
-    geometric multigrid solver. Profiling on representative porous media
-    (notebooks/profiling_and_tuning.ipynb) shows MLMG is the only solver
-    that scales near-linearly with voxel count (p ~ 1.08 vs p ~ 3.4 for
-    HYPRE Krylov methods), has the lowest memory footprint (no matrix
-    assembly), and runs entirely on GPU device kernels when available.
+    geometric multigrid solver with face conductances on the voxel grid.
 
     Fallback Krylov solvers (PCG, FlexGMRES, BiCGSTAB, GMRES) and their
     multigrid preconditioners (SMG, PFMG) remain available by name. The
@@ -325,7 +321,7 @@ def percolation_check(
         from . import _solver
         data = np.ascontiguousarray(data, dtype=np.int32)
         d = _parse_direction_int(direction)
-        percolates, active_vf, _ = _solver.percolation_check(data, phase, d)
+        percolates, active_vf, _ = _solver.percolation_check(data, phase, 2 - d)
         return PercolationResult(
             percolates=percolates,
             active_volume_fraction=active_vf,
@@ -376,9 +372,7 @@ def tortuosity(
         Flow direction ('x', 'y', 'z').
     solver : str or SolverType
         Solver algorithm.  ``'auto'`` (default) selects AMReX MLMG —
-        matrix-free geometric multigrid that scales near-linearly with
-        voxel count (p ~ 1.08), has the lowest memory footprint, and runs
-        on GPU device kernels when available.  Explicit aliases:
+        matrix-free geometric multigrid on the active voxel network.  Explicit aliases:
         ``'mlmg'`` (same as ``'auto'``); HYPRE Krylov methods
         ``'flexgmres'``, ``'pcg'``, ``'gmres'``, ``'bicgstab'``; standalone
         HYPRE multigrid ``'smg'``, ``'pfmg'``, ``'jacobi'``.  Recommended
@@ -419,7 +413,7 @@ def tortuosity(
         from . import _solver
         data = np.ascontiguousarray(data, dtype=np.int32)
         d = _parse_direction_int(direction)
-        result = _solver.solve_tortuosity(data, phase, d)
+        result = _solver.solve_tortuosity(data, phase, 2 - d)
         if not result["solver_converged"]:
             raise ConvergenceError(
                 f"Solver did not converge after {result['iterations']} "

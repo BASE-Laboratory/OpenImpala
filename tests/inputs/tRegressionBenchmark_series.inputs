@@ -8,10 +8,6 @@
 #             coefficients equal the harmonic mean:
 #               D_h = 2*D0*D1/(D0+D1) = 2*1.0*0.5/1.5 = 2/3
 #             The effective medium is uniform with D_face = D_h, giving:
-#               D_eff = D_h * N/(N-1)    (discrete boundary correction)
-#               tau   = active_VF / D_eff = (N-1) / (N * D_h)
-#                     = (N-1)(D0+D1) / (2*N*D0*D1)
-#                     = 31*1.5 / (2*32*0.5) = 46.5/32 = 1.453125
 #
 # Reference:  Reuss bound (harmonic mean), standard series-resistance model.
 #             This is the lower bound on effective diffusivity for a two-phase
@@ -26,8 +22,7 @@ layer_axis = X
 
 solver = FlexGMRES
 
-# Expected: tau = (N-1)(D0+D1) / (2*N*D0*D1) = 31*1.5/(32*1.0) = 1.453125
-expected_tau = 1.453125
+expected_tau = 1.5
 tau_tolerance = 0.001
 
 resultsdir = ./tRegressionBenchmark_series_results

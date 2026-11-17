@@ -6,13 +6,8 @@
 #
 # Analytical: Each Y-column sees uniform D within itself (either D0 or D1).
 #             The potential field is linear in X for every column:
-#               phi_i = i/(N-1)
 #             Total flux is the sum over all columns → arithmetic mean:
 #               D_a = (D0+D1)/2 = 0.75
-#               D_eff = D_a * N/(N-1)    (discrete boundary correction)
-#               tau   = active_VF / D_eff = (N-1) / (N * D_a)
-#                     = 2*(N-1) / (N*(D0+D1))
-#                     = 62 / 48 = 31/24 ≈ 1.291667
 #
 # Reference:  Voigt bound (arithmetic mean), standard parallel-resistance model.
 #             This is the upper bound on effective diffusivity for a two-phase
@@ -27,8 +22,7 @@ layer_axis = Y
 
 solver = FlexGMRES
 
-# Expected: tau = 2*(N-1) / (N*(D0+D1)) = 62/48 = 31/24 ≈ 1.291667
-expected_tau = 1.291667
+expected_tau = 1.3333333333333333
 tau_tolerance = 0.001
 
 resultsdir = ./tRegressionBenchmark_parallel_results
