@@ -255,7 +255,7 @@ void TortuositySolverBase::globalFluxes() {
         if (!lobox_face.isEmpty()) {
             flux_reduce_op.eval(lobox_face, flux_reduce_data,
                                 [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                                -> amrex::GpuTuple<amrex::Real, amrex::Real> {
+                                    -> amrex::GpuTuple<amrex::Real, amrex::Real> {
                                     amrex::IntVect iv(i, j, k);
                                     if (mask(iv) == cell_active) {
                                         return {-2.0 * dc(iv) * (soln(iv) - vlo) / dxd, 0.0};
@@ -271,7 +271,7 @@ void TortuositySolverBase::globalFluxes() {
         if (!hibox_face.isEmpty()) {
             flux_reduce_op.eval(hibox_face, flux_reduce_data,
                                 [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                                -> amrex::GpuTuple<amrex::Real, amrex::Real> {
+                                    -> amrex::GpuTuple<amrex::Real, amrex::Real> {
                                     amrex::IntVect iv(i, j, k);
                                     if (mask(iv) == cell_active) {
                                         return {0.0, -2.0 * dc(iv) * (vhi - soln(iv)) / dxd};

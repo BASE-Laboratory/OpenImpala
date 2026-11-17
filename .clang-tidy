@@ -6,6 +6,7 @@ Checks: >
   bugprone-*,
   -bugprone-easily-swappable-parameters,
   -bugprone-exception-escape,
+  -bugprone-throwing-static-initialization,
   performance-*,
   -performance-avoid-endl,
   -performance-enum-size,
