@@ -35,26 +35,12 @@ pybind11_add_module(_core ${BINDING_SOURCES})
 # that require compilation by nvcc.
 if(GPU_BACKEND STREQUAL "CUDA")
     set_source_files_properties(${BINDING_SOURCES} PROPERTIES LANGUAGE CUDA)
-    # AMReX's static library contains relocatable device code (RDC).  The _core
-    # shared library must run CUDA's device linker to resolve __cudaRegister*
-    # symbols from AMReX and HYPRE device objects.
-    set_target_properties(_core PROPERTIES
-        CUDA_SEPARABLE_COMPILATION ON
-        CUDA_RESOLVE_DEVICE_SYMBOLS ON
-    )
-    # Once nvcc -dlink resolves RDC objects into .nv_fatbin, the host linker
-    # still concatenates the input objects' intermediate __nv_relfatbin sections
-    # (~275 MiB) into _core.so. Strip that non-alloc section post-link so CUDA
-    # wheels stay compact (~100-140 MiB instead of >340 MB).
-    find_program(_OI_OBJCOPY objcopy)
-    find_program(_OI_OBJDUMP objdump)
-    if(_OI_OBJCOPY AND _OI_OBJDUMP)
-        add_custom_command(TARGET _core POST_BUILD
-            COMMAND /bin/sh -c
-                "if \"$2\" -h \"$1\" | grep -q '__nv_relfatbin' && ! \"$2\" -h \"$1\" | grep -A1 '__nv_relfatbin' | grep -q 'ALLOC'; then \"$3\" --remove-section=__nv_relfatbin \"$1\"; fi"
-                sh "$<TARGET_FILE:_core>" "${_OI_OBJDUMP}" "${_OI_OBJCOPY}"
-            COMMENT "Stripping intermediate __nv_relfatbin RDC section from _core"
-            VERBATIM
+    if(AMReX_GPU_RDC)
+        # When AMReX is built with relocatable device code (RDC), _core must
+        # run CUDA's device linker to resolve __cudaRegister* device symbols.
+        set_target_properties(_core PROPERTIES
+            CUDA_SEPARABLE_COMPILATION ON
+            CUDA_RESOLVE_DEVICE_SYMBOLS ON
         )
     endif()
 endif()

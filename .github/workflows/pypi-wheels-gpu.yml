@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  GPU_DEPS_CACHE_KEY: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-89-noeb-nofort-nompicxx-compressall-v16
+  GPU_DEPS_CACHE_KEY: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75v-80r-89r-nordc-noeb-nofort-nompicxx-compressall-v17
 
 jobs:
   build_core_and_cp39:
@@ -51,9 +51,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/cibw-ccache
-          key: ccache-gpu-cuda12.6-cp39-${{ github.sha }}
+          key: ccache-gpu-nordc-cuda12.6-cp39-${{ github.sha }}
           restore-keys: |
-            ccache-gpu-cuda12.6-cp39-
+            ccache-gpu-nordc-cuda12.6-cp39-
 
       - name: Build cp39 GPU wheel and populate CUDA core ccache
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -119,7 +119,7 @@ jobs:
             CC=mpicc CXX=mpicxx
             CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC -DOMPI_SKIP_MPICXX=1"
             CUDA_HOME=/usr/local/cuda &&
-            sed -i '/^CUDA_ARCH/s/$/ -gencode arch=compute_75,code=compute_75/' config/Makefile.config &&
+            sed -i '/^CUDA_ARCH/s/$/ -gencode arch=compute_75,code=compute_75 -Xfatbin --compress-all/' config/Makefile.config &&
             grep '^CUDA_ARCH' config/Makefile.config &&
             make -j$(nproc) &&
             make install &&
@@ -131,7 +131,9 @@ jobs:
             cp -rf NVTX-3.1.1/c/include/nvtx3/. /usr/local/include/nvtx3/ &&
             git clone --depth 1 --branch 25.03 https://github.com/AMReX-Codes/amrex.git /tmp/amrex &&
             sed -i 's|CUDA::nvToolsExt|CUDA::nvtx3|g' /tmp/amrex/Tools/CMake/AMReXParallelBackends.cmake &&
-            sed -i 's|@AMREX_CUDA_ARCHS@|75;80;89|g' /tmp/amrex/Tools/CMake/AMReXConfig.cmake.in &&
+            sed -i 's|set(AMREX_CUDA_ARCHS ${_tmp} CACHE INTERNAL|set(AMREX_CUDA_ARCHS "80-real;89-real;75-virtual" CACHE INTERNAL|' /tmp/amrex/Tools/CMake/AMReXUtils.cmake &&
+            sed -i 's|@AMREX_CUDA_ARCHS@|"80-real;89-real;75-virtual"|g' /tmp/amrex/Tools/CMake/AMReXConfig.cmake.in &&
+            sed -i 's|CUDA_ARCHITECTURES ${AMREX_CUDA_ARCHS})|CUDA_ARCHITECTURES "${AMREX_CUDA_ARCHS}")|' /tmp/amrex/Tools/CMake/AMReXConfig.cmake.in &&
             cmake -S /tmp/amrex -B /tmp/amrex/build
             -DCMAKE_INSTALL_PREFIX=/usr/local
             -DCMAKE_BUILD_TYPE=Release
@@ -144,6 +146,7 @@ jobs:
             -DAMReX_PARTICLES=OFF
             -DAMReX_TINY_PROFILE=ON
             -DAMReX_GPU_BACKEND=CUDA
+            -DAMReX_GPU_RDC=OFF
             '-DAMReX_CUDA_ARCH=75;80;89'
             -DMPI_CXX_SKIP_MPICXX=ON
             '-DCMAKE_CXX_FLAGS=-DOMPI_SKIP_MPICXX=1'
@@ -157,10 +160,8 @@ jobs:
             tar czf /host/tmp/cibw-deps-cache/deps.tar.gz /usr/local &&
             chmod -R a+rwX /host/tmp/cibw-deps-cache ;
             fi &&
-            echo "=== Patching installed AMReXConfig.cmake (runs on cache hit AND miss) ===" &&
-            sed -i 's|set(AMREX_CUDA_ARCHS  CACHE INTERNAL|set(AMREX_CUDA_ARCHS "75;80;89" CACHE INTERNAL|' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake &&
-            sed -i 's|CUDA_ARCHITECTURES ${AMREX_CUDA_ARCHS})|CUDA_ARCHITECTURES "${AMREX_CUDA_ARCHS}")|' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake &&
-            grep -n 'AMREX_CUDA_ARCHS' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake
+            echo "=== Verified installed AMReXConfig.cmake ===" &&
+            grep -n 'AMREX_CUDA_ARCHS\|AMReX_GPU_RDC' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake
 
           CIBW_BEFORE_BUILD: >
             pip install "cmake>=3.28,<4" &&
@@ -296,11 +297,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/cibw-ccache
-          key: ccache-gpu-cuda12.6-${{ matrix.py }}-${{ github.sha }}
+          key: ccache-gpu-nordc-cuda12.6-${{ matrix.py }}-${{ github.sha }}
           restore-keys: |
-            ccache-gpu-cuda12.6-cp39-${{ github.sha }}
-            ccache-gpu-cuda12.6-${{ matrix.py }}-
-            ccache-gpu-cuda12.6-cp39-
+            ccache-gpu-nordc-cuda12.6-cp39-${{ github.sha }}
+            ccache-gpu-nordc-cuda12.6-${{ matrix.py }}-
+            ccache-gpu-nordc-cuda12.6-cp39-
 
       - name: Build ${{ matrix.py }} GPU wheel
         run: python -m cibuildwheel --output-dir wheelhouse
@@ -324,8 +325,7 @@ jobs:
             mkdir -p /host/tmp/cibw-ccache &&
             chmod -R a+rwX /host/tmp/cibw-ccache &&
             pip3 install "cmake>=3.28,<4" &&
-            sed -i 's|set(AMREX_CUDA_ARCHS  CACHE INTERNAL|set(AMREX_CUDA_ARCHS "75;80;89" CACHE INTERNAL|' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake &&
-            sed -i 's|CUDA_ARCHITECTURES ${AMREX_CUDA_ARCHS})|CUDA_ARCHITECTURES "${AMREX_CUDA_ARCHS}")|' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake
+            grep -n 'AMREX_CUDA_ARCHS' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake
 
           CIBW_BEFORE_BUILD: >
             pip install "cmake>=3.28,<4" &&
