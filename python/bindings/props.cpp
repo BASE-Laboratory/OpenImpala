@@ -5,13 +5,17 @@
  */
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+
+#include <AMReX_ParallelDescriptor.H>
 
 #include "ConnectedComponents.H"
 #include "ParticleSizeDistribution.H"
@@ -234,11 +238,36 @@ void init_props(py::module_& m) {
             cfg.verbose = verbose;
             cfg.write_plotfiles = write_plotfiles;
             runREVStudy(img->geom, img->ba, img->dm, *(img->mf), cfg);
-            return (cfg.results_path / cfg.csv_filename).string();
+            amrex::ParallelDescriptor::Barrier();
+
+            const std::string out_path = (cfg.results_path / cfg.csv_filename).string();
+            std::string csv_content;
+            if (amrex::ParallelDescriptor::IOProcessor()) {
+                std::ifstream ifs(out_path);
+                if (ifs) {
+                    std::ostringstream oss;
+                    oss << ifs.rdbuf();
+                    csv_content = oss.str();
+                }
+            }
+            if (amrex::ParallelDescriptor::NProcs() > 1) {
+                int len = static_cast<int>(csv_content.size());
+                amrex::ParallelDescriptor::Bcast(&len, 1,
+                                                 amrex::ParallelDescriptor::IOProcessorNumber());
+                if (!amrex::ParallelDescriptor::IOProcessor()) {
+                    csv_content.resize(static_cast<std::size_t>(len));
+                }
+                if (len > 0) {
+                    amrex::ParallelDescriptor::Bcast(
+                        csv_content.data(), len, amrex::ParallelDescriptor::IOProcessorNumber());
+                }
+            }
+            return py::make_tuple(out_path, csv_content);
         },
         py::arg("img"), py::arg("sizes"), py::arg("num_samples") = 3, py::arg("phase_id") = 1,
         py::arg("box_size") = 32, py::arg("solver_type") = OpenImpala::SolverType::FlexGMRES,
         py::arg("results_path") = ".", py::arg("csv_filename") = "rev_study_Deff.csv",
         py::arg("verbose") = 0, py::arg("write_plotfiles") = false,
-        "Run a Representative Elementary Volume (REV) convergence study and return the CSV path.");
+        "Run a Representative Elementary Volume (REV) convergence study and return "
+        "(csv_path, csv_content).");
 }

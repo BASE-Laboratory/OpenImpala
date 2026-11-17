@@ -28,6 +28,7 @@
 #include "TortuosityDirect.H"
 #include "TortuosityHypre.H"
 #include "TortuosityMLMG.H"
+#include "VolumeFraction.H"
 #include "VoxelImage.H"
 
 namespace py = pybind11;
@@ -87,8 +88,11 @@ py::dict compute_effective_diffusivity_tensor(std::shared_ptr<VoxelImage> img, i
         if (d == 0) {
             amrex::Copy(active_mask_0g, solver.getActiveMask(), 0, 0, 1, 0);
             amrex::Copy(diff_coeff_0g, solver.getDiffCoeff(), 0, 0, 1, 0);
-            active_cells = active_mask_0g.sum(0, true);
-            amrex::ParallelDescriptor::ReduceLongSum(active_cells);
+            VolumeFraction vf_calc(active_mask_0g, 1, 0);
+            long long active_ll = 0;
+            long long total_ll = 0;
+            vf_calc.value(active_ll, total_ll, false);
+            active_cells = static_cast<long>(active_ll);
             if (active_cells == 0) {
                 empty_active_phase = true;
                 dir_converged = {true, true, true};

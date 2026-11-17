@@ -268,15 +268,15 @@ class TestMicrostructuralMetrics:
         np.testing.assert_allclose(prof.positions, (np.arange(8) + 0.5) * 2.0, atol=1e-12)
 
     def test_rev_study_uniform_domain(self, tmp_path):
-        data = np.ones((12, 12, 12), dtype=np.int32)
+        data = np.ones((16, 16, 16), dtype=np.int32)
         csv_file = tmp_path / "rev_out.csv"
         rev = oi.rev_study(
-            data, sizes=[6, 10], num_samples=2, phase=1, csv_path=str(csv_file)
+            data, sizes=[8, 12], num_samples=2, phase=1, csv_path=str(csv_file)
         )
-        assert rev.sizes == [6, 10]
+        assert rev.sizes == [8, 12]
         assert len(rev.samples) == 4
         assert csv_file.exists()
-        for sz in (6, 10):
+        for sz in (8, 12):
             np.testing.assert_allclose(rev.mean_diagonal[sz], [1.0, 1.0, 1.0], atol=1e-5)
 
 

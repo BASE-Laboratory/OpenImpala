@@ -984,45 +984,47 @@ def rev_study(
     img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
     box_sz = 32 if isinstance(max_grid_size, str) else int(max_grid_size)
 
-    def _parse_csv(file_path: str) -> list[dict]:
+    def _parse_csv_text(csv_text: str) -> list[dict]:
         rows: list[dict] = []
-        p = Path(file_path)
-        if not p.exists():
+        if not csv_text.strip():
             return rows
-        with open(p, newline="") as f:
-            reader = csv.DictReader(f)
-            for r in reader:
-                dxx = float(r["D_xx"])
-                dyy = float(r["D_yy"])
-                dzz = float(r["D_zz"])
-                dxy = float(r["D_xy"])
-                dxz = float(r["D_xz"])
-                dyz = float(r["D_yz"])
-                tensor = np.array(
-                    [[dxx, dxy, dxz], [dxy, dyy, dyz], [dxz, dyz, dzz]],
-                    dtype=np.float64,
-                )
-                rows.append(
-                    {
-                        "sample": int(r["SampleNo"]),
-                        "seed_xyz": (int(r["SeedX"]), int(r["SeedY"]), int(r["SeedZ"])),
-                        "target_size": int(r["Target"]),
-                        "actual_size_xyz": (int(r["ActX"]), int(r["ActY"]), int(r["ActZ"])),
-                        "D_xx": dxx,
-                        "D_yy": dyy,
-                        "D_zz": dzz,
-                        "D_xy": dxy,
-                        "D_xz": dxz,
-                        "D_yz": dyz,
-                        "tensor": tensor,
-                    }
-                )
+        reader = csv.DictReader(csv_text.splitlines())
+        for r in reader:
+            dxx = float(r["D_xx"])
+            dyy = float(r["D_yy"])
+            dzz = float(r["D_zz"])
+            dxy = float(r["D_xy"])
+            dxz = float(r["D_xz"])
+            dyz = float(r["D_yz"])
+            tensor = np.array(
+                [[dxx, dxy, dxz], [dxy, dyy, dyz], [dxz, dyz, dzz]],
+                dtype=np.float64,
+            )
+            rows.append(
+                {
+                    "sample": int(r["SampleNo"]),
+                    "seed_xyz": (int(r["SeedX"]), int(r["SeedY"]), int(r["SeedZ"])),
+                    "target_size": int(r["REV_Size_Target"]),
+                    "actual_size_xyz": (
+                        int(r["ActualSizeX"]),
+                        int(r["ActualSizeY"]),
+                        int(r["ActualSizeZ"]),
+                    ),
+                    "D_xx": dxx,
+                    "D_yy": dyy,
+                    "D_zz": dzz,
+                    "D_xy": dxy,
+                    "D_xz": dxz,
+                    "D_yz": dyz,
+                    "tensor": tensor,
+                }
+            )
         return rows
 
     if csv_path is not None:
         target_p = Path(csv_path)
         target_p.parent.mkdir(parents=True, exist_ok=True)
-        written = _core.run_rev_study(
+        _written, csv_content = _core.run_rev_study(
             img,
             sizes=size_list,
             num_samples=num_samples,
@@ -1034,11 +1036,11 @@ def rev_study(
             verbose=verbose,
             write_plotfiles=False,
         )
-        records = _parse_csv(written)
+        records = _parse_csv_text(csv_content)
         return _summarize_rev_records(records, str(target_p))
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        written = _core.run_rev_study(
+        _written, csv_content = _core.run_rev_study(
             img,
             sizes=size_list,
             num_samples=num_samples,
@@ -1050,7 +1052,7 @@ def rev_study(
             verbose=verbose,
             write_plotfiles=False,
         )
-        records = _parse_csv(written)
+        records = _parse_csv_text(csv_content)
     return _summarize_rev_records(records, None)
 
 
