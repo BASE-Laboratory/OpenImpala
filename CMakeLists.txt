@@ -46,7 +46,7 @@ endif()
 
 project(OpenImpala
     VERSION ${_detected_version}
-    LANGUAGES C CXX Fortran
+    LANGUAGES C CXX
     DESCRIPTION "Image-based simulation of transport properties in porous media"
 )
 
@@ -107,6 +107,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json)
 
 # --- MPI ---
+# Skip deprecated MPI-2 C++ bindings (removed in OpenMPI 5.0) so MPI::MPI_CXX
+# links only libmpi and never pulls in libmpi_cxx.so.
+set(MPI_CXX_SKIP_MPICXX TRUE)
 find_package(MPI REQUIRED COMPONENTS CXX)
 
 # --- OpenMP ---

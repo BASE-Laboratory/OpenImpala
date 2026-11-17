@@ -60,8 +60,7 @@ git clone https://github.com/BASE-Laboratory/OpenImpala.git
 cd OpenImpala
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release \
-         -DCMAKE_CXX_COMPILER=$(which mpicxx) \
-         -DCMAKE_Fortran_COMPILER=$(which mpif90)
+         -DCMAKE_CXX_COMPILER=$(which mpicxx)
 make -j$(nproc)
 ctest --output-on-failure
 ```
