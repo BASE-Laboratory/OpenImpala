@@ -46,7 +46,7 @@ endif()
 
 project(OpenImpala
     VERSION ${_detected_version}
-    LANGUAGES C CXX
+    LANGUAGES C CXX Fortran
     DESCRIPTION "Image-based simulation of transport properties in porous media"
 )
 
