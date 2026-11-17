@@ -63,4 +63,8 @@ def test_mpi_distributed_tiff_reader():
     vf = oi.volume_fraction(img, phase=1)
     assert vf.total_count == 1_000_000
     assert vf.fraction == pytest.approx(0.398309, rel=1e-6)
+
+    perc = oi.percolation_check(img, phase=1, direction="z")
+    assert perc.percolates is True
+    assert perc.active_volume_fraction == pytest.approx(0.397743, rel=1e-6)
     del reader, img

@@ -175,6 +175,7 @@ jobs:
             --bind $PWD:/src \
             ./dependency_image.sif \
             bash -c '
+              set -euo pipefail
               source /opt/rh/gcc-toolset-11/enable
               cd /src
               rm -rf cmake_build && mkdir cmake_build && cd cmake_build
@@ -217,6 +218,7 @@ jobs:
             --bind $PWD:/src \
             ./dependency_image.sif \
             bash -c '
+              set -euo pipefail
               source /opt/rh/gcc-toolset-11/enable
               cd /src
               rm -rf cmake_build_py && mkdir cmake_build_py && cd cmake_build_py

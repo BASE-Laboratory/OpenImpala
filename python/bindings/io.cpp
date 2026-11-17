@@ -37,6 +37,7 @@ reader_to_voxelimage(const ReaderT& reader, ThreshT threshold_value, int max_gri
     img->ba.maxSize(max_grid_size);
     img->dm.define(img->ba);
     img->mf = std::make_shared<amrex::iMultiFab>(img->ba, img->dm, 1, 1);
+    img->mf->setVal(0);
 
     int nx = box.length(0);
     int ny = box.length(1);
@@ -46,7 +47,10 @@ reader_to_voxelimage(const ReaderT& reader, ThreshT threshold_value, int max_gri
     amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
     img->geom.define(box, &rb, amrex::CoordSys::cartesian, is_periodic.data());
 
-    reader.threshold(threshold_value, *(img->mf));
+    amrex::iMultiFab mf_temp(img->ba, img->dm, 1, 0);
+    reader.threshold(threshold_value, mf_temp);
+    amrex::Copy(*(img->mf), mf_temp, 0, 0, 1, 0);
+    img->mf->FillBoundary(img->geom.periodicity());
     return img;
 }
 
@@ -62,6 +66,7 @@ reader_to_voxelimage_custom(const ReaderT& reader, ThreshT threshold_value, int 
     img->ba.maxSize(max_grid_size);
     img->dm.define(img->ba);
     img->mf = std::make_shared<amrex::iMultiFab>(img->ba, img->dm, 1, 1);
+    img->mf->setVal(0);
 
     int nx = box.length(0);
     int ny = box.length(1);
@@ -71,7 +76,10 @@ reader_to_voxelimage_custom(const ReaderT& reader, ThreshT threshold_value, int 
     amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
     img->geom.define(box, &rb, amrex::CoordSys::cartesian, is_periodic.data());
 
-    reader.threshold(threshold_value, value_if_true, value_if_false, *(img->mf));
+    amrex::iMultiFab mf_temp(img->ba, img->dm, 1, 0);
+    reader.threshold(threshold_value, value_if_true, value_if_false, mf_temp);
+    amrex::Copy(*(img->mf), mf_temp, 0, 0, 1, 0);
+    img->mf->FillBoundary(img->geom.periodicity());
     return img;
 }
 
