@@ -175,6 +175,7 @@ jobs:
             --bind $PWD:/src \
             ./dependency_image.sif \
             bash -c '
+              set -euo pipefail
               source /opt/rh/gcc-toolset-11/enable
               cd /src
               rm -rf cmake_build && mkdir cmake_build && cd cmake_build
@@ -217,6 +218,7 @@ jobs:
             --bind $PWD:/src \
             ./dependency_image.sif \
             bash -c '
+              set -euo pipefail
               source /opt/rh/gcc-toolset-11/enable
               cd /src
               rm -rf cmake_build_py && mkdir cmake_build_py && cd cmake_build_py
@@ -240,6 +242,20 @@ jobs:
               
               # pytest and pyAMReX are native to the container now!
               ctest --output-on-failure --timeout 120 -L python
+
+              # 2-rank MPI pytest smoke test (multi-box MLMG, HYPRE, and distributed TiffReader)
+              cd /src
+              OMPI_ALLOW_RUN_AS_ROOT=1 \
+              OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 \
+              OMP_NUM_THREADS=1 \
+              OPENIMPALA_EXPECT_MPI_RANKS=2 \
+              PYTHONPATH=/src/python \
+                mpirun -np 2 --oversubscribe /usr/bin/python3.11 -m pytest \
+                  python/tests/test_mpi_smoke.py -v --tb=short -p no:cacheprovider
+
+              # Canonical sample V&V cross-verification (X/Y/Z against independent FV reference)
+              PYTHONPATH=/src/python \
+                /usr/bin/python3.11 tests/validation/fetch_canonical_data.py --data-dir /tmp/vv_canonical
             '
             
   coverage:

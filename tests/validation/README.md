@@ -47,19 +47,22 @@ python tests/validation/analytical_bounds_vv.py --grid-size 48 --output my_plot.
 
 **Exit code:** 0 if all bounds are satisfied, 1 if any violation is detected.
 
-### `fetch_canonical_data.py` — Experimental Dataset Validation
+### `fetch_canonical_data.py` — Canonical Sample Solver Cross-Verification
 
-Downloads a canonical 3D TIFF dataset and validates the solver output against
-stored reference values (porosity and tortuosity).
+Fetches the `100³` synthetic two-phase PoreSpy blob dataset (`SampleData_2Phase_stack_3d_1bit.tif`)
+and cross-verifies OpenImpala's X/Y/Z solves against an independent sparse
+finite-volume solution of the 7-point exterior-face Dirichlet Laplacian.
 
 **What it does:**
 
-1. Downloads `SampleData_2Phase_stack_3d_1bit.tif` from the OpenImpala
-   GitHub repository (or copies from the local `data/` directory if offline).
-2. Writes `canonical_reference.json` with the expected experimental values.
-3. Runs the solver and checks that computed porosity and tortuosity are
-   within 5% of the reference values.
-4. Writes `validation_results.json` with the full solver output.
+1. Copies `SampleData_2Phase_stack_3d_1bit.tif` from `data/` (or downloads it
+   from the OpenImpala GitHub repository if absent).
+2. Writes `canonical_reference.json` with the exact phase-1 volume fraction,
+   active percolating fraction, and independent X/Y/Z finite-volume reference values.
+3. Solves all three Cartesian directions and checks that computed tortuosity
+   agrees within `0.1%` (`1e-3`), boundary fluxes balance within `1e-4`, and
+   `D_eff` satisfies the Hashin-Shtrikman upper bound.
+4. Writes `validation_results.json` with the full solver diagnostics.
 
 **How to run:**
 
