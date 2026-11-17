@@ -4,6 +4,8 @@
 #include "FloodFill.H"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include <AMReX_Box.H>
@@ -138,6 +140,140 @@ void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFa
     AMREX_ASSERT(reachabilityMask.nGrow() >= 1);
     AMREX_ASSERT(phaseFab.nGrow() >= 1);
     AMREX_ASSERT(label != FLOOD_INACTIVE); // label must differ from the "empty" marker
+
+#ifndef AMREX_USE_GPU
+    // Fast single-rank O(N) host BFS path for non-periodic CPU runs.
+    // Replaces O(N * path_length) Jacobi wavefront sweeps + FillBoundary calls
+    // with a single linear-time queue traversal while preserving multi-label
+    // semantics used by ConnectedComponents.
+    if (!geom.isAnyPeriodic() && amrex::ParallelDescriptor::NProcs() == 1) {
+        const amrex::Box& domain = geom.Domain();
+        if (seedPoints.empty()) {
+            reachabilityMask.FillBoundary(geom.periodicity());
+            return;
+        }
+
+        const amrex::IntVect offsets[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
+                                           {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+        const std::size_t total_pts = static_cast<std::size_t>(domain.numPts());
+        std::vector<amrex::IntVect> queue;
+        queue.reserve(total_pts / 4 + 16);
+
+        if (reachabilityMask.size() == 1 && reachabilityMask.box(0) == domain &&
+            phaseFab.size() == 1 && phaseFab.box(0) == domain) {
+            auto mask_arr = reachabilityMask.array(0);
+            const auto phase_arr = phaseFab.const_array(0);
+
+            for (const auto& seed : seedPoints) {
+                if (domain.contains(seed) && phase_arr(seed, 0) == phaseID &&
+                    mask_arr(seed, 0) != label) {
+                    mask_arr(seed, 0) = label;
+                    queue.push_back(seed);
+                }
+            }
+
+            std::size_t head = 0;
+            while (head < queue.size()) {
+                const amrex::IntVect cur = queue[head++];
+                for (int n = 0; n < 6; ++n) {
+                    const amrex::IntVect nb = cur + offsets[n];
+                    if (domain.contains(nb) && mask_arr(nb, 0) == FLOOD_INACTIVE &&
+                        phase_arr(nb, 0) == phaseID) {
+                        mask_arr(nb, 0) = label;
+                        queue.push_back(nb);
+                    }
+                }
+            }
+        } else {
+            const amrex::IntVect dom_lo = domain.smallEnd();
+            const std::size_t nx = static_cast<std::size_t>(domain.length(0));
+            const std::size_t ny = static_cast<std::size_t>(domain.length(1));
+            auto flat_index = [&](int i, int j, int k) noexcept -> std::size_t {
+                return (static_cast<std::size_t>(k - dom_lo[2]) * ny +
+                        static_cast<std::size_t>(j - dom_lo[1])) *
+                           nx +
+                       static_cast<std::size_t>(i - dom_lo[0]);
+            };
+
+            constexpr std::uint8_t kTargetPhase = 1u;
+            constexpr std::uint8_t kInactive = 2u;
+            constexpr std::uint8_t kLabeled = 4u;
+            constexpr std::uint8_t kEligible = kTargetPhase | kInactive;
+
+            std::vector<std::uint8_t> state(total_pts, 0u);
+
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+            for (amrex::MFIter mfi(reachabilityMask, amrex::TilingIfNotGPU()); mfi.isValid();
+                 ++mfi) {
+                const amrex::Box& bx = mfi.tilebox();
+                const auto mask_arr = reachabilityMask.const_array(mfi);
+                const auto phase_arr = phaseFab.const_array(mfi, 0);
+                amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+                    std::uint8_t flags = 0u;
+                    if (phase_arr(i, j, k) == phaseID) {
+                        flags |= kTargetPhase;
+                    }
+                    const int cur_lbl = mask_arr(i, j, k, 0);
+                    if (cur_lbl == FLOOD_INACTIVE) {
+                        flags |= kInactive;
+                    } else if (cur_lbl == label) {
+                        flags |= kLabeled;
+                    }
+                    state[flat_index(i, j, k)] = flags;
+                });
+            }
+
+            for (const auto& seed : seedPoints) {
+                if (!domain.contains(seed)) {
+                    continue;
+                }
+                const std::size_t idx = flat_index(seed[0], seed[1], seed[2]);
+                if ((state[idx] & kTargetPhase) != 0u && (state[idx] & kLabeled) == 0u) {
+                    state[idx] = static_cast<std::uint8_t>((state[idx] & ~kInactive) | kLabeled);
+                    queue.push_back(seed);
+                }
+            }
+
+            std::size_t head = 0;
+            while (head < queue.size()) {
+                const amrex::IntVect cur = queue[head++];
+                for (int n = 0; n < 6; ++n) {
+                    const amrex::IntVect nb = cur + offsets[n];
+                    if (!domain.contains(nb)) {
+                        continue;
+                    }
+                    const std::size_t nb_idx = flat_index(nb[0], nb[1], nb[2]);
+                    if ((state[nb_idx] & kEligible) == kEligible) {
+                        state[nb_idx] = kTargetPhase | kLabeled;
+                        queue.push_back(nb);
+                    }
+                }
+            }
+
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+            for (amrex::MFIter mfi(reachabilityMask, amrex::TilingIfNotGPU()); mfi.isValid();
+                 ++mfi) {
+                const amrex::Box& bx = mfi.tilebox();
+                auto mask_arr = reachabilityMask.array(mfi);
+                amrex::LoopOnCpu(bx, [&](int i, int j, int k) {
+                    if ((state[flat_index(i, j, k)] & kLabeled) != 0u) {
+                        mask_arr(i, j, k, 0) = label;
+                    }
+                });
+            }
+        }
+
+        if (verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
+            amrex::Print() << "    Flood fill (CPU BFS) labeled " << queue.size() << " cells.\n";
+        }
+        reachabilityMask.FillBoundary(geom.periodicity());
+        return;
+    }
+#endif
 
     // --- Phase 1: Plant seeds ---
     // Seeds arrive as a small host-side list. The mask_arr writes below need

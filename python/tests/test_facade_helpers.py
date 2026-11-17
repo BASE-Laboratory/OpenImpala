@@ -3,7 +3,7 @@
 import pytest
 
 from openimpala import _core
-from openimpala.facade import _parse_direction, _parse_solver
+from openimpala.facade import _auto_grid_size, _parse_direction, _parse_solver
 
 
 class TestParseDirection:
@@ -43,3 +43,18 @@ class TestParseSolver:
     def test_invalid_raises(self):
         with pytest.raises(ValueError, match="Unknown solver"):
             _parse_solver("magic")
+
+
+class TestAutoGridSize:
+
+    def test_single_rank_avoids_box_splitting(self, monkeypatch):
+        monkeypatch.setattr(_core, "mpi_ranks", lambda: 1)
+        assert _auto_grid_size((8, 8, 8)) == 16
+        assert _auto_grid_size((64, 64, 64)) == 64
+        assert _auto_grid_size((128, 128, 128)) == 128
+        assert _auto_grid_size((512, 512, 512)) == 256
+
+    def test_multi_rank_splits_for_load_balance(self, monkeypatch):
+        monkeypatch.setattr(_core, "mpi_ranks", lambda: 4)
+        assert _auto_grid_size((128, 128, 128)) == 64
+        assert _auto_grid_size((64, 64, 64)) == 32

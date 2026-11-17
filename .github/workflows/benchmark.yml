@@ -126,7 +126,7 @@ jobs:
                               t0 = time.perf_counter()
                               res = oi.tortuosity(
                                   data, phase=0, direction="z",
-                                  solver=solver_name, max_grid_size=32, verbose=0
+                                  solver=solver_name, verbose=0
                               )
                               t1 = time.perf_counter()
                               times.append(t1 - t0)
@@ -176,7 +176,7 @@ jobs:
                   t0 = time.perf_counter()
                   ref = oi.tortuosity(
                       pore, phase=1, direction="z",
-                      solver="pcg", preconditioner="smg", max_grid_size=32, verbose=0
+                      solver="pcg", preconditioner="smg", verbose=0
                   )
                   ref_t = time.perf_counter() - t0
                   print(f"  {'pcg+smg':12s}  {ref_t:.4f}s  "
@@ -202,7 +202,7 @@ jobs:
                           t0 = time.perf_counter()
                           mlmg_res = oi.tortuosity(
                               pore, phase=1, direction="z",
-                              solver="mlmg", max_grid_size=32, verbose=0
+                              solver="mlmg", verbose=0
                           )
                           mlmg_times.append(time.perf_counter() - t0)
                       except Exception as e:
