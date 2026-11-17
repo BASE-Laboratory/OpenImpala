@@ -15,7 +15,8 @@ namespace OpenImpala {
 void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM],
                          const amrex::MultiFab& mf_chi_x, const amrex::MultiFab& mf_chi_y,
                          const amrex::MultiFab& mf_chi_z, const amrex::iMultiFab& active_mask,
-                         const amrex::Geometry& geom, int verbose) {
+                         const amrex::Geometry& geom, int verbose,
+                         const amrex::MultiFab* mf_diff_coeff) {
     BL_PROFILE("OpenImpala::calculateDeffTensor");
 
     for (int i = 0; i < AMREX_SPACEDIM; ++i) {
@@ -45,6 +46,8 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
                       amrex::Real, amrex::Real, amrex::Real>
         reduce_data(reduce_op);
 
+    const bool has_dc = (mf_diff_coeff != nullptr && mf_diff_coeff->isDefined());
+
     for (amrex::MFIter mfi(active_mask); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();
         amrex::Array4<const int> const mask_arr = active_mask.const_array(mfi);
@@ -53,6 +56,8 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
         amrex::Array4<const amrex::Real> const chi_z_arr =
             (AMREX_SPACEDIM == 3 && mf_chi_z.isDefined()) ? mf_chi_z.const_array(mfi)
                                                           : mf_chi_x.const_array(mfi);
+        amrex::Array4<const amrex::Real> const dc_arr =
+            has_dc ? mf_diff_coeff->const_array(mfi) : mf_chi_x.const_array(mfi);
 
         reduce_op.eval(
             bx, reduce_data,
@@ -62,6 +67,8 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
                 if (mask_arr(i, j, k, 0) != 1) {
                     return {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
                 }
+
+                const amrex::Real D_val = has_dc ? dc_arr(i, j, k, 0) : 1.0;
 
                 amrex::Real dchix_dx =
                     (chi_x_arr(i + 1, j, k, 0) - chi_x_arr(i - 1, j, k, 0)) * inv_2dx_0;
@@ -82,10 +89,12 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
                     dchiz_dz = (chi_z_arr(i, j, k + 1, 0) - chi_z_arr(i, j, k - 1, 0)) * inv_2dx_2;
                 }
 
-                // D_eff[r][c] = delta_rc + d(chi_c)/d(x_r), summed over active cells
+                // D_eff[r][c] = D(x) * (delta_rc + d(chi_c)/d(x_r)), summed over active cells
                 // Cell problem: div(D grad chi_k) = -div(D e_k) => plus sign
-                return {1.0 + dchix_dx, dchiy_dx, dchiz_dx, dchix_dy,      1.0 + dchiy_dy,
-                        dchiz_dy,       dchix_dz, dchiy_dz, 1.0 + dchiz_dz};
+                return {
+                    D_val * (1.0 + dchix_dx), D_val * dchiy_dx,         D_val * dchiz_dx,
+                    D_val * dchix_dy,         D_val * (1.0 + dchiy_dy), D_val * dchiz_dy,
+                    D_val * dchix_dz,         D_val * dchiy_dz,         D_val * (1.0 + dchiz_dz)};
             });
     }
 

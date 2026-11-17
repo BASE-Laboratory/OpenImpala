@@ -4,6 +4,7 @@
 #ifndef OPENIMPALA_SPECIFIC_SURFACE_AREA_H
 #define OPENIMPALA_SPECIFIC_SURFACE_AREA_H
 
+#include <AMReX_Array.H>
 #include <AMReX_Geometry.H>
 #include <AMReX_iMultiFab.H>
 #include <AMReX_REAL.H>
@@ -91,6 +92,29 @@ public:
      */
     amrex::Real value_corrected(bool local = false) const {
         return (2.0 / 3.0) * value_ssa(local);
+    }
+
+    /**
+     * @brief Compute interface face counts along each coordinate direction and total cells.
+     *
+     * @param[out] dir_faces Number of interface faces normal to each direction (X=0, Y=1, Z=2).
+     * @param[out] total_count Total number of cells in the (padded) domain.
+     * @param[in] local If true, skip MPI reduction (default false).
+     */
+    void directionFaceCounts(amrex::Array<long long, AMREX_SPACEDIM>& dir_faces,
+                             long long& total_count, bool local = false) const;
+
+    /**
+     * @brief Physical specific surface area accounting for potentially anisotropic cell sizes:
+     *        SSA_raw = (1 / total_count) * sum_d (dir_faces[d] / dx[d]).
+     */
+    amrex::Real value_physical(bool local = false) const;
+
+    /**
+     * @brief Cauchy-Crofton (2/3) corrected physical specific surface area.
+     */
+    amrex::Real value_physical_corrected(bool local = false) const {
+        return (2.0 / 3.0) * value_physical(local);
     }
 
 private:

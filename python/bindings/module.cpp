@@ -5,13 +5,15 @@
  *  the VoxelImage opaque handle, and delegates to per-subsystem init functions.
  */
 
+#include <array>
 #include <cstddef>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
-#include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+#include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
 #include <AMReX.H>
@@ -51,10 +53,9 @@ void init_config(py::module_& m);
 // =========================================================================
 static void init_amrex() {
     if (!amrex::Initialized()) {
-        // Initialise with ParmParse defaults that play nicely with EB on
-        // smaller GPUs (T4 on Colab has ~15 GB and AMReX's default arena
-        // tries to grab most of it upfront; with EB metadata the
-        // preallocation can OOM). Use lazy allocation instead.
+        // Initialise with ParmParse defaults that play nicely with smaller GPUs
+        // (T4 on Colab has ~15 GB and AMReX's default arena tries to grab most
+        // of it upfront). Use lazy allocation instead.
         std::vector<std::string> argv_storage = {
             "openimpala",
             "amrex.the_arena_init_size=0",
@@ -167,12 +168,16 @@ static py::dict build_info() {
 // =========================================================================
 static std::shared_ptr<OpenImpala::VoxelImage>
 voxelimage_from_numpy(py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr,
-                      int max_grid_size) {
+                      int max_grid_size, double dx, double dy, double dz,
+                      std::array<bool, 3> periodic) {
     py::buffer_info buf = arr.request();
 
     if (buf.ndim != 3) {
         throw std::runtime_error("Input must be a 3-D NumPy array, got ndim=" +
                                  std::to_string(buf.ndim));
+    }
+    if (dx <= 0.0 || dy <= 0.0 || dz <= 0.0) {
+        throw std::invalid_argument("Voxel sizes (dx, dy, dz) must all be strictly positive.");
     }
 
     // NumPy C-contiguous arrays are shaped (Z, Y, X)
@@ -181,9 +186,10 @@ voxelimage_from_numpy(py::array_t<int32_t, py::array::c_style | py::array::force
     int nx = static_cast<int>(buf.shape[2]);
 
     amrex::Box domain(amrex::IntVect(0, 0, 0), amrex::IntVect(nx - 1, ny - 1, nz - 1));
-    amrex::RealBox rb({0.0, 0.0, 0.0},
-                      {static_cast<double>(nx), static_cast<double>(ny), static_cast<double>(nz)});
-    amrex::Array<int, AMREX_SPACEDIM> is_periodic{0, 0, 0};
+    amrex::RealBox rb({0.0, 0.0, 0.0}, {static_cast<double>(nx) * dx, static_cast<double>(ny) * dy,
+                                        static_cast<double>(nz) * dz});
+    amrex::Array<int, AMREX_SPACEDIM> is_periodic{periodic[0] ? 1 : 0, periodic[1] ? 1 : 0,
+                                                  periodic[2] ? 1 : 0};
 
     auto img = std::make_shared<OpenImpala::VoxelImage>();
     img->geom.define(domain, &rb, amrex::CoordSys::cartesian, is_periodic.data());
@@ -236,6 +242,44 @@ voxelimage_from_numpy(py::array_t<int32_t, py::array::c_style | py::array::force
     return img;
 }
 
+static std::shared_ptr<OpenImpala::VoxelImage>
+voxelimage_with_voxel_size(std::shared_ptr<OpenImpala::VoxelImage> src, double dx, double dy,
+                           double dz, std::array<bool, 3> periodic) {
+    if (!src || !src->mf) {
+        throw std::runtime_error("Cannot update voxel_size on an empty VoxelImage.");
+    }
+    if (dx <= 0.0 || dy <= 0.0 || dz <= 0.0) {
+        throw std::invalid_argument("Voxel sizes (dx, dy, dz) must all be strictly positive.");
+    }
+
+    const amrex::Box& domain = src->geom.Domain();
+    const int nx = domain.length(0);
+    const int ny = domain.length(1);
+    const int nz = domain.length(2);
+
+    amrex::RealBox rb({0.0, 0.0, 0.0}, {static_cast<double>(nx) * dx, static_cast<double>(ny) * dy,
+                                        static_cast<double>(nz) * dz});
+    amrex::Array<int, AMREX_SPACEDIM> is_periodic{periodic[0] ? 1 : 0, periodic[1] ? 1 : 0,
+                                                  periodic[2] ? 1 : 0};
+
+    auto img = std::make_shared<OpenImpala::VoxelImage>();
+    img->geom.define(domain, &rb, amrex::CoordSys::cartesian, is_periodic.data());
+    img->ba = src->ba;
+    img->dm = src->dm;
+
+    const bool same_periodicity = (src->geom.isPeriodic(0) == periodic[0]) &&
+                                  (src->geom.isPeriodic(1) == periodic[1]) &&
+                                  (src->geom.isPeriodic(2) == periodic[2]);
+    if (same_periodicity) {
+        img->mf = src->mf;
+    } else {
+        img->mf = std::make_shared<amrex::iMultiFab>(img->ba, img->dm, 1, 1);
+        amrex::Copy(*(img->mf), *(src->mf), 0, 0, 1, 0);
+        img->mf->FillBoundary(img->geom.periodicity());
+    }
+    return img;
+}
+
 // =========================================================================
 // PYBIND11_MODULE
 // =========================================================================
@@ -265,8 +309,62 @@ PYBIND11_MODULE(_core, m) {
         "one from ``read_image()``.  Pass to solver functions directly.")
 
         .def_static("from_numpy", &voxelimage_from_numpy, py::arg("arr"),
-                    py::arg("max_grid_size") = 32,
-                    "Construct a VoxelImage from a 3-D int32 NumPy array (Z, Y, X order).")
+                    py::arg("max_grid_size") = 32, py::arg("dx") = 1.0, py::arg("dy") = 1.0,
+                    py::arg("dz") = 1.0,
+                    py::arg("periodic") = std::array<bool, 3>{false, false, false},
+                    "Construct a VoxelImage from a 3-D int32 NumPy array (Z, Y, X order) with "
+                    "optional physical cell sizes (dx, dy, dz) and periodicity flags.")
+
+        .def("with_voxel_size", &voxelimage_with_voxel_size, py::arg("dx") = 1.0,
+             py::arg("dy") = 1.0, py::arg("dz") = 1.0,
+             py::arg("periodic") = std::array<bool, 3>{false, false, false},
+             "Return a VoxelImage view sharing the underlying voxel data with updated "
+             "physical cell sizes (dx, dy, dz).")
+
+        .def_property_readonly(
+            "shape",
+            [](const OpenImpala::VoxelImage& v) {
+                if (!v.mf) {
+                    return py::make_tuple(0, 0, 0);
+                }
+                const auto& dom = v.geom.Domain();
+                return py::make_tuple(dom.length(2), dom.length(1), dom.length(0));
+            },
+            "3-D shape in NumPy (nz, ny, nx) order.")
+
+        .def_property_readonly(
+            "voxel_size",
+            [](const OpenImpala::VoxelImage& v) {
+                if (!v.mf) {
+                    return py::make_tuple(1.0, 1.0, 1.0);
+                }
+                const amrex::Real* cs = v.geom.CellSize();
+                return py::make_tuple(static_cast<double>(cs[2]), static_cast<double>(cs[1]),
+                                      static_cast<double>(cs[0]));
+            },
+            "Physical voxel spacing in NumPy (dz, dy, dx) order.")
+
+        .def_property_readonly(
+            "cell_size_xyz",
+            [](const OpenImpala::VoxelImage& v) {
+                if (!v.mf) {
+                    return py::make_tuple(1.0, 1.0, 1.0);
+                }
+                const amrex::Real* cs = v.geom.CellSize();
+                return py::make_tuple(static_cast<double>(cs[0]), static_cast<double>(cs[1]),
+                                      static_cast<double>(cs[2]));
+            },
+            "Physical voxel spacing in AMReX (dx, dy, dz) order.")
+
+        .def(
+            "to_numpy",
+            [](const OpenImpala::VoxelImage& v) {
+                if (!v.mf) {
+                    throw std::runtime_error("Cannot export empty VoxelImage to NumPy.");
+                }
+                return OpenImpala::imultifab_to_numpy(*(v.mf), v.geom, 0);
+            },
+            "Export the 3-D phase array to a C-contiguous int32 NumPy array (nz, ny, nx).")
 
         .def("__repr__", [](const OpenImpala::VoxelImage& v) {
             if (!v.mf)
@@ -282,10 +380,10 @@ PYBIND11_MODULE(_core, m) {
     // I/O readers
     init_io(m);
 
-    // Lightweight property calculators (VolumeFraction, PercolationCheck)
+    // Microstructural property calculators
     init_props(m);
 
-    // Heavy solvers (TortuosityHypre, TortuosityDirect, EffectiveDiffusivityHypre)
+    // Heavy solvers (TortuosityHypre, TortuosityMLMG, TortuosityDirect, EffectiveDiffusivityHypre)
     init_solvers(m);
 
     // Configuration and output helpers (PhysicsConfig, ResultsJSON, CathodeWrite)

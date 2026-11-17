@@ -68,7 +68,8 @@ public:
                               const amrex::iMultiFab& mf_phase_input, const int phase_id,
                               const OpenImpala::Direction dir_of_chi_k,
                               const SolverType solver_type, const std::string& resultspath,
-                              int verbose_level = 1, bool write_plotfile_flag = false);
+                              int verbose_level = 1, bool write_plotfile_flag = false,
+                              const std::map<int, amrex::Real>& phase_coeffs = {});
 
     /** @brief Destructor. Base class handles HYPRE resource cleanup. */
     ~EffectiveDiffusivityHypre() override = default;

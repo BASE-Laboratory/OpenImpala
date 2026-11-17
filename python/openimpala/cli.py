@@ -58,6 +58,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default="smg",
         help="HYPRE Krylov preconditioner: smg or pfmg (default: smg)",
     )
+    p_analyze.add_argument(
+        "--voxel-size",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Physical voxel size: single float (isotropic) or 3 floats DZ DY DX",
+    )
     p_analyze.add_argument("--output", default=None, help="Output JSON path (default: stdout)")
     p_analyze.add_argument("--max-grid-size", type=_parse_max_grid_size, default="auto")
     p_analyze.add_argument("--verbose", type=int, default=0)
@@ -147,9 +154,21 @@ def _cmd_percolation(args: argparse.Namespace) -> int:
 def _cmd_analyze(args: argparse.Namespace) -> int:
     import openimpala as oi
 
+    vz = None
+    if args.voxel_size is not None:
+        if len(args.voxel_size) == 1:
+            vz = args.voxel_size[0]
+        elif len(args.voxel_size) == 3:
+            vz = tuple(args.voxel_size)
+        else:
+            raise SystemExit(
+                f"Error: --voxel-size expects 1 value (isotropic) or 3 values (DZ DY DX), got {len(args.voxel_size)}"
+            )
+
     _, img = oi.read_image(
         args.image,
         threshold=args.threshold,
+        voxel_size=vz,
         max_grid_size=args.max_grid_size,
     )
 
@@ -161,6 +180,8 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         "direction": args.direction.upper(),
         "volume_fraction": vf_res.fraction,
     }
+    if vz is not None:
+        result["voxel_size"] = list(img.voxel_size)
 
     try:
         tau_res = oi.tortuosity(
@@ -187,6 +208,7 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         result["percolates"] = True
         result["active_volume_fraction"] = tau_res.active_volume_fraction
         result["tortuosity"] = tau_res.tortuosity
+        result["effective_diffusivity"] = tau_res.effective_diffusivity
         result["solver_converged"] = tau_res.solver_converged
         result["iterations"] = tau_res.iterations
         result["residual_norm"] = tau_res.residual_norm

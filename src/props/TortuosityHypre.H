@@ -75,7 +75,8 @@ public:
                     const amrex::Real vf, const int phase, const OpenImpala::Direction dir,
                     const SolverType solvertype, const std::string& resultspath,
                     const amrex::Real vlo = 0.0, const amrex::Real vhi = 1.0, int verbose = 0,
-                    bool write_plotfile = false, const PrecondType precond_type = PrecondType::SMG);
+                    bool write_plotfile = false, const PrecondType precond_type = PrecondType::SMG,
+                    const std::map<int, amrex::Real>& phase_coeffs = {});
 
     /** Destructor. Base class handles HYPRE resource cleanup. */
     virtual ~TortuosityHypre() override = default;
@@ -116,6 +117,15 @@ public:
     }
     amrex::Real getActiveVolumeFraction() const {
         return m_active_vf;
+    }
+    amrex::Real getEffectiveDiffusivity() const {
+        return m_deff;
+    }
+    const amrex::MultiFab& getSolutionField() const {
+        return m_mf_phi;
+    }
+    const amrex::Geometry& getGeometry() const {
+        return m_geom;
     }
 
     /** @brief Returns the per-plane flux profile computed after solving. */
@@ -198,9 +208,11 @@ private:
     // Multi-phase configuration
     std::map<int, amrex::Real> m_phase_coeff_map; ///< Maps phase ID -> transport coefficient
     bool m_is_multi_phase = false;                ///< True if multiple conducting phases configured
+    amrex::Real m_max_diff_coeff = 1.0;
 
     // State
     amrex::Real m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
+    amrex::Real m_deff = std::numeric_limits<amrex::Real>::quiet_NaN();
     bool m_first_call = true;
 
     // Results (solver stats m_num_iterations/m_final_res_norm/m_converged are in base class)

@@ -44,6 +44,29 @@ else()
     message(STATUS "Version from Git tag: ${_detected_version}")
 endif()
 
+option(OPENIMPALA_PURE_PYTHON
+    "Install only the pure-Python openimpala package without compiling the C++ _core extension"
+    OFF
+)
+
+if(OPENIMPALA_PURE_PYTHON)
+    project(OpenImpala
+        VERSION ${_detected_version}
+        LANGUAGES NONE
+        DESCRIPTION "Image-based simulation of transport properties in porous media"
+    )
+    message(STATUS "OPENIMPALA_PURE_PYTHON=ON: installing pure-Python package only")
+    add_custom_target(_core)
+    file(GLOB _OPENIMPALA_PY_FILES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/openimpala/*.py"
+    )
+    install(FILES ${_OPENIMPALA_PY_FILES}
+        DESTINATION openimpala
+        COMPONENT python
+    )
+    return()
+endif()
+
 project(OpenImpala
     VERSION ${_detected_version}
     LANGUAGES C CXX

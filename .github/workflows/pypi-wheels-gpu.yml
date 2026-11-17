@@ -6,9 +6,12 @@ on:
       - published
   workflow_dispatch:
 
+env:
+  GPU_DEPS_CACHE_KEY: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-89-noeb-nofort-nompicxx-zstd-v14
+
 jobs:
-  build_gpu_wheels:
-    name: Build CUDA GPU wheels
+  build_core_and_cp39:
+    name: Build CUDA C++ core & cp39 GPU wheel
     runs-on: ubuntu-latest
 
     steps:
@@ -21,8 +24,6 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          # For release events, GITHUB_REF_NAME is the tag (e.g. v4.0.2).
-          # For workflow_dispatch, fall back to git describe.
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
@@ -34,42 +35,41 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel==2.22.0
 
-      # Cache the compiled GPU dependencies (HDF5, libtiff, HYPRE+CUDA, AMReX+CUDA)
-      # These take ~15-20 minutes to build from source with CUDA support.
       - name: Cache native GPU dependencies
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-89-noeb-nofort-nompicxx-v13
+          key: ${{ env.GPU_DEPS_CACHE_KEY }}
 
-      - name: Build GPU wheels
+      - name: Cache CUDA ccache objects (core + cp39)
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-gpu-cuda12.6-cp39-${{ github.sha }}
+          restore-keys: |
+            ccache-gpu-cuda12.6-cp39-
+
+      - name: Build cp39 GPU wheel and populate CUDA core ccache
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
-          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
+          CIBW_BUILD: "cp39-*"
           CIBW_SKIP: "*musllinux* *i686*"
           CIBW_ARCHS_LINUX: "x86_64"
-
-          # Use NVIDIA's CUDA-enabled manylinux image (CUDA 12.6, AlmaLinux 8)
-          # This provides nvcc, CUDA runtime, and cuBLAS/cuSPARSE out of the box.
           CIBW_MANYLINUX_X86_64_IMAGE: sameli/manylinux_2_34_x86_64_cuda_12.6
 
-          # Build all dependencies with CUDA support.
-          # HDF5 and libtiff are CPU-only (no GPU path needed).
-          # HYPRE is built with --with-cuda for GPU-accelerated solves.
-          # AMReX is built with -DAMReX_GPU_BACKEND=CUDA for device kernels.
           CIBW_BEFORE_ALL_LINUX: >
             dnf install -y epel-release &&
             dnf --enablerepo=crb install -y
-            openmpi-devel gcc-c++ wget git
+            openmpi-devel gcc-c++ wget git xz
             zlib-devel libjpeg-turbo-devel python3-pip
             gcc-toolset-13 gcc-toolset-13-gcc gcc-toolset-13-gcc-c++ &&
             pip3 install "cmake>=3.28,<4" &&
-            export PATH=/opt/rh/gcc-toolset-13/root/usr/bin:/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH &&
+            export PATH=/usr/local/bin:/opt/rh/gcc-toolset-13/root/usr/bin:/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH &&
             export CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc &&
             export CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++ &&
             export CUDA_HOME=/usr/local/cuda &&
@@ -111,7 +111,7 @@ jobs:
             CC=mpicc CXX=mpicxx
             CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC -DOMPI_SKIP_MPICXX=1"
             CUDA_HOME=/usr/local/cuda &&
-            sed -i '/^CUDA_ARCH/s/$/ -gencode arch=compute_75,code=compute_75/' config/Makefile.config &&
+            sed -i '/^CUDA_ARCH/s/$/ -gencode arch=compute_75,code=compute_75 -Xfatbin=-compress-all -Xfatbin=-compress-mode=size/' config/Makefile.config &&
             grep '^CUDA_ARCH' config/Makefile.config &&
             make -j$(nproc) &&
             make install &&
@@ -142,51 +142,52 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
             '-DCMAKE_CUDA_ARCHITECTURES=80-real;89-real;75-virtual'
             -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++
-            '-DCMAKE_CUDA_FLAGS=-Xfatbin --compress-all' &&
+            '-DCMAKE_CUDA_FLAGS=-Xfatbin=-compress-all -Xfatbin=-compress-mode=size' &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
             strip --strip-debug /usr/local/lib/libamrex_3d.a /usr/local/lib/libHYPRE.a /usr/local/lib/libhdf5*.a /usr/local/lib/libtiff.a 2>/dev/null || true &&
             mkdir -p /project/.cibw-deps-cache &&
             tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
             fi &&
+            wget -q https://github.com/ccache/ccache/releases/download/v4.10.2/ccache-4.10.2-linux-x86_64.tar.xz -O /tmp/ccache.tar.xz &&
+            tar xf /tmp/ccache.tar.xz -C /usr/local/bin --strip-components=1 &&
+            rm -f /tmp/ccache.tar.xz &&
+            mkdir -p /project/.ccache &&
             echo "=== Patching installed AMReXConfig.cmake (runs on cache hit AND miss) ===" &&
             sed -i 's|set(AMREX_CUDA_ARCHS  CACHE INTERNAL|set(AMREX_CUDA_ARCHS "75;80;89" CACHE INTERNAL|' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake &&
             sed -i 's|CUDA_ARCHITECTURES ${AMREX_CUDA_ARCHS})|CUDA_ARCHITECTURES "${AMREX_CUDA_ARCHS}")|' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake &&
             grep -n 'AMREX_CUDA_ARCHS' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake
 
-          # Rename the package to openimpala-cuda and uncomment the nvidia-*-cu12
-          # runtime deps (kept commented in pyproject.toml so they don't pollute
-          # the CPU wheel). auditwheel --exclude drops the CUDA .so's from the
-          # wheel payload, so without these PyPI deps the wheel breaks on any
-          # machine that doesn't already have the CUDA toolkit installed.
-          # The import name stays 'openimpala' — only the PyPI distribution name changes.
           CIBW_BEFORE_BUILD: >
             pip install "cmake>=3.28,<4" &&
+            rm -rf /tmp/oi-build &&
             sed -i 's/^name = "openimpala"/name = "openimpala-cuda"/' /project/pyproject.toml &&
             sed -i 's/^    #"nvidia-/    "nvidia-/' /project/pyproject.toml
 
-          # Point to MPI, CUDA, and our compiled GPU dependencies.
           CIBW_ENVIRONMENT_LINUX: >
-            PATH="/opt/rh/gcc-toolset-13/root/usr/bin:/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH"
+            PATH="/usr/local/bin:/opt/rh/gcc-toolset-13/root/usr/bin:/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH"
             CC="/opt/rh/gcc-toolset-13/root/usr/bin/gcc"
             CXX="/opt/rh/gcc-toolset-13/root/usr/bin/g++"
             CUDA_HOME="/usr/local/cuda"
             CUDAHOSTCXX="/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+            CCACHE_DIR="/project/.ccache"
+            CCACHE_BASEDIR="/project"
+            CCACHE_NOHASHDIR="true"
+            CCACHE_MAXSIZE="4G"
+            SKBUILD_BUILD_DIR="/tmp/oi-build"
             CMAKE_C_COMPILER="mpicc"
             CMAKE_CXX_COMPILER="mpicxx"
+            CMAKE_C_COMPILER_LAUNCHER="ccache"
+            CMAKE_CXX_COMPILER_LAUNCHER="ccache"
+            CMAKE_CUDA_COMPILER_LAUNCHER="ccache"
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
-            CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=80-real;89-real;75-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++"
-            CUDAFLAGS="-Xfatbin --compress-all"
+            CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=80-real;89-real;75-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++ -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache -DFETCHCONTENT_BASE_DIR=/tmp/fc-deps"
+            CUDAFLAGS="-Xfatbin=-compress-all -Xfatbin=-compress-mode=size"
             SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
 
-          # Vendor libraries but exclude host-specific MPI, OpenMP,
-          # and CUDA runtime libraries (pulled via nvidia-*-cu12 PyPI wheels).
-          # auditwheel --strip strips both vendored libs AND the main _core.so —
-          # combined with AMReX_EB=OFF and the 2 SASS + 1 PTX arch target
-          # (sm_80 + sm_89 native SASS, compute_75 PTX for T4/H100), this keeps
-          # the wheel well under PyPI's 320 MiB ceiling.
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
+            /usr/local/bin/ccache -s &&
             auditwheel repair --strip -w {dest_dir} {wheel}
             --exclude libmpi.so
             --exclude libmpi.so.12
@@ -216,7 +217,184 @@ jobs:
             --exclude libnvJitLink.so
             --exclude libnvJitLink.so.12
 
-      - name: Upload wheels as artifacts
+      - name: Upload cp39 GPU wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-gpu-part-cp39
+          path: ./wheelhouse/*.whl
+          retention-days: 1
+
+  build_matrix_wheels:
+    name: Build ${{ matrix.py }} CUDA GPU wheel
+    needs: build_core_and_cp39
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        py: [cp310, cp311, cp312, cp313]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel==2.22.0
+
+      - name: Restore native GPU dependencies cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cibw-deps-cache
+          key: ${{ env.GPU_DEPS_CACHE_KEY }}
+
+      - name: Cache CUDA ccache objects (${{ matrix.py }})
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-gpu-cuda12.6-${{ matrix.py }}-${{ github.sha }}
+          restore-keys: |
+            ccache-gpu-cuda12.6-cp39-${{ github.sha }}
+            ccache-gpu-cuda12.6-${{ matrix.py }}-
+            ccache-gpu-cuda12.6-cp39-
+
+      - name: Build ${{ matrix.py }} GPU wheel
+        run: python -m cibuildwheel --output-dir wheelhouse
+        env:
+          CIBW_BUILD: "${{ matrix.py }}-*"
+          CIBW_SKIP: "*musllinux* *i686*"
+          CIBW_ARCHS_LINUX: "x86_64"
+          CIBW_MANYLINUX_X86_64_IMAGE: sameli/manylinux_2_34_x86_64_cuda_12.6
+
+          CIBW_BEFORE_ALL_LINUX: >
+            dnf install -y epel-release &&
+            dnf --enablerepo=crb install -y
+            openmpi-devel gcc-c++ wget git xz
+            zlib-devel libjpeg-turbo-devel python3-pip
+            gcc-toolset-13 gcc-toolset-13-gcc gcc-toolset-13-gcc-c++ &&
+            tar xzf /project/.cibw-deps-cache/deps.tar.gz -C / &&
+            wget -q https://github.com/ccache/ccache/releases/download/v4.10.2/ccache-4.10.2-linux-x86_64.tar.xz -O /tmp/ccache.tar.xz &&
+            tar xf /tmp/ccache.tar.xz -C /usr/local/bin --strip-components=1 &&
+            rm -f /tmp/ccache.tar.xz &&
+            mkdir -p /project/.ccache &&
+            pip3 install "cmake>=3.28,<4" &&
+            sed -i 's|set(AMREX_CUDA_ARCHS  CACHE INTERNAL|set(AMREX_CUDA_ARCHS "75;80;89" CACHE INTERNAL|' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake &&
+            sed -i 's|CUDA_ARCHITECTURES ${AMREX_CUDA_ARCHS})|CUDA_ARCHITECTURES "${AMREX_CUDA_ARCHS}")|' /usr/local/lib/cmake/AMReX/AMReXConfig.cmake
+
+          CIBW_BEFORE_BUILD: >
+            pip install "cmake>=3.28,<4" &&
+            rm -rf /tmp/oi-build &&
+            sed -i 's/^name = "openimpala"/name = "openimpala-cuda"/' /project/pyproject.toml &&
+            sed -i 's/^    #"nvidia-/    "nvidia-/' /project/pyproject.toml
+
+          CIBW_ENVIRONMENT_LINUX: >
+            PATH="/usr/local/bin:/opt/rh/gcc-toolset-13/root/usr/bin:/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH"
+            CC="/opt/rh/gcc-toolset-13/root/usr/bin/gcc"
+            CXX="/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+            CUDA_HOME="/usr/local/cuda"
+            CUDAHOSTCXX="/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+            CCACHE_DIR="/project/.ccache"
+            CCACHE_BASEDIR="/project"
+            CCACHE_NOHASHDIR="true"
+            CCACHE_MAXSIZE="4G"
+            SKBUILD_BUILD_DIR="/tmp/oi-build"
+            CMAKE_C_COMPILER="mpicc"
+            CMAKE_CXX_COMPILER="mpicxx"
+            CMAKE_C_COMPILER_LAUNCHER="ccache"
+            CMAKE_CXX_COMPILER_LAUNCHER="ccache"
+            CMAKE_CUDA_COMPILER_LAUNCHER="ccache"
+            CMAKE_PREFIX_PATH="/usr/local"
+            CMAKE_GENERATOR="Unix Makefiles"
+            CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=80-real;89-real;75-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++ -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache -DFETCHCONTENT_BASE_DIR=/tmp/fc-deps"
+            CUDAFLAGS="-Xfatbin=-compress-all -Xfatbin=-compress-mode=size"
+            SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
+
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
+            /usr/local/bin/ccache -s &&
+            auditwheel repair --strip -w {dest_dir} {wheel}
+            --exclude libmpi.so
+            --exclude libmpi.so.12
+            --exclude libmpi.so.40
+            --exclude libmpi_cxx.so
+            --exclude libmpi_cxx.so.1
+            --exclude libmpi_cxx.so.40
+            --exclude libopen-rte.so
+            --exclude libopen-rte.so.40
+            --exclude libopen-pal.so
+            --exclude libopen-pal.so.40
+            --exclude libmpi_mpifh.so
+            --exclude libmpi_mpifh.so.40
+            --exclude libgomp.so.1
+            --exclude libcuda.so
+            --exclude libcuda.so.1
+            --exclude libcudart.so
+            --exclude libcudart.so.12
+            --exclude libcublas.so
+            --exclude libcublas.so.12
+            --exclude libcublasLt.so
+            --exclude libcublasLt.so.12
+            --exclude libcusparse.so
+            --exclude libcusparse.so.12
+            --exclude libcurand.so
+            --exclude libcurand.so.10
+            --exclude libnvJitLink.so
+            --exclude libnvJitLink.so.12
+
+      - name: Upload ${{ matrix.py }} GPU wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-gpu-part-${{ matrix.py }}
+          path: ./wheelhouse/*.whl
+          retention-days: 1
+
+  bundle_gpu_wheels:
+    name: Bundle & verify CUDA GPU wheels
+    needs: [build_core_and_cp39, build_matrix_wheels]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all GPU wheel parts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-wheels-gpu-part-*
+          merge-multiple: true
+          path: wheelhouse/
+
+      - name: Verify complete GPU wheelhouse and PyPI 320 MB limit
+        run: |
+          ls -lh wheelhouse/
+          COUNT=$(ls -1 wheelhouse/*.whl | wc -l)
+          if [ "$COUNT" -ne 5 ]; then
+            echo "::error::Expected 5 GPU wheels (cp39..cp313), found $COUNT"
+            exit 1
+          fi
+          MAX_BYTES=315000000
+          for whl in wheelhouse/*.whl; do
+            SZ=$(stat -c%s "$whl")
+            echo "$whl: $SZ bytes ($((SZ / 1000000)) MB)"
+            if [ "$SZ" -gt "$MAX_BYTES" ]; then
+              echo "::error::Wheel $whl ($SZ bytes) exceeds PyPI 320 MB limit"
+              exit 1
+            fi
+          done
+
+      - name: Upload unified GPU wheelhouse artifact
         uses: actions/upload-artifact@v4
         with:
           name: cibw-wheels-gpu
@@ -224,7 +402,7 @@ jobs:
 
   publish_to_pypi:
     name: Publish GPU wheels to PyPI (openimpala-cuda)
-    needs: build_gpu_wheels
+    needs: bundle_gpu_wheels
     runs-on: ubuntu-latest
     # Only publish on release; workflow_dispatch leaves the artifact for manual
     # inspection without touching PyPI.

@@ -36,9 +36,10 @@ TortuosityMLMG::TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArra
                                const int phase, const OpenImpala::Direction dir,
                                const std::string& resultspath, const amrex::Real vlo,
                                const amrex::Real vhi, int verbose, bool write_plotfile,
-                               amrex::Real eps, int maxiter, int max_coarsening_level)
+                               amrex::Real eps, int maxiter, int max_coarsening_level,
+                               const std::map<int, amrex::Real>& phase_coeffs)
     : TortuositySolverBase(geom, ba, dm, mf_phase_input, vf, phase, dir, resultspath, vlo, vhi,
-                           verbose, write_plotfile) {
+                           verbose, write_plotfile, phase_coeffs) {
     m_eps = eps;
     m_maxiter = maxiter;
     m_max_coarsening_level = max_coarsening_level;
@@ -140,7 +141,8 @@ bool TortuosityMLMG::solve() {
     // diffusion operator so its coarse-grid average does not overwhelm the
     // diffusion mode on long connected paths.
     const amrex::Real length = m_geom.ProbLength(idir);
-    op.setScalars(1. / (length * length), 1.);
+    const amrex::Real d_scale = (m_max_diff_coeff > 0.0) ? m_max_diff_coeff : 1.0;
+    op.setScalars(d_scale / (length * length), 1.);
     amrex::MultiFab acoef(m_ba, m_dm, 1, 0);
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
@@ -197,7 +199,7 @@ bool TortuosityMLMG::solve() {
     const amrex::Real n_cross =
         static_cast<amrex::Real>(domain.numPts()) / static_cast<amrex::Real>(domain.length(idir));
     const amrex::Real est_bndry_cells = std::max<amrex::Real>(1.0, m_active_vf * n_cross);
-    const amrex::Real bndry_scale = (dv > 0.0) ? (2.0 * dv / (dx_dir * dx_dir)) : 1.0;
+    const amrex::Real bndry_scale = (dv > 0.0) ? (2.0 * d_scale * dv / (dx_dir * dx_dir)) : d_scale;
     const amrex::Real tol_abs_inf = m_eps * bndry_scale;
     const amrex::Real tol_abs_2 = m_eps * bndry_scale * std::sqrt(est_bndry_cells);
 

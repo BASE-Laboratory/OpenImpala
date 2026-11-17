@@ -88,7 +88,8 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
     const amrex::Geometry& geom, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm,
     const amrex::iMultiFab& mf_phase_input, const int phase_id_arg,
     const OpenImpala::Direction dir_of_chi_k, const SolverType solver_type,
-    const std::string& resultspath, int verbose_level, bool write_plotfile_flag)
+    const std::string& resultspath, int verbose_level, bool write_plotfile_flag,
+    const std::map<int, amrex::Real>& phase_coeffs)
     : HypreStructSolver(geom, ba, dm, solver_type, 1e-9, 1000, verbose_level),
       m_mf_phase_original(ba, dm, mf_phase_input.nComp(), mf_phase_input.nGrow()),
       m_phase_id(phase_id_arg), m_dir_solve(dir_of_chi_k), m_resultspath(resultspath),
@@ -141,24 +142,33 @@ EffectiveDiffusivityHypre::EffectiveDiffusivityHypre(
 
     // --- Multi-phase transport coefficient parsing ---
     {
-        amrex::ParmParse pp_tort("tortuosity");
-        amrex::Vector<int> active_phases_vec;
-        amrex::Vector<amrex::Real> phase_diffs_vec;
-        pp_tort.queryarr("active_phases", active_phases_vec);
-        pp_tort.queryarr("phase_diffusivities", phase_diffs_vec);
-
-        if (!active_phases_vec.empty() && !phase_diffs_vec.empty()) {
-            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-                active_phases_vec.size() == phase_diffs_vec.size(),
-                "tortuosity.active_phases and tortuosity.phase_diffusivities must have the same "
-                "length");
-            for (size_t idx = 0; idx < active_phases_vec.size(); ++idx) {
-                m_phase_coeff_map[active_phases_vec[idx]] = phase_diffs_vec[idx];
+        if (!phase_coeffs.empty()) {
+            for (const auto& kv : phase_coeffs) {
+                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(kv.second >= 0.0,
+                                                 "Phase diffusivities must be non-negative");
+                m_phase_coeff_map[kv.first] = kv.second;
             }
             m_is_multi_phase = true;
         } else {
-            m_phase_coeff_map[m_phase_id] = 1.0;
-            m_is_multi_phase = false;
+            amrex::ParmParse pp_tort("tortuosity");
+            amrex::Vector<int> active_phases_vec;
+            amrex::Vector<amrex::Real> phase_diffs_vec;
+            pp_tort.queryarr("active_phases", active_phases_vec);
+            pp_tort.queryarr("phase_diffusivities", phase_diffs_vec);
+
+            if (!active_phases_vec.empty() && !phase_diffs_vec.empty()) {
+                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                    active_phases_vec.size() == phase_diffs_vec.size(),
+                    "tortuosity.active_phases and tortuosity.phase_diffusivities must have the "
+                    "same length");
+                for (size_t idx = 0; idx < active_phases_vec.size(); ++idx) {
+                    m_phase_coeff_map[active_phases_vec[idx]] = phase_diffs_vec[idx];
+                }
+                m_is_multi_phase = true;
+            } else {
+                m_phase_coeff_map[m_phase_id] = 1.0;
+                m_is_multi_phase = false;
+            }
         }
     }
 

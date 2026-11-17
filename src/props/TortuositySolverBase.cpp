@@ -43,7 +43,8 @@ TortuositySolverBase::TortuositySolverBase(const amrex::Geometry& geom, const am
                                            const amrex::Real vf, const int phase,
                                            const OpenImpala::Direction dir,
                                            const std::string& resultspath, const amrex::Real vlo,
-                                           const amrex::Real vhi, int verbose, bool write_plotfile)
+                                           const amrex::Real vhi, int verbose, bool write_plotfile,
+                                           const std::map<int, amrex::Real>& phase_coeffs)
     : m_geom(geom), m_ba(ba), m_dm(dm),
       m_mf_phase(ba, dm, mf_phase_input.nComp(), mf_phase_input.nGrow()), m_phase(phase), m_vf(vf),
       m_dir(dir), m_vlo(vlo), m_vhi(vhi), m_resultspath(resultspath),
@@ -57,6 +58,46 @@ TortuositySolverBase::TortuositySolverBase(const amrex::Geometry& geom, const am
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_vf >= 0.0 && m_vf <= 1.0,
                                      "Volume fraction must be between 0 and 1");
 
+    // Configure phase transport coefficients (explicit map overrides ParmParse)
+    if (!phase_coeffs.empty()) {
+        for (const auto& kv : phase_coeffs) {
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(kv.second >= 0.0,
+                                             "Phase diffusivities must be non-negative");
+            m_phase_coeff_map[kv.first] = kv.second;
+        }
+        m_is_multi_phase = true;
+    } else {
+        amrex::Vector<int> active_phases_vec;
+        amrex::Vector<amrex::Real> phase_diffs_vec;
+        pp_tort.queryarr("active_phases", active_phases_vec);
+        pp_tort.queryarr("phase_diffusivities", phase_diffs_vec);
+        if (!active_phases_vec.empty() && !phase_diffs_vec.empty()) {
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                active_phases_vec.size() == phase_diffs_vec.size(),
+                "tortuosity.active_phases and tortuosity.phase_diffusivities must have the same "
+                "length");
+            for (size_t idx = 0; idx < active_phases_vec.size(); ++idx) {
+                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(phase_diffs_vec[idx] >= 0.0,
+                                                 "Phase diffusivities must be non-negative");
+                m_phase_coeff_map[active_phases_vec[idx]] = phase_diffs_vec[idx];
+            }
+            m_is_multi_phase = true;
+        } else {
+            m_phase_coeff_map[m_phase] = 1.0;
+            m_is_multi_phase = false;
+        }
+    }
+
+    m_max_diff_coeff = 0.0;
+    for (const auto& kv : m_phase_coeff_map) {
+        if (kv.second > m_max_diff_coeff) {
+            m_max_diff_coeff = kv.second;
+        }
+    }
+    if (m_max_diff_coeff <= 0.0) {
+        m_max_diff_coeff = 1.0;
+    }
+
     // Precondition phase data (remove isolated cells)
     preconditionPhaseFab();
 
@@ -64,7 +105,12 @@ TortuositySolverBase::TortuositySolverBase(const amrex::Geometry& geom, const am
     buildDiffusionCoeffField();
 
     // Generate activity mask via flood fill
-    generateActivityMask(m_mf_phase, m_phase, m_dir);
+    if (m_is_multi_phase) {
+        amrex::iMultiFab mf_traversable = buildTraversableMask();
+        generateActivityMask(mf_traversable, 1, m_dir);
+    } else {
+        generateActivityMask(m_mf_phase, m_phase, m_dir);
+    }
 
     if (m_active_vf <= std::numeric_limits<amrex::Real>::epsilon()) {
         if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
@@ -73,6 +119,7 @@ TortuositySolverBase::TortuositySolverBase(const amrex::Geometry& geom, const am
         }
         m_first_call = false;
         m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
+        m_deff = 0.0;
     }
 }
 
@@ -129,19 +176,63 @@ void TortuositySolverBase::buildDiffusionCoeffField() {
     BL_PROFILE("TortuositySolverBase::buildDiffusionCoeffField");
 
     m_mf_diff_coeff.setVal(0.0);
+    if (m_is_multi_phase) {
+        int max_pid = 0;
+        for (const auto& kv : m_phase_coeff_map) {
+            max_pid = std::max(max_pid, kv.first);
+        }
+        amrex::Gpu::DeviceVector<amrex::Real> d_coeff_lut(max_pid + 1, 0.0);
+        amrex::Gpu::HostVector<amrex::Real> h_coeff_lut(max_pid + 1, 0.0);
+        for (const auto& kv : m_phase_coeff_map) {
+            if (kv.first >= 0) {
+                h_coeff_lut[kv.first] = kv.second;
+            }
+        }
+        amrex::Gpu::copy(amrex::Gpu::hostToDevice, h_coeff_lut.begin(), h_coeff_lut.end(),
+                         d_coeff_lut.begin());
+        const amrex::Real* lut_ptr = d_coeff_lut.data();
+        const int lut_size = max_pid + 1;
+
+        for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.growntilebox();
+            amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
+            amrex::Array4<const int> const phase_arr = m_mf_phase.const_array(mfi);
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                int pid = phase_arr(i, j, k, 0);
+                dc_arr(i, j, k, 0) = (pid >= 0 && pid < lut_size) ? lut_ptr[pid] : 0.0;
+            });
+        }
+    } else {
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-    for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& bx = mfi.growntilebox();
-        amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
-        amrex::Array4<const int> const phase_arr = m_mf_phase.const_array(mfi);
-        const int target_phase = m_phase;
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-            dc_arr(i, j, k, 0) = (phase_arr(i, j, k, 0) == target_phase) ? 1.0 : 0.0;
-        });
+        for (amrex::MFIter mfi(m_mf_diff_coeff, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.growntilebox();
+            amrex::Array4<amrex::Real> const dc_arr = m_mf_diff_coeff.array(mfi);
+            amrex::Array4<const int> const phase_arr = m_mf_phase.const_array(mfi);
+            const int target_phase = m_phase;
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                dc_arr(i, j, k, 0) = (phase_arr(i, j, k, 0) == target_phase) ? 1.0 : 0.0;
+            });
+        }
     }
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
+}
+
+// --- buildTraversableMask ---
+amrex::iMultiFab TortuositySolverBase::buildTraversableMask() {
+    amrex::iMultiFab mf_binary_traversable(m_ba, m_dm, 1, m_mf_phase.nGrow());
+    mf_binary_traversable.setVal(0);
+    for (amrex::MFIter mfi(mf_binary_traversable, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.growntilebox();
+        amrex::Array4<int> const trav_arr = mf_binary_traversable.array(mfi);
+        amrex::Array4<const amrex::Real> const dc_arr = m_mf_diff_coeff.const_array(mfi);
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            trav_arr(i, j, k, 0) = (dc_arr(i, j, k, 0) > 0.0) ? 1 : 0;
+        });
+    }
+    mf_binary_traversable.FillBoundary(m_geom.periodicity());
+    return mf_binary_traversable;
 }
 
 // --- generateActivityMask ---
@@ -376,7 +467,8 @@ void TortuositySolverBase::computePlaneFluxes(const amrex::MultiFab& mf_soln) {
     }
 
     amrex::Real abs_mean = std::abs(mean_flux);
-    m_plane_flux_max_dev = (abs_mean > tiny_flux_threshold) ? max_abs_dev / abs_mean : 0.0;
+    m_plane_flux_max_dev =
+        (abs_mean > std::numeric_limits<amrex::Real>::min()) ? max_abs_dev / abs_mean : 0.0;
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "  Interior Plane Flux Check (" << n_faces << " faces):\n";
@@ -424,6 +516,7 @@ amrex::Real TortuositySolverBase::value(const bool refresh) {
     if (m_first_call || refresh) {
         if (m_active_vf <= std::numeric_limits<amrex::Real>::epsilon()) {
             m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
+            m_deff = 0.0;
             m_first_call = false;
             return m_value;
         }
@@ -435,6 +528,7 @@ amrex::Real TortuositySolverBase::value(const bool refresh) {
                 amrex::Print() << "WARNING: Solver did not converge. Returning NaN." << std::endl;
             }
             m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
+            m_deff = std::numeric_limits<amrex::Real>::quiet_NaN();
             m_first_call = false;
             return m_value;
         }
@@ -442,6 +536,24 @@ amrex::Real TortuositySolverBase::value(const bool refresh) {
         if (!m_fluxes_precomputed) {
             globalFluxes();
         }
+
+        amrex::Real L = m_geom.ProbLength(static_cast<int>(m_dir));
+        amrex::Real A = 1.0;
+        if (AMREX_SPACEDIM == 3) {
+            if (m_dir == Direction::X)
+                A = m_geom.ProbLength(1) * m_geom.ProbLength(2);
+            else if (m_dir == Direction::Y)
+                A = m_geom.ProbLength(0) * m_geom.ProbLength(2);
+            else
+                A = m_geom.ProbLength(0) * m_geom.ProbLength(1);
+        } else if (AMREX_SPACEDIM == 2) {
+            A = (m_dir == Direction::X) ? m_geom.ProbLength(1) : m_geom.ProbLength(0);
+        }
+        amrex::Real gradPhi = (m_vhi - m_vlo) / L;
+        amrex::Real d_scale = (m_max_diff_coeff > 0.0) ? m_max_diff_coeff : 1.0;
+        amrex::Real ref_flux =
+            (A * std::abs(gradPhi) > 0.0) ? (d_scale * A * std::abs(gradPhi)) : 1.0;
+        amrex::Real scaled_flux_threshold = tiny_flux_threshold * ref_flux;
 
         // Flux conservation check.
         //
@@ -469,7 +581,7 @@ amrex::Real TortuositySolverBase::value(const bool refresh) {
         amrex::Real flux_mag_out = std::abs(m_flux_out);
         amrex::Real flux_mag_avg = 0.5 * (flux_mag_in + flux_mag_out);
         amrex::Real boundary_rel_diff = 0.0;
-        if (flux_mag_avg > tiny_flux_threshold) {
+        if (flux_mag_avg > scaled_flux_threshold) {
             boundary_rel_diff = std::abs(flux_mag_in - flux_mag_out) / flux_mag_avg;
             if (boundary_rel_diff > flux_tol)
                 flux_conserved = false;
@@ -492,26 +604,10 @@ amrex::Real TortuositySolverBase::value(const bool refresh) {
                                << std::endl;
             }
             m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
+            m_deff = std::numeric_limits<amrex::Real>::quiet_NaN();
         } else {
             amrex::Real vf_for_calc = m_active_vf;
-            amrex::Real L = m_geom.ProbLength(static_cast<int>(m_dir));
-            amrex::Real A = 1.0;
-            if (AMREX_SPACEDIM == 3) {
-                if (m_dir == Direction::X)
-                    A = m_geom.ProbLength(1) * m_geom.ProbLength(2);
-                else if (m_dir == Direction::Y)
-                    A = m_geom.ProbLength(0) * m_geom.ProbLength(2);
-                else
-                    A = m_geom.ProbLength(0) * m_geom.ProbLength(1);
-            } else if (AMREX_SPACEDIM == 2) {
-                A = (m_dir == Direction::X) ? m_geom.ProbLength(1) : m_geom.ProbLength(0);
-            }
-            amrex::Real gradPhi = (m_vhi - m_vlo) / L;
 
-            // Use mean of interior plane fluxes when available and valid.
-            // Fall back to boundary fluxes if plane fluxes are NaN (can
-            // happen with EB solvers where computePlaneFluxes reads ghost
-            // cells across covered/regular FAB boundaries).
             amrex::Real avg_flux_mag;
             bool plane_fluxes_valid = false;
             if (!m_plane_fluxes.empty()) {
@@ -525,17 +621,21 @@ amrex::Real TortuositySolverBase::value(const bool refresh) {
                 avg_flux_mag = 0.5 * (std::abs(m_flux_in) + std::abs(m_flux_out));
             }
 
-            if (avg_flux_mag < tiny_flux_threshold) {
+            if (avg_flux_mag < scaled_flux_threshold) {
+                m_deff = 0.0;
                 m_value = (vf_for_calc > std::numeric_limits<amrex::Real>::epsilon())
                               ? std::numeric_limits<amrex::Real>::infinity()
                               : std::numeric_limits<amrex::Real>::quiet_NaN();
             } else if (vf_for_calc <= std::numeric_limits<amrex::Real>::epsilon()) {
+                m_deff = 0.0;
                 m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
-            } else if (std::abs(gradPhi) < tiny_flux_threshold) {
+            } else if (std::abs(gradPhi) <= std::numeric_limits<amrex::Real>::min()) {
+                m_deff = 0.0;
                 m_value = std::numeric_limits<amrex::Real>::infinity();
             } else {
                 amrex::Real Deff = (avg_flux_mag / A) / std::abs(gradPhi);
-                if (std::abs(Deff) < tiny_flux_threshold) {
+                m_deff = Deff;
+                if (std::abs(Deff) < tiny_flux_threshold * d_scale) {
                     m_value = std::numeric_limits<amrex::Real>::infinity();
                 } else {
                     m_value = vf_for_calc / Deff;
