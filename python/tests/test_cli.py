@@ -104,3 +104,14 @@ def test_cmd_analyze_mlmg_and_non_percolating(monkeypatch, capsys):
     payload2 = json.loads(capsys.readouterr().out)
     assert payload2["percolates"] is False
     assert payload2["tortuosity"] is None
+
+
+def test_build_info_fallback_outside_session(monkeypatch):
+    import openimpala.facade as facade_mod
+
+    monkeypatch.setattr(facade_mod, "_is_pure_python", lambda: False)
+    monkeypatch.setattr(facade_mod, "_has_core", lambda: False)
+    info = oi.build_info()
+    assert info["backend"] == "pure-python"
+    assert info["version"] == oi.__version__
+

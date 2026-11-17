@@ -15,7 +15,7 @@ from typing import Optional, Union
 import numpy as np
 
 from .exceptions import ConvergenceError, PercolationError
-from .session import Session
+from .session import Session, _has_core
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +580,7 @@ def build_info() -> dict:
     """
     from . import __version__
 
-    if _is_pure_python():
+    if _is_pure_python() or not _has_core():
         # Pure-Python fallback (SciPy/CuPy) — no compiled backend at all.
         # CuPy CG is GPU-accelerated but has no OpenMP / HYPRE / TinyProfile.
         try:

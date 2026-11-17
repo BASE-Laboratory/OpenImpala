@@ -35,18 +35,18 @@ jobs:
           python-version: "3.x"
 
       - name: Install cibuildwheel
-        run: python -m pip install cibuildwheel==2.16.5
+        run: python -m pip install cibuildwheel==2.22.0
 
       - name: Cache native dependencies
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-tinyprof-eb-v6
+          key: cibw-deps-manylinux_2_28-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-tinyprof-noeb-nofort-nompicxx-v8
 
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
-          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-*"
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
           CIBW_SKIP: "*musllinux* *i686*"
           CIBW_ARCHS_LINUX: "x86_64"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
@@ -54,7 +54,7 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: >
             dnf install -y epel-release &&
             dnf --enablerepo=powertools install -y
-            openmpi-devel gcc-gfortran gcc-c++ wget git
+            openmpi-devel gcc-c++ wget git
             zlib-devel libjpeg-turbo-devel python3-pip &&
             pip3 install "cmake>=3.28,<4" &&
             export PATH=/usr/lib64/openmpi/bin:$PATH &&
@@ -66,7 +66,7 @@ jobs:
             wget -q https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.6/hdf5-1.14.6.tar.gz &&
             tar xzf hdf5-1.14.6.tar.gz &&
             cd hdf5-1.14.6 &&
-            CC=mpicc CXX=mpicxx ./configure
+            CC=mpicc CXX=mpicxx CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC -DOMPI_SKIP_MPICXX=1" ./configure
             --prefix=/usr/local
             --enable-parallel
             --enable-cxx
@@ -90,9 +90,9 @@ jobs:
             wget -q https://github.com/hypre-space/hypre/archive/v2.31.0.tar.gz &&
             tar xzf v2.31.0.tar.gz &&
             cd hypre-2.31.0/src &&
-            ./configure --prefix=/usr/local --with-MPI --enable-shared=no
-            CC=mpicc CXX=mpicxx FC=mpif90
-            CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" FFLAGS="-O2 -fPIC" &&
+            ./configure --prefix=/usr/local --with-MPI --disable-fortran --enable-shared=no
+            CC=mpicc CXX=mpicxx
+            CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC -DOMPI_SKIP_MPICXX=1" &&
             make -j$(nproc) &&
             make install &&
             cd ../.. &&
@@ -103,14 +103,17 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF
             -DAMReX_MPI=ON
             -DAMReX_OMP=ON
-            -DAMReX_EB=ON
+            -DAMReX_EB=OFF
             -DAMReX_SPACEDIM=3
-            -DAMReX_FORTRAN=ON
+            -DAMReX_FORTRAN=OFF
             -DAMReX_PARTICLES=OFF
             -DAMReX_TINY_PROFILE=ON
+            -DMPI_CXX_SKIP_MPICXX=ON
+            '-DCMAKE_CXX_FLAGS=-DOMPI_SKIP_MPICXX=1'
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
+            strip --strip-debug /usr/local/lib/libamrex_3d.a /usr/local/lib/libHYPRE.a /usr/local/lib/libhdf5*.a /usr/local/lib/libtiff.a 2>/dev/null || true &&
             mkdir -p /project/.cibw-deps-cache &&
             tar czf /project/.cibw-deps-cache/deps.tar.gz /usr/local ;
             fi
@@ -140,8 +143,6 @@ jobs:
             --exclude libmpi_mpifh.so
             --exclude libmpi_mpifh.so.40
             --exclude libgomp.so.1
-            --exclude libgfortran.so.5
-            --exclude libquadmath.so.0
 
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v4
@@ -153,6 +154,9 @@ jobs:
     name: Publish wheels to PyPI
     needs: build_wheels
     runs-on: ubuntu-latest
+    # Only publish on release; workflow_dispatch leaves the artifact for manual
+    # inspection without touching PyPI.
+    if: github.event_name == 'release'
     environment: pypi
     permissions:
       id-token: write

@@ -12,7 +12,7 @@ The codebase is organized into three layers:
 |-------|----------|---------|
 | **I/O Readers** | `src/io/` | Read TIFF, HDF5, RAW, DAT images into `amrex::iMultiFab` |
 | **Physics Solvers** | `src/props/` | Solve transport equations, compute effective properties |
-| **Fortran Kernels** | `src/props/*.F90` | Performance-critical matrix fill and flux calculations |
+| **Compute Kernels** | `src/props/*Kernels.H`, `*Fill*.H` | Native C++ AMReX CPU/GPU stencil assembly and flux kernels |
 
 ## Key Classes
 
@@ -42,8 +42,8 @@ TIFF/HDF5/RAW file
     -> PercolationCheck (connectivity?)
     -> VolumeFraction (phase fraction?)
     -> TortuosityHypre or EffDiffusivityHypre
-      -> Fortran kernel fills HYPRE matrix
-      -> HYPRE solve
+      -> C++ AMReX kernel fills HYPRE/MLMG operator
+      -> Linear solve
       -> Flux integration -> D_eff, tortuosity
         -> ResultsJSON -> results.json
 ```

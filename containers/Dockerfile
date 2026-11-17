@@ -22,7 +22,7 @@ RUN dnf update -y && \
     dnf install -y epel-release && \
     dnf update -y && \
     dnf install -y \
-        gcc gcc-gfortran gcc-c++ make \
+        gcc gcc-c++ make \
         wget git patch \
         python3 python3-pip \
         hostname \
@@ -60,19 +60,18 @@ RUN wget https://download.open-mpi.org/release/open-mpi/v${OPENMPI_VERSION%.*}/o
     rm -rf openmpi-${OPENMPI_VERSION}* && \
     ldconfig # Update library cache
 
-# --- Install HDF5 (with Parallel, Fortran, C++) ---
+# --- Install HDF5 (with Parallel and C++) ---
 ARG HDF5_VERSION
 ENV HDF5_INSTALL_PREFIX=/opt/hdf5/${HDF5_VERSION}
 RUN wget https://support.hdfgroup.org/ftp/HDF5/releases/hdf5-${HDF5_VERSION%.*}/hdf5-${HDF5_VERSION}/src/hdf5-${HDF5_VERSION}.tar.gz --no-check-certificate && \
     tar -xzf hdf5-${HDF5_VERSION}.tar.gz && \
     cd hdf5-${HDF5_VERSION} && \
-    export CFLAGS="-O3 -march=native" && export CXXFLAGS="${CFLAGS}" && export FCFLAGS="${CFLAGS}" && \
-    CC=mpicc CXX=mpicxx FC=mpif90 ./configure \
+    export CFLAGS="-O3 -march=native" && export CXXFLAGS="${CFLAGS} -DOMPI_SKIP_MPICXX=1" && \
+    CC=mpicc CXX=mpicxx ./configure \
         --prefix=${HDF5_INSTALL_PREFIX} \
         --enable-parallel \
-        --enable-fortran \
-        --enable-fortran2003 \
         --enable-cxx \
+        --enable-unsupported \
         --enable-shared \
         --disable-static && \
     make -j$(nproc) install && \
@@ -90,13 +89,12 @@ RUN git clone --depth 1 --branch ${AMREX_VERSION} https://github.com/AMReX-Codes
         -DCMAKE_BUILD_TYPE=Release \
         -DAMReX_MPI=ON \
         -DAMReX_OMP=ON \
-        -DAMReX_EB=ON \
+        -DAMReX_EB=OFF \
+        -DAMReX_FORTRAN=OFF \
         -DCMAKE_CXX_COMPILER=mpicxx \
         -DCMAKE_C_COMPILER=mpicc \
-        -DCMAKE_Fortran_COMPILER=mpif90 \
-        -DCMAKE_CXX_FLAGS="-O3 -march=native" \
-        -DCMAKE_C_FLAGS="-O3 -march=native" \
-        -DCMAKE_Fortran_FLAGS="-O3 -march=native" && \
+        -DCMAKE_CXX_FLAGS="-O3 -march=native -DOMPI_SKIP_MPICXX=1" \
+        -DCMAKE_C_FLAGS="-O3 -march=native" && \
     make -j$(nproc) install && \
     cd ../.. && \
     rm -rf amrex
@@ -109,9 +107,10 @@ RUN git clone --depth 1 --branch ${HYPRE_VERSION} https://github.com/hypre-space
     CC=mpicc CXX=mpicxx ./configure \
         --prefix=${HYPRE_INSTALL_PREFIX} \
         --with-MPI \
+        --disable-fortran \
         --enable-shared \
         CFLAGS="-O3 -march=native" \
-        CXXFLAGS="-O3 -march=native" && \
+        CXXFLAGS="-O3 -march=native -DOMPI_SKIP_MPICXX=1" && \
     make -j$(nproc) install && \
     cd ../.. && \
     rm -rf hypre

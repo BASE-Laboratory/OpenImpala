@@ -66,6 +66,9 @@ target_include_directories(_core PRIVATE
 # Compile with C++17 to match the rest of the project
 target_compile_features(_core PRIVATE cxx_std_17)
 
+# Drop unused DT_NEEDED libraries (e.g. deprecated libmpi_cxx.so injected by OpenMPI 4's mpicxx wrapper)
+target_link_options(_core PRIVATE $<$<LINK_LANGUAGE:CXX>:-Wl,--as-needed>)
+
 # --- Place the compiled extension directly into the Python package ---
 # This ensures Python's relative imports (from . import _core) work 
 # natively during local testing. We skip this during wheel builds 
