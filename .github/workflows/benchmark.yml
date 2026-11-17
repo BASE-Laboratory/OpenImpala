@@ -99,19 +99,22 @@ jobs:
           import json
           import time
           import numpy as np
+          from scipy.ndimage import gaussian_filter
           import openimpala as oi
 
           sizes = [int(s) for s in os.environ.get("BENCH_SIZES", "64,128").split(",")]
-          solvers = ["pcg", "flexgmres", "bicgstab", "gmres"]
+          solvers = ["mlmg", "pcg", "flexgmres", "bicgstab", "gmres"]
           n_repeats = 3
           results = []
+          porous_results = []
 
           with oi.Session():
               for size in sizes:
-                  print(f"\n=== Benchmarking {size}³ ===", flush=True)
+                  print(f"\n=== Uniform Benchmark {size}³ ===", flush=True)
 
-                  # Generate uniform block (analytical solution: tau = (N-1)/N)
+                  # Generate uniform block (analytical solution with exterior face BCs: tau = 1.0)
                   data = np.zeros((size, size, size), dtype=np.int32)
+                  expected_tau = 1.0
 
                   for solver_name in solvers:
                       times = []
@@ -134,10 +137,10 @@ jobs:
 
                       if not failed and res is not None:
                           median_t = float(np.median(times))
-                          expected_tau = (size - 1) / size
                           tau_error = abs(res.tortuosity - expected_tau) / expected_tau
 
                           record = {
+                              "geometry": "uniform",
                               "size": size,
                               "solver": solver_name,
                               "wall_time_s": round(median_t, 4),
@@ -154,18 +157,91 @@ jobs:
                                 f"iters={res.iterations}")
                       else:
                           results.append({
+                              "geometry": "uniform",
                               "size": size, "solver": solver_name,
                               "wall_time_s": None, "tortuosity": None,
-                              "expected_tau": (size - 1) / size,
+                              "expected_tau": expected_tau,
                               "relative_error": None, "iterations": None,
                               "converged": False,
                           })
 
+              porous_sizes = sorted({32, *sizes})
+              for size in porous_sizes:
+                  print(f"\n=== Porous Media Benchmark {size}³ ===", flush=True)
+                  rng = np.random.default_rng(42)
+                  field = gaussian_filter(rng.standard_normal((size, size, size)), sigma=1.5)
+                  pore = (field > np.percentile(field, 45)).astype(np.int32)
+
+                  # Reference solve: HYPRE PCG + SMG
+                  t0 = time.perf_counter()
+                  ref = oi.tortuosity(
+                      pore, phase=1, direction="z",
+                      solver="pcg", preconditioner="smg", max_grid_size=32, verbose=0
+                  )
+                  ref_t = time.perf_counter() - t0
+                  print(f"  {'pcg+smg':12s}  {ref_t:.4f}s  "
+                        f"τ={ref.tortuosity:.6f}  iters={ref.iterations}")
+                  porous_results.append({
+                      "geometry": "porous",
+                      "size": size,
+                      "solver": "pcg+smg",
+                      "wall_time_s": round(ref_t, 4),
+                      "tortuosity": round(ref.tortuosity, 6),
+                      "expected_tau": round(ref.tortuosity, 6),
+                      "relative_error": 0.0,
+                      "iterations": ref.iterations,
+                      "converged": ref.solver_converged,
+                  })
+
+                  # Masked voxel MLMG solve
+                  mlmg_times = []
+                  mlmg_res = None
+                  mlmg_failed = False
+                  for _ in range(n_repeats):
+                      try:
+                          t0 = time.perf_counter()
+                          mlmg_res = oi.tortuosity(
+                              pore, phase=1, direction="z",
+                              solver="mlmg", max_grid_size=32, verbose=0
+                          )
+                          mlmg_times.append(time.perf_counter() - t0)
+                      except Exception as e:
+                          print(f"  mlmg: FAILED — {e}")
+                          mlmg_failed = True
+                          break
+
+                  if not mlmg_failed and mlmg_res is not None:
+                      median_t = float(np.median(mlmg_times))
+                      rel_diff = abs(mlmg_res.tortuosity - ref.tortuosity) / ref.tortuosity
+                      print(f"  {'mlmg':12s}  {median_t:.4f}s  "
+                            f"τ={mlmg_res.tortuosity:.6f}  "
+                            f"diff={rel_diff:.2e}  iters={mlmg_res.iterations}")
+                      porous_results.append({
+                          "geometry": "porous",
+                          "size": size,
+                          "solver": "mlmg",
+                          "wall_time_s": round(median_t, 4),
+                          "tortuosity": round(mlmg_res.tortuosity, 6),
+                          "expected_tau": round(ref.tortuosity, 6),
+                          "relative_error": round(rel_diff, 8),
+                          "iterations": mlmg_res.iterations,
+                          "converged": mlmg_res.solver_converged,
+                      })
+                  else:
+                      porous_results.append({
+                          "geometry": "porous",
+                          "size": size, "solver": "mlmg",
+                          "wall_time_s": None, "tortuosity": None,
+                          "expected_tau": round(ref.tortuosity, 6),
+                          "relative_error": None, "iterations": None,
+                          "converged": False,
+                      })
+
           # Write results to JSON
           with open("/src/benchmark_results.json", "w") as f:
-              json.dump(results, f, indent=2)
+              json.dump({"uniform": results, "porous": porous_results}, f, indent=2)
 
-          print(f"\n{len(results)} benchmark results written.")
+          print(f"\n{len(results)} uniform + {len(porous_results)} porous benchmark results written.")
           BENCHEOF
 
           sudo apptainer exec \
@@ -191,11 +267,16 @@ jobs:
           import os
 
           with open("benchmark_results.json") as f:
-              results = json.load(f)
+              payload = json.load(f)
+
+          results = payload["uniform"] if isinstance(payload, dict) else payload
+          porous_results = payload.get("porous", []) if isinstance(payload, dict) else []
 
           # Build markdown table
           lines = []
           lines.append("## Performance Benchmark Results")
+          lines.append("")
+          lines.append("### Uniform Block (Analytical τ = 1.0)")
           lines.append("")
           lines.append("| Size | Solver | Wall Time (s) | Tortuosity | Expected | Rel. Error | Iters | Status |")
           lines.append("|------|--------|--------------|------------|----------|-----------|-------|--------|")
@@ -215,12 +296,34 @@ jobs:
                   status = "FAIL"
                   any_failed = True
 
-              time_str = f'{r["wall_time_s"]:.4f}' if r["wall_time_s"] else "N/A"
-              tau_str = f'{r["tortuosity"]:.6f}' if r["tortuosity"] else "N/A"
+              time_str = f'{r["wall_time_s"]:.4f}' if r["wall_time_s"] is not None else "N/A"
+              tau_str = f'{r["tortuosity"]:.6f}' if r["tortuosity"] is not None else "N/A"
               exp_str = f'{r["expected_tau"]:.6f}'
-              iter_str = str(r["iterations"]) if r["iterations"] else "N/A"
+              iter_str = str(r["iterations"]) if r["iterations"] is not None else "N/A"
 
               lines.append(f'| {r["size"]}³ | {r["solver"]} | {time_str} | {tau_str} | {exp_str} | {err_str} | {iter_str} | {status} |')
+
+          if porous_results:
+              lines.append("")
+              lines.append("### Porous Media (MLMG vs HYPRE PCG+SMG, ~55% Porosity)")
+              lines.append("")
+              lines.append("| Size | Solver | Wall Time (s) | Tortuosity | Reference | Rel. Diff | Iters | Status |")
+              lines.append("|------|--------|--------------|------------|-----------|-----------|-------|--------|")
+              for r in porous_results:
+                  if r["converged"]:
+                      err_str = f'{r["relative_error"]:.2e}'
+                      status = "PASS" if r["relative_error"] < 1e-3 else "WARN"
+                      if r["relative_error"] >= 1e-3:
+                          any_regression = True
+                  else:
+                      err_str = "N/A"
+                      status = "FAIL"
+                      any_failed = True
+                  time_str = f'{r["wall_time_s"]:.4f}' if r["wall_time_s"] is not None else "N/A"
+                  tau_str = f'{r["tortuosity"]:.6f}' if r["tortuosity"] is not None else "N/A"
+                  exp_str = f'{r["expected_tau"]:.6f}'
+                  iter_str = str(r["iterations"]) if r["iterations"] is not None else "N/A"
+                  lines.append(f'| {r["size"]}³ | {r["solver"]} | {time_str} | {tau_str} | {exp_str} | {err_str} | {iter_str} | {status} |')
 
           lines.append("")
 
@@ -228,15 +331,15 @@ jobs:
           converged = [r for r in results if r["converged"]]
           if converged:
               fastest = min(converged, key=lambda r: r["wall_time_s"])
-              lines.append(f'**Fastest solver:** {fastest["solver"]} at {fastest["size"]}³ '
+              lines.append(f'**Fastest uniform solver:** {fastest["solver"]} at {fastest["size"]}³ '
                            f'({fastest["wall_time_s"]:.4f}s)')
           if any_failed:
               lines.append("**Warning:** Some solvers failed to converge.")
           if any_regression:
-              lines.append("**Warning:** Some results exceed expected error tolerance (>1e-4).")
+              lines.append("**Warning:** Some results exceed expected error tolerance.")
 
           lines.append("")
-          lines.append("*Benchmark: uniform block (analytical τ = (N-1)/N)*")
+          lines.append("*Benchmark: uniform block (analytical τ = 1.0) + smoothed Gaussian porous media*")
 
           report = "\n".join(lines)
 

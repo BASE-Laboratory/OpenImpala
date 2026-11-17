@@ -174,15 +174,15 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
         -DAMReX_MPI=ON \
         -DAMReX_OMP=ON \
         -DAMReX_EB=ON \
-        -DAMReX_FORTRAN=ON \
+        -DAMReX_PARTICLES=ON \
+        -DAMReX_PIC=ON \
+        -DAMReX_FORTRAN=OFF \
         ${AMREX_GPU_FLAGS} \
         -DCMAKE_C_COMPILER=$(which mpicc) \
         -DCMAKE_CXX_COMPILER=$(which mpicxx) \
-        -DCMAKE_Fortran_COMPILER=$(which mpif90) \
         -DBUILD_SHARED_LIBS=ON \
         -DCMAKE_CXX_FLAGS="-O3 -march=x86-64-v2" \
         -DCMAKE_C_FLAGS="-O3 -march=x86-64-v2" \
-        -DCMAKE_Fortran_FLAGS="-O3 -march=x86-64-v2" \
         -DCMAKE_PREFIX_PATH="${HDF5_INSTALL_PREFIX};${LIBTIFF_INSTALL_PREFIX}" \
     || { echo "*** AMReX Configure Failed!"; exit 1; }
     echo "--- Building AMReX (make) ---"
@@ -206,7 +206,7 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     # and both pyAMReX and OpenImpala's _core must share the exact same
     # pybind11 version for cross-module type casting to work.
     python3.11 -m pip install --upgrade pip
-    python3.11 -m pip install "cmake>=3.24,<4" "pybind11>=2.13,<3" numpy build packaging wheel setuptools pytest
+    python3.11 -m pip install "cmake>=3.24,<4" "pybind11>=2.13,<3" numpy scipy build packaging wheel setuptools pytest
 
     # Ensure pip's cmake is prioritized in the PATH
     export PATH=/usr/local/bin:$PATH
@@ -227,7 +227,7 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
         -DCMAKE_BUILD_TYPE=Release
     # setup.py uses this environment flag when recording the wheel dependencies.
     AMREX_MPI=ON cmake --build build-ci --target pip_wheel --parallel "$(nproc)"
-    "$PYTHON" -m pip install build-ci/amrex-whl/*.whl
+    MPICC=$(which mpicc) "$PYTHON" -m pip install --no-binary=mpi4py build-ci/amrex-whl/*.whl
 
     cd ..
     rm -rf pyamrex
@@ -306,11 +306,14 @@ From: quay.io/rockylinux/rockylinux:8 # Using Quay.io
     export LD_LIBRARY_PATH=${AMREX_HOME}/lib:${HYPRE_HOME}/lib:${LIBTIFF_INSTALL_PREFIX}/lib:${HDF5_HOME}/lib:${OPENMPI_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
     export CMAKE_PREFIX_PATH=${AMREX_HOME}:${HYPRE_HOME}:${LIBTIFF_INSTALL_PREFIX}:${HDF5_HOME}:${OPENMPI_INSTALL_PREFIX}:${CMAKE_PREFIX_PATH}
     export OMPI_MCA_btl_vader_single_copy_mechanism=none; export OMPI_MCA_rmaps_base_oversubscribe=1
+    export OMPI_ALLOW_RUN_AS_ROOT=1; export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
     export PATH=/usr/local/bin:${AMREX_HOME}/bin:${HYPRE_HOME}/bin:${LIBTIFF_INSTALL_PREFIX}/bin:${HDF5_HOME}/bin:${OPENMPI_INSTALL_PREFIX}/bin:${PATH}
 
 %test
     set -e
     source /opt/rh/gcc-toolset-11/enable
+    export OMPI_MCA_btl_vader_single_copy_mechanism=none; export OMPI_MCA_rmaps_base_oversubscribe=1
+    export OMPI_ALLOW_RUN_AS_ROOT=1; export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
     export HDF5_VERSION=1.12.3
     export HDF5_INSTALL_PREFIX=/opt/hdf5/${HDF5_VERSION}
     export AMREX_VERSION=25.03
