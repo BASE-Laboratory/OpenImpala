@@ -78,9 +78,9 @@ if(OPENIMPALA_PYTHON)
 endif()
 
 # ==============================================================================
-# CUDA Separable Compilation (required for device linking with AMReX/HYPRE)
+# CUDA Separable Compilation (only when AMReX is built with AMReX_GPU_RDC=ON)
 # ==============================================================================
-if(GPU_BACKEND STREQUAL "CUDA")
+if(GPU_BACKEND STREQUAL "CUDA" AND AMReX_GPU_RDC)
     set_target_properties(openimpala_io openimpala_props PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON
     )

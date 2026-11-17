@@ -88,7 +88,8 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
                                              const SolverType st, const std::string& resultspath,
                                              const amrex::Real vlo, const amrex::Real vhi,
                                              int verbose, bool write_plotfile,
-                                             const PrecondType precond_type)
+                                             const PrecondType precond_type,
+                                             const std::map<int, amrex::Real>& phase_coeffs)
     : HypreStructSolver(geom, ba, dm, st, 1e-9, 200, verbose),
       m_mf_phase(ba, dm, mf_phase_input.nComp(), mf_phase_input.nGrow()), m_phase(phase), m_vf(vf),
       m_dir(dir), m_vlo(vlo), m_vhi(vhi), m_resultspath(resultspath),
@@ -174,20 +175,11 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
 
     // --- Multi-phase transport coefficient parsing ---
     {
-        amrex::Vector<int> active_phases_vec;
-        amrex::Vector<amrex::Real> phase_diffs_vec;
-        pp_tort.queryarr("active_phases", active_phases_vec);
-        pp_tort.queryarr("phase_diffusivities", phase_diffs_vec);
-
-        if (!active_phases_vec.empty() && !phase_diffs_vec.empty()) {
-            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-                active_phases_vec.size() == phase_diffs_vec.size(),
-                "tortuosity.active_phases and tortuosity.phase_diffusivities must have the same "
-                "length");
-            for (size_t idx = 0; idx < active_phases_vec.size(); ++idx) {
-                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(phase_diffs_vec[idx] >= 0.0,
+        if (!phase_coeffs.empty()) {
+            for (const auto& kv : phase_coeffs) {
+                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(kv.second >= 0.0,
                                                  "Phase diffusivities must be non-negative");
-                m_phase_coeff_map[active_phases_vec[idx]] = phase_diffs_vec[idx];
+                m_phase_coeff_map[kv.first] = kv.second;
             }
             m_is_multi_phase = true;
             if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
@@ -199,13 +191,49 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
                 }
             }
         } else {
-            // Default single-phase behaviour: target phase has D=1, everything else D=0
-            m_phase_coeff_map[m_phase] = 1.0;
-            m_is_multi_phase = false;
-            if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-                amrex::Print() << "  Single-phase mode: Phase " << m_phase << " -> D = 1.0"
-                               << std::endl;
+            amrex::Vector<int> active_phases_vec;
+            amrex::Vector<amrex::Real> phase_diffs_vec;
+            pp_tort.queryarr("active_phases", active_phases_vec);
+            pp_tort.queryarr("phase_diffusivities", phase_diffs_vec);
+
+            if (!active_phases_vec.empty() && !phase_diffs_vec.empty()) {
+                AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                    active_phases_vec.size() == phase_diffs_vec.size(),
+                    "tortuosity.active_phases and tortuosity.phase_diffusivities must have the "
+                    "same length");
+                for (size_t idx = 0; idx < active_phases_vec.size(); ++idx) {
+                    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(phase_diffs_vec[idx] >= 0.0,
+                                                     "Phase diffusivities must be non-negative");
+                    m_phase_coeff_map[active_phases_vec[idx]] = phase_diffs_vec[idx];
+                }
+                m_is_multi_phase = true;
+                if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
+                    amrex::Print() << "  Multi-phase mode enabled with " << m_phase_coeff_map.size()
+                                   << " phases:" << std::endl;
+                    for (const auto& kv : m_phase_coeff_map) {
+                        amrex::Print()
+                            << "    Phase " << kv.first << " -> D = " << kv.second << std::endl;
+                    }
+                }
+            } else {
+                // Default single-phase behaviour: target phase has D=1, everything else D=0
+                m_phase_coeff_map[m_phase] = 1.0;
+                m_is_multi_phase = false;
+                if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
+                    amrex::Print()
+                        << "  Single-phase mode: Phase " << m_phase << " -> D = 1.0" << std::endl;
+                }
             }
+        }
+
+        m_max_diff_coeff = 0.0;
+        for (const auto& kv : m_phase_coeff_map) {
+            if (kv.second > m_max_diff_coeff) {
+                m_max_diff_coeff = kv.second;
+            }
+        }
+        if (m_max_diff_coeff <= 0.0) {
+            m_max_diff_coeff = 1.0;
         }
     }
 
@@ -245,7 +273,8 @@ OpenImpala::TortuosityHypre::TortuosityHypre(const amrex::Geometry& geom, const 
         // No need to setup HYPRE if there's no active phase
         m_first_call = false; // Mark as "calculated" (result is NaN or Inf)
         m_value = std::numeric_limits<amrex::Real>::quiet_NaN(); // Or Inf if you prefer for zero VF
-        return;                                                  // Exit constructor early
+        m_deff = 0.0;
+        return; // Exit constructor early
     }
 
     // Setup HYPRE structures only if there's an active phase
@@ -865,6 +894,27 @@ amrex::Real OpenImpala::TortuosityHypre::value(const bool refresh) {
         //     and can exceed any fixed relative threshold for masked
         //     porous-media inputs at 64³+. Now warning-only — boundary
         //     conservation is the real correctness test.
+        amrex::Real L = m_geom.ProbLength(static_cast<int>(m_dir));
+        amrex::Real A = 1.0;
+        if (AMREX_SPACEDIM == 3) {
+            if (m_dir == OpenImpala::Direction::X)
+                A = m_geom.ProbLength(1) * m_geom.ProbLength(2);
+            else if (m_dir == OpenImpala::Direction::Y)
+                A = m_geom.ProbLength(0) * m_geom.ProbLength(2);
+            else
+                A = m_geom.ProbLength(0) * m_geom.ProbLength(1);
+        } else if (AMREX_SPACEDIM == 2) {
+            if (m_dir == OpenImpala::Direction::X)
+                A = m_geom.ProbLength(1);
+            else
+                A = m_geom.ProbLength(0);
+        }
+        amrex::Real gradPhi = (m_vhi - m_vlo) / L;
+        amrex::Real d_scale = (m_max_diff_coeff > 0.0) ? m_max_diff_coeff : 1.0;
+        amrex::Real ref_flux =
+            (A * std::abs(gradPhi) > 0.0) ? (d_scale * A * std::abs(gradPhi)) : 1.0;
+        amrex::Real scaled_flux_threshold = tiny_flux_threshold * ref_flux;
+
         constexpr amrex::Real flux_tol = 1.0e-4;
         constexpr amrex::Real plane_dev_warn = 1.0e-3;
         bool flux_conserved = true;
@@ -872,7 +922,7 @@ amrex::Real OpenImpala::TortuosityHypre::value(const bool refresh) {
         amrex::Real flux_mag_in = std::abs(m_flux_in);
         amrex::Real flux_mag_out = std::abs(m_flux_out);
         amrex::Real flux_mag_avg = 0.5 * (flux_mag_in + flux_mag_out);
-        if (flux_mag_avg > tiny_flux_threshold) {
+        if (flux_mag_avg > scaled_flux_threshold) {
             rel_diff = std::abs(flux_mag_in - flux_mag_out) / flux_mag_avg;
             if (rel_diff > flux_tol) {
                 flux_conserved = false;
@@ -921,29 +971,10 @@ amrex::Real OpenImpala::TortuosityHypre::value(const bool refresh) {
                     << std::endl;
             }
             m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
+            m_deff = std::numeric_limits<amrex::Real>::quiet_NaN();
         } else {
             // Flux is conserved, proceed with calculation using average flux magnitude
-
-            // <<< CHANGE: Use m_active_vf instead of m_vf >>>
             amrex::Real vf_for_calc = m_active_vf;
-            // <<< END CHANGE >>>
-
-            amrex::Real L = m_geom.ProbLength(static_cast<int>(m_dir));
-            amrex::Real A = 1.0;
-            if (AMREX_SPACEDIM == 3) {
-                if (m_dir == OpenImpala::Direction::X)
-                    A = m_geom.ProbLength(1) * m_geom.ProbLength(2);
-                else if (m_dir == OpenImpala::Direction::Y)
-                    A = m_geom.ProbLength(0) * m_geom.ProbLength(2);
-                else
-                    A = m_geom.ProbLength(0) * m_geom.ProbLength(1);
-            } else if (AMREX_SPACEDIM == 2) {
-                if (m_dir == OpenImpala::Direction::X)
-                    A = m_geom.ProbLength(1);
-                else
-                    A = m_geom.ProbLength(0);
-            }
-            amrex::Real gradPhi = (m_vhi - m_vlo) / L; // Assumes L > 0
             amrex::Real Deff = 0.0;
 
             // Use mean of interior plane fluxes when available (more robust
@@ -961,49 +992,48 @@ amrex::Real OpenImpala::TortuosityHypre::value(const bool refresh) {
             }
 
             // Handle edge cases
-            if (avg_flux_mag < tiny_flux_threshold) {
+            if (avg_flux_mag < scaled_flux_threshold) {
                 if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
                     amrex::Print()
                         << "WARNING: Average flux magnitude is near zero (" << avg_flux_mag
                         << "). Tortuosity set to Inf (or NaN if ActiveVF=0)." << std::endl;
                 }
-                // <<< CHANGE: Check vf_for_calc (active_vf) here >>>
+                m_deff = 0.0;
                 m_value = (vf_for_calc > std::numeric_limits<amrex::Real>::epsilon())
                               ? std::numeric_limits<amrex::Real>::infinity()
                               : std::numeric_limits<amrex::Real>::quiet_NaN();
-            }
-            // <<< CHANGE: Check vf_for_calc (active_vf) here >>>
-            else if (vf_for_calc <= std::numeric_limits<amrex::Real>::epsilon()) {
+            } else if (vf_for_calc <= std::numeric_limits<amrex::Real>::epsilon()) {
                 if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
                     amrex::Print()
                         << "WARNING: Active volume fraction is zero. Tortuosity set to NaN."
                         << std::endl;
                 }
+                m_deff = 0.0;
                 m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
-            } else if (std::abs(gradPhi) < tiny_flux_threshold) {
+            } else if (std::abs(gradPhi) <= std::numeric_limits<amrex::Real>::min()) {
                 if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
                     amrex::Print()
                         << "WARNING: Potential gradient is zero (vlo=vhi). Tortuosity set to Inf."
                         << std::endl;
                 }
+                m_deff = 0.0;
                 m_value = std::numeric_limits<amrex::Real>::infinity();
             } else {
                 // Calculate Deff using average flux magnitude
                 Deff = (avg_flux_mag / A) / std::abs(gradPhi);
-                if (std::abs(Deff) < tiny_flux_threshold) {
+                m_deff = Deff;
+                if (std::abs(Deff) < tiny_flux_threshold * d_scale) {
                     if (m_verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
                         amrex::Print() << "WARNING: Effective Diffusivity (Deff) is near zero ("
                                        << Deff << "). Tortuosity set to Inf." << std::endl;
                     }
                     m_value = std::numeric_limits<amrex::Real>::infinity();
                 } else {
-                    // <<< CHANGE: This calculation now uses active VF >>>
                     m_value = vf_for_calc / Deff;
                 }
             }
 
             if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-                // <<< CHANGE: Update print statement label >>>
                 amrex::Print() << "  Calculation Details: ActiveVf=" << vf_for_calc << ", L=" << L
                                << ", A=" << A << ", gradPhi=" << gradPhi
                                << ", AvgFluxMag=" << avg_flux_mag << ", Deff=" << Deff << std::endl;
@@ -1238,6 +1268,7 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
     amrex::Gpu::streamSynchronize();
 #endif
     mf_soln_temp.FillBoundary(m_geom.periodicity());
+    amrex::Copy(m_mf_phi, mf_soln_temp, 0, SolnComp, 1, 1);
     m_mf_active_mask.FillBoundary(m_geom.periodicity());
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
@@ -1460,7 +1491,8 @@ void OpenImpala::TortuosityHypre::computePlaneFluxes(const amrex::MultiFab& mf_s
     }
 
     amrex::Real abs_mean = std::abs(mean_flux);
-    m_plane_flux_max_dev = (abs_mean > tiny_flux_threshold) ? max_abs_dev / abs_mean : 0.0;
+    m_plane_flux_max_dev =
+        (abs_mean > std::numeric_limits<amrex::Real>::min()) ? max_abs_dev / abs_mean : 0.0;
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print() << "  Interior Plane Flux Check (" << n_faces << " faces):\n";

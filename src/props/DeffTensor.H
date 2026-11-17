@@ -33,7 +33,8 @@ namespace OpenImpala {
 void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM],
                          const amrex::MultiFab& mf_chi_x, const amrex::MultiFab& mf_chi_y,
                          const amrex::MultiFab& mf_chi_z, const amrex::iMultiFab& active_mask,
-                         const amrex::Geometry& geom, int verbose = 0);
+                         const amrex::Geometry& geom, int verbose = 0,
+                         const amrex::MultiFab* mf_diff_coeff = nullptr);
 
 } // namespace OpenImpala
 

@@ -59,6 +59,11 @@ public:
         return m_labels;
     }
 
+    /** @brief Geometry associated with the label field. */
+    const amrex::Geometry& getGeometry() const {
+        return m_geom;
+    }
+
     // --- Implementation methods (public for CUDA __device__ lambda compatibility) ---
     void run(const amrex::iMultiFab& mf_phase, int phase_id);
 

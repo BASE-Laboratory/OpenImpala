@@ -20,7 +20,8 @@ SpecificSurfaceArea::SpecificSurfaceArea(const amrex::Geometry& geom, const amre
                                      "SpecificSurfaceArea: boundary_padding must be non-negative.");
 }
 
-void SpecificSurfaceArea::value(long long& face_count, long long& total_count, bool local) const {
+void SpecificSurfaceArea::directionFaceCounts(amrex::Array<long long, AMREX_SPACEDIM>& dir_faces,
+                                              long long& total_count, bool local) const {
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_mf.nGrow() >= 1,
         "SpecificSurfaceArea: iMultiFab must have at least 1 ghost cell for neighbor access.");
@@ -35,25 +36,18 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(padded_domain.ok(),
                                      "SpecificSurfaceArea: boundary_padding too large for domain.");
 
-    // GPU-compatible reduction for face and cell counting
-    amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum> reduce_op;
-    amrex::ReduceData<long long, long long> reduce_data(reduce_op);
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        amrex::ReduceOps<amrex::ReduceOpSum> reduce_op;
+        amrex::ReduceData<long long> reduce_data(reduce_op);
 
-    for (amrex::MFIter mfi(m_mf); mfi.isValid(); ++mfi) {
-        const amrex::Box& bx = mfi.validbox();
-        const auto& fab = m_mf.const_array(mfi, phase_comp);
+        amrex::IntVect offset(amrex::IntVect::TheZeroVector());
+        offset[d] = 1;
+        const int od0 = offset[0], od1 = offset[1], od2 = offset[2];
 
-        // Count total cells in padded interior
-        const amrex::Box count_bx = bx & padded_domain;
-        long long box_total = count_bx.ok() ? count_bx.numPts() : 0;
+        for (amrex::MFIter mfi(m_mf); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.validbox();
+            const auto& fab = m_mf.const_array(mfi, phase_comp);
 
-        // Count interface faces in each direction.
-        // For each direction d, we check the face between cell (i,j,k) and its
-        // neighbor in the +d direction. Both cells must lie within the padded
-        // domain. The face is "owned" by the cell on its low side.
-        // We also clamp to the valid box to avoid accessing ghost cells that
-        // may not be filled (the +d neighbor must be within this FAB's valid region).
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
             amrex::Box check_bx = bx & padded_domain;
             if (!check_bx.ok()) {
                 continue;
@@ -65,35 +59,23 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
             check_bx.setBig(d, hi_limit);
 
             if (check_bx.ok()) {
-                amrex::IntVect offset(amrex::IntVect::TheZeroVector());
-                offset[d] = 1;
-                const int od0 = offset[0], od1 = offset[1], od2 = offset[2];
-                reduce_op.eval(
-                    check_bx, reduce_data,
-                    [=] AMREX_GPU_DEVICE(int i, int j,
-                                         int k) noexcept -> amrex::GpuTuple<long long, long long> {
-                        int val = fab(i, j, k);
-                        int nbr = fab(i + od0, j + od1, k + od2);
-                        long long fc =
-                            ((val == pa && nbr == pb) || (val == pb && nbr == pa)) ? 1LL : 0LL;
-                        // total_contrib is added only for the first cell evaluated when d==0
-                        return {fc, 0LL};
-                    });
-
-                // Accumulate total count outside the kernel (it's a box property, not per-cell)
-                if (d == 0) {
-                    // We need to add box_total to the total_count. Since this is a constant
-                    // per MFIter iteration, we handle it after the reduce.
-                }
+                reduce_op.eval(check_bx, reduce_data,
+                               [=] AMREX_GPU_DEVICE(int i, int j,
+                                                    int k) noexcept -> amrex::GpuTuple<long long> {
+                                   int val = fab(i, j, k);
+                                   int nbr = fab(i + od0, j + od1, k + od2);
+                                   long long fc =
+                                       ((val == pa && nbr == pb) || (val == pb && nbr == pa)) ? 1LL
+                                                                                              : 0LL;
+                                   return {fc};
+                               });
             }
         }
+
+        dir_faces[d] = amrex::get<0>(reduce_data.value());
     }
 
-    auto hv = reduce_data.value();
-    long long local_face_count = amrex::get<0>(hv);
     long long local_total_count = 0;
-
-    // Compute total count on host (it's a box-level quantity, not per-cell)
     for (amrex::MFIter mfi(m_mf); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();
         const amrex::Box count_bx = bx & padded_domain;
@@ -103,12 +85,40 @@ void SpecificSurfaceArea::value(long long& face_count, long long& total_count, b
     }
 
     if (!local) {
-        amrex::ParallelAllReduce::Sum(local_face_count, amrex::ParallelContext::CommunicatorSub());
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            amrex::ParallelAllReduce::Sum(dir_faces[d], amrex::ParallelContext::CommunicatorSub());
+        }
         amrex::ParallelAllReduce::Sum(local_total_count, amrex::ParallelContext::CommunicatorSub());
     }
 
-    face_count = local_face_count;
     total_count = local_total_count;
+}
+
+void SpecificSurfaceArea::value(long long& face_count, long long& total_count, bool local) const {
+    amrex::Array<long long, AMREX_SPACEDIM> dir_faces{};
+    directionFaceCounts(dir_faces, total_count, local);
+    face_count = 0;
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        face_count += dir_faces[d];
+    }
+}
+
+amrex::Real SpecificSurfaceArea::value_physical(bool local) const {
+    amrex::Array<long long, AMREX_SPACEDIM> dir_faces{};
+    long long total_count = 0;
+    directionFaceCounts(dir_faces, total_count, local);
+    if (total_count <= 0) {
+        return 0.0;
+    }
+
+    const amrex::Real* dx = m_geom.CellSize();
+    amrex::Real weighted_sum = 0.0;
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(dx[d] > 0.0,
+                                         "SpecificSurfaceArea: non-positive cell size.");
+        weighted_sum += static_cast<amrex::Real>(dir_faces[d]) / dx[d];
+    }
+    return weighted_sum / static_cast<amrex::Real>(total_count);
 }
 
 } // namespace OpenImpala

@@ -64,7 +64,8 @@ public:
                          const amrex::iMultiFab& mf_phase_input, const amrex::Real vf,
                          const int phase, const OpenImpala::Direction dir,
                          const std::string& resultspath, const amrex::Real vlo,
-                         const amrex::Real vhi, int verbose, bool write_plotfile);
+                         const amrex::Real vhi, int verbose, bool write_plotfile,
+                         const std::map<int, amrex::Real>& phase_coeffs = {});
 
     ~TortuositySolverBase() override = default;
 
@@ -99,6 +100,15 @@ public:
     amrex::Real getActiveVolumeFraction() const {
         return m_active_vf;
     }
+    amrex::Real getEffectiveDiffusivity() const {
+        return m_deff;
+    }
+    const amrex::MultiFab& getSolutionField() const {
+        return m_mf_solution;
+    }
+    const amrex::Geometry& getGeometry() const {
+        return m_geom;
+    }
     const std::vector<amrex::Real>& getPlaneFluxes() const {
         return m_plane_fluxes;
     }
@@ -129,6 +139,7 @@ public:
     // --- Shared setup helpers ---
     void preconditionPhaseFab();
     void buildDiffusionCoeffField();
+    amrex::iMultiFab buildTraversableMask();
     void generateActivityMask(const amrex::iMultiFab& phaseFab, int phaseID,
                               OpenImpala::Direction dir);
     void parallelFloodFill(amrex::iMultiFab& reachabilityMask, const amrex::iMultiFab& phaseFab,
@@ -164,9 +175,11 @@ protected:
     // --- Multi-phase configuration ---
     std::map<int, amrex::Real> m_phase_coeff_map; ///< Phase ID -> transport coefficient
     bool m_is_multi_phase = false;
+    amrex::Real m_max_diff_coeff = 1.0;
 
     // --- Cached results ---
     amrex::Real m_value = std::numeric_limits<amrex::Real>::quiet_NaN();
+    amrex::Real m_deff = std::numeric_limits<amrex::Real>::quiet_NaN();
     bool m_first_call = true;
     amrex::Real m_active_vf = 0.0; ///< Volume fraction of percolating phase
 

@@ -47,13 +47,15 @@ with oi.Session():
 ### Python (recommended)
 
 ```bash
-pip install openimpala            # CPU + optional CuPy GPU acceleration
+pip install openimpala            # Linux x86_64 AMReX/HYPRE wheel + universal pure-Python fallback
 pip install openimpala-cuda       # compiled HYPRE/AMReX CUDA wheel (Linux x86_64)
 ```
 
-OpenImpala uses MPI for distributed parallelism — install an MPI runtime
-(`libopenmpi-dev`, `openmpi`, `brew install open-mpi`, or
-`conda install -c conda-forge openmpi`) before `pip install`. See
+On Linux `x86_64`, `openimpala` installs pre-built AMReX/HYPRE C++ bindings —
+install an MPI runtime (`libopenmpi-dev`, `openmpi`, or
+`conda install -c conda-forge openmpi`) to enable multi-rank C++ execution. On
+macOS, Windows, and ARM64 (or when MPI is absent), `openimpala` automatically
+uses its pure-Python SciPy/CuPy solver with the same API. See
 [Getting Started](https://base-laboratory.github.io/OpenImpala/getting-started.html)
 for full details.
 

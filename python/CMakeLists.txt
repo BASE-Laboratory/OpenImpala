@@ -35,13 +35,14 @@ pybind11_add_module(_core ${BINDING_SOURCES})
 # that require compilation by nvcc.
 if(GPU_BACKEND STREQUAL "CUDA")
     set_source_files_properties(${BINDING_SOURCES} PROPERTIES LANGUAGE CUDA)
-    # AMReX's static library contains relocatable device code (RDC).  The _core
-    # shared library must run CUDA's device linker to resolve __cudaRegister*
-    # symbols from AMReX and HYPRE device objects.
-    set_target_properties(_core PROPERTIES
-        CUDA_SEPARABLE_COMPILATION ON
-        CUDA_RESOLVE_DEVICE_SYMBOLS ON
-    )
+    if(AMReX_GPU_RDC)
+        # When AMReX is built with relocatable device code (RDC), _core must
+        # run CUDA's device linker to resolve __cudaRegister* device symbols.
+        set_target_properties(_core PROPERTIES
+            CUDA_SEPARABLE_COMPILATION ON
+            CUDA_RESOLVE_DEVICE_SYMBOLS ON
+        )
+    endif()
 endif()
 
 target_link_libraries(_core PRIVATE
@@ -145,6 +146,8 @@ if(BUILD_TESTING)
             "${PYTHON_TEST_DIR}/test_tortuosity.py")
         openimpala_add_pytest(pytest_plane_flux_diagnostic
             "${PYTHON_TEST_DIR}/test_plane_flux_diagnostic.py")
+        openimpala_add_pytest(pytest_v460_features
+            "${PYTHON_TEST_DIR}/test_v460_features.py")
 
         message(STATUS "Python tests registered with CTest (label: python)")
     else()

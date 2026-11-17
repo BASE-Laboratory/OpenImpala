@@ -68,3 +68,39 @@ def test_mpi_distributed_tiff_reader():
     assert perc.percolates is True
     assert perc.active_volume_fraction == pytest.approx(0.397743, rel=1e-6)
     del reader, img
+
+
+def test_mpi_v460_fields_and_metrics():
+    """Verify multi-rank gathering of 3-D fields, labels, SSA, profiles, and D_eff tensor."""
+    data = np.zeros((16, 16, 16), dtype=np.int32)
+    data[:, :, 8:] = 1
+    data[2:5, 2:5, 2:5] = 2  # 27-voxel isolated inclusion
+
+    ssa = oi.specific_surface_area(
+        data, phase_a=0, phase_b=1, voxel_size=(2.0, 1.0, 0.5), max_grid_size=8
+    )
+    assert ssa.face_counts_xyz == (256, 0, 0)
+    assert ssa.ssa == pytest.approx((256.0 / 0.5) / float(16**3), rel=1e-10)
+
+    ccl = oi.connected_components(data, phase=2, return_labels=True, max_grid_size=8)
+    assert ccl.num_components == 1
+    assert ccl.volumes.tolist() == [27]
+    assert ccl.labels is not None
+    assert int(np.count_nonzero(ccl.labels == 1)) == 27
+
+    tau = oi.tortuosity(
+        data,
+        direction="x",
+        phase_diffusivities={0: 1.0, 1: 0.25, 2: 1.0},
+        return_field=True,
+        max_grid_size=8,
+    )
+    assert tau.effective_diffusivity == pytest.approx(0.4, rel=1e-5)
+    assert tau.solution_field is not None
+    assert tau.solution_field.shape == (16, 16, 16)
+    assert np.all((tau.solution_field > 0.0) & (tau.solution_field < 1.0))
+
+    deff = oi.effective_diffusivity(
+        np.ones((12, 12, 12), dtype=np.int32), phase=1, max_grid_size=6
+    )
+    np.testing.assert_allclose(deff.tensor, np.eye(3), atol=1e-5)

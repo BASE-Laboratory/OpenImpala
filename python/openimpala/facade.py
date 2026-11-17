@@ -1,21 +1,26 @@
-"""High-level, NumPy-native facade for common OpenImpala workflows.
+"""High-level, NumPy-native facade for OpenImpala workflows.
 
-These functions accept plain ``numpy.ndarray`` inputs and return rich
-Python dataclasses, hiding all AMReX boilerplate from general users.
+These functions accept plain ``numpy.ndarray`` inputs (or ``VoxelImage`` handles)
+and return rich Python dataclasses, hiding all AMReX boilerplate from users.
 
-When the compiled C++ backend (_core) is unavailable, functions
-transparently fall back to the pure-Python solver (SciPy/CuPy).
+When the compiled C++ backend (``_core``) is unavailable, all high-level analysis
+functions transparently fall back to the pure-Python solver (NumPy / SciPy / CuPy).
 """
 
 from __future__ import annotations
 
+import csv
 import dataclasses
-from typing import Optional, Union
+import tempfile
+from pathlib import Path
+from typing import Mapping, Optional, Sequence, Union
 
 import numpy as np
 
 from .exceptions import ConvergenceError, PercolationError
 from .session import Session, _has_core
+
+VoxelSizeArg = Union[float, int, Sequence[float]]
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +58,7 @@ class PercolationResult:
 
 @dataclasses.dataclass
 class TortuosityResult:
-    """Result of a tortuosity calculation."""
+    """Result of a tortuosity / multi-phase steady-state transport calculation."""
 
     tortuosity: float
     solver_converged: bool
@@ -63,13 +68,20 @@ class TortuosityResult:
     flux_out: float
     active_volume_fraction: float
     solution_field: "np.ndarray | None" = None
+    effective_diffusivity: Optional[float] = None
 
     def _repr_html_(self) -> str:
         status = "converged" if self.solver_converged else "NOT converged"
+        deff_row = (
+            f"<tr><td>Effective diffusivity</td><td>{self.effective_diffusivity:.6e}</td></tr>"
+            if self.effective_diffusivity is not None
+            else ""
+        )
         return (
             "<table>"
             "<tr><th>Metric</th><th>Value</th></tr>"
             f"<tr><td>Tortuosity</td><td>{self.tortuosity:.6f}</td></tr>"
+            f"{deff_row}"
             f"<tr><td>Solver status</td><td>{status}</td></tr>"
             f"<tr><td>Iterations</td><td>{self.iterations}</td></tr>"
             f"<tr><td>Residual norm</td><td>{self.residual_norm:.2e}</td></tr>"
@@ -80,8 +92,104 @@ class TortuosityResult:
         )
 
 
+@dataclasses.dataclass
+class EffectiveDiffusivityResult:
+    """Result of a 3-D periodic homogenisation effective-diffusivity tensor calculation.
+
+    ``tensor`` is a ``(3, 3)`` ``float64`` NumPy array ordered ``(x, y, z)``:
+    ``tensor[0, 0] = D_xx``, ``tensor[1, 1] = D_yy``, ``tensor[2, 2] = D_zz``,
+    ``tensor[0, 1] = D_xy``, etc.
+    """
+
+    tensor: np.ndarray
+    active_volume_fraction: float
+    solver_converged: bool
+    iterations: tuple[int, int, int]
+    residuals: tuple[float, float, float]
+    corrector_fields: Optional[dict[str, np.ndarray]] = None
+
+    @property
+    def diagonal(self) -> tuple[float, float, float]:
+        """Principal diagonal entries ``(D_xx, D_yy, D_zz)``."""
+        return (
+            float(self.tensor[0, 0]),
+            float(self.tensor[1, 1]),
+            float(self.tensor[2, 2]),
+        )
+
+    def _repr_html_(self) -> str:
+        dxx, dyy, dzz = self.diagonal
+        return (
+            "<table>"
+            "<tr><th>Component</th><th>Value</th></tr>"
+            f"<tr><td>D_xx</td><td>{dxx:.6e}</td></tr>"
+            f"<tr><td>D_yy</td><td>{dyy:.6e}</td></tr>"
+            f"<tr><td>D_zz</td><td>{dzz:.6e}</td></tr>"
+            f"<tr><td>D_xy</td><td>{float(self.tensor[0, 1]):.6e}</td></tr>"
+            f"<tr><td>D_xz</td><td>{float(self.tensor[0, 2]):.6e}</td></tr>"
+            f"<tr><td>D_yz</td><td>{float(self.tensor[1, 2]):.6e}</td></tr>"
+            f"<tr><td>Active VF</td><td>{self.active_volume_fraction:.6f}</td></tr>"
+            "</table>"
+        )
+
+
+@dataclasses.dataclass
+class SpecificSurfaceAreaResult:
+    """Result of an interfacial specific surface area calculation."""
+
+    ssa: float
+    ssa_corrected: float
+    ssa_voxel: float
+    ssa_voxel_corrected: float
+    face_count: int
+    total_count: int
+    face_counts_xyz: tuple[int, int, int]
+
+
+@dataclasses.dataclass
+class ConnectedComponentsResult:
+    """Result of 6-connected component labeling."""
+
+    num_components: int
+    volumes: np.ndarray
+    labels: Optional[np.ndarray] = None
+
+
+@dataclasses.dataclass
+class ParticleSizeDistributionResult:
+    """Result of equivalent-sphere particle size distribution analysis."""
+
+    num_particles: int
+    mean_radius: float
+    radii: np.ndarray
+    volumes: np.ndarray
+    radii_voxels: np.ndarray
+    volumes_voxels: np.ndarray
+
+
+@dataclasses.dataclass
+class ThroughThicknessResult:
+    """Result of a slice-by-slice through-thickness volume fraction profile."""
+
+    direction: str
+    num_slices: int
+    profile: np.ndarray
+    positions: np.ndarray
+
+
+@dataclasses.dataclass
+class REVStudyResult:
+    """Result of a Representative Elementary Volume (REV) convergence study."""
+
+    sizes: list[int]
+    samples: list[dict]
+    mean_diagonal: dict[int, np.ndarray]
+    std_diagonal: dict[int, np.ndarray]
+    csv_path: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
-# Backend detection
+# Backend detection & input normalisation helpers
 # ---------------------------------------------------------------------------
 
 def _is_pure_python() -> bool:
@@ -92,26 +200,66 @@ def _is_pure_python() -> bool:
 def _get_core():
     """Import and return the _core C extension (lazy, cached by Python)."""
     import importlib
+
     return importlib.import_module("openimpala._core")
 
-
-# ---------------------------------------------------------------------------
-# Direction / solver helpers
-# ---------------------------------------------------------------------------
 
 _DIR_MAP = {"x": 0, "y": 1, "z": 2}
 _DIR_NAMES = {0: "x", 1: "y", 2: "z"}
 
 
+def _normalize_voxel_size(voxel_size: Optional[VoxelSizeArg]) -> tuple[float, float, float]:
+    """Normalise scalar or 3-element ``voxel_size`` into ``(dz, dy, dx)`` positive floats."""
+    if voxel_size is None:
+        return (1.0, 1.0, 1.0)
+    if isinstance(voxel_size, (int, float, np.floating, np.integer)):
+        v = float(voxel_size)
+        if not np.isfinite(v) or v <= 0.0:
+            raise ValueError(f"voxel_size must be a finite positive number, got {voxel_size!r}")
+        return (v, v, v)
+    try:
+        seq = tuple(float(x) for x in voxel_size)
+    except TypeError as exc:
+        raise TypeError(
+            "voxel_size must be a positive float or a 3-tuple (dz, dy, dx)"
+        ) from exc
+    if len(seq) != 3 or any((not np.isfinite(v) or v <= 0.0) for v in seq):
+        raise ValueError(
+            f"voxel_size must have 3 positive finite entries (dz, dy, dx), got {voxel_size!r}"
+        )
+    return (seq[0], seq[1], seq[2])
+
+
+def _normalize_phase_diffusivities(
+    phase_diffusivities: Optional[Mapping[int, float]],
+) -> dict[int, float]:
+    """Validate and normalise ``phase_diffusivities`` into ``dict[int, float]``."""
+    if phase_diffusivities is None:
+        return {}
+    if not isinstance(phase_diffusivities, Mapping) or len(phase_diffusivities) == 0:
+        raise ValueError("phase_diffusivities must be a non-empty mapping {phase_id: coeff}")
+    out: dict[int, float] = {}
+    for k, v in phase_diffusivities.items():
+        pid = int(k)
+        coeff = float(v)
+        if not np.isfinite(coeff) or coeff < 0.0:
+            raise ValueError(
+                f"Diffusivity for phase {pid} must be finite and >= 0, got {v!r}"
+            )
+        out[pid] = coeff
+    return out
+
+
 def _parse_direction_int(d) -> int:
     """Parse a direction to an integer (0=x, 1=y, 2=z)."""
     if isinstance(d, int):
-        return d
+        if d in (0, 1, 2):
+            return d
+        raise ValueError(f"Unknown direction '{d}'. Use 'x', 'y', or 'z'.")
     if isinstance(d, str):
         key = d.strip().lower()
         if key in _DIR_MAP:
             return _DIR_MAP[key]
-    # Might be a _core.Direction enum
     try:
         return {"X": 0, "Y": 1, "Z": 2}[str(d).split(".")[-1]]
     except (KeyError, AttributeError):
@@ -151,21 +299,10 @@ def _ensure_initialized():
 
 
 def _parse_solver(s):
-    """Parse a solver string or SolverType enum value.
-
-    The special value ``"auto"`` (and ``"mlmg"``) selects AMReX's matrix-free
-    geometric multigrid solver with face conductances on the voxel grid.
-
-    Fallback Krylov solvers (PCG, FlexGMRES, BiCGSTAB, GMRES) and their
-    multigrid preconditioners (SMG, PFMG) remain available by name. The
-    recommended HYPRE fallback for users hitting MLMG convergence issues
-    is ``solver="pcg", preconditioner="smg"`` — slower but robust against
-    masked rows arising from porous-media inputs.
-    """
+    """Parse a solver string or SolverType enum value."""
     _core = _get_core()
     if isinstance(s, _core.SolverType):
         return s
-    # "auto" and "mlmg" both map to the matrix-free MLMG path.
     key = s.strip().lower() if isinstance(s, str) else s
     if isinstance(key, str) and key in ("mlmg", "auto"):
         return "mlmg"
@@ -177,7 +314,7 @@ def _parse_solver(s):
         "bicgstab": _core.SolverType.BiCGSTAB,
         "smg": _core.SolverType.SMG,
         "pfmg": _core.SolverType.PFMG,
-        "hypre": _core.SolverType.FlexGMRES,  # convenience alias for fastest HYPRE
+        "hypre": _core.SolverType.FlexGMRES,
     }
     if not isinstance(key, str) or key not in solver_map:
         raise ValueError(
@@ -186,7 +323,29 @@ def _parse_solver(s):
     return solver_map[key]
 
 
-# Krylov solvers that accept a multigrid preconditioner
+def _parse_hypre_solver(s):
+    """Parse a HYPRE SolverType for homogenization / REV cell problems."""
+    _core = _get_core()
+    if isinstance(s, _core.SolverType):
+        return s
+    key = s.strip().lower() if isinstance(s, str) else s
+    if isinstance(key, str) and key in ("auto", "hypre", "flexgmres"):
+        return _core.SolverType.FlexGMRES
+    solver_map = {
+        "jacobi": _core.SolverType.Jacobi,
+        "gmres": _core.SolverType.GMRES,
+        "pcg": _core.SolverType.PCG,
+        "bicgstab": _core.SolverType.BiCGSTAB,
+        "smg": _core.SolverType.SMG,
+        "pfmg": _core.SolverType.PFMG,
+    }
+    if not isinstance(key, str) or key not in solver_map:
+        raise ValueError(
+            f"Unknown homogenization solver '{s}'. Options: {list(solver_map) + ['flexgmres', 'auto']}"
+        )
+    return solver_map[key]
+
+
 _KRYLOV_SOLVERS = {"pcg", "gmres", "flexgmres", "bicgstab"}
 
 
@@ -206,13 +365,7 @@ def _parse_preconditioner(p):
 
 
 def _auto_grid_size(shape: tuple[int, ...]) -> int:
-    """Pick a good AMReX max_grid_size based on domain dimensions and MPI ranks.
-
-    On a single MPI rank, keep domains up to 256^3 in a single contiguous box
-    (OpenMP tiling and GPU thread blocks provide intra-box parallelism without
-    cross-box ghost-exchange overhead).  When multiple MPI ranks are active,
-    split into power-of-two boxes so AMReX can distribute boxes across ranks.
-    """
+    """Pick a good AMReX max_grid_size based on domain dimensions and MPI ranks."""
     n_max = max(shape)
     n_ranks = 1
     if not _is_pure_python():
@@ -228,7 +381,7 @@ def _auto_grid_size(shape: tuple[int, ...]) -> int:
     total_voxels = int(np.prod(shape))
     mgs = 16
     for candidate in (128, 64, 32, 16):
-        if n_min >= candidate and (total_voxels // (candidate ** 3)) >= n_ranks:
+        if n_min >= candidate and (total_voxels // (candidate**3)) >= n_ranks:
             mgs = candidate
             break
     return mgs
@@ -237,12 +390,19 @@ def _auto_grid_size(shape: tuple[int, ...]) -> int:
 def _numpy_to_voxelimage(
     data: np.ndarray,
     max_grid_size: Union[int, str] = "auto",
+    voxel_size: Optional[VoxelSizeArg] = None,
 ):
-    """Convert a 3-D int32 NumPy array to a VoxelImage (native C++ ingestion).
-
-    Returns a VoxelImage handle that encapsulates all AMReX objects.
-    """
+    """Convert a 3-D int32 NumPy array (or VoxelImage) into a VoxelImage with physical cell sizes."""
     _core = _get_core()
+
+    if isinstance(data, _core.VoxelImage):
+        if voxel_size is None:
+            return data
+        dz, dy, dx = _normalize_voxel_size(voxel_size)
+        return data.with_voxel_size(dx=dx, dy=dy, dz=dz)
+
+    if not isinstance(data, np.ndarray):
+        raise TypeError("data must be a 3-D NumPy array or a VoxelImage")
 
     if data.ndim != 3:
         raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
@@ -250,8 +410,9 @@ def _numpy_to_voxelimage(
     if isinstance(max_grid_size, str) and max_grid_size.lower() == "auto":
         max_grid_size = _auto_grid_size(data.shape)
 
-    data = np.ascontiguousarray(data, dtype=np.int32)
-    return _core.VoxelImage.from_numpy(data, max_grid_size)
+    dz, dy, dx = _normalize_voxel_size(voxel_size)
+    arr = np.ascontiguousarray(data, dtype=np.int32)
+    return _core.VoxelImage.from_numpy(arr, max_grid_size, dx=dx, dy=dy, dz=dz)
 
 
 # ---------------------------------------------------------------------------
@@ -264,38 +425,18 @@ def volume_fraction(
     *,
     max_grid_size: Union[int, str] = "auto",
 ) -> VolumeFractionResult:
-    """Compute the volume fraction of *phase* in a 3-D NumPy array.
-
-    Parameters
-    ----------
-    data : np.ndarray
-        3-D integer array of phase IDs (shape: z, y, x).
-    phase : int
-        Phase ID to count.
-    max_grid_size : int or str
-        AMReX box decomposition size.  ``'auto'`` picks based on domain size.
-
-    Returns
-    -------
-    VolumeFractionResult
-    """
+    """Compute the volume fraction of *phase* in a 3-D NumPy array or VoxelImage."""
     _ensure_initialized()
 
     if _is_pure_python():
         from . import _solver
-        data = np.ascontiguousarray(data, dtype=np.int32)
-        pc, tc, frac = _solver.volume_fraction(data, phase)
+
+        arr = np.ascontiguousarray(data, dtype=np.int32)
+        pc, tc, frac = _solver.volume_fraction(arr, phase)
         return VolumeFractionResult(phase_count=pc, total_count=tc, fraction=frac)
 
     _core = _get_core()
-
-    if isinstance(data, np.ndarray):
-        img = _numpy_to_voxelimage(data, max_grid_size)
-    elif isinstance(data, _core.VoxelImage):
-        img = data
-    else:
-        raise TypeError("data must be a NumPy array or a VoxelImage")
-
+    img = _numpy_to_voxelimage(data, max_grid_size)
     vf = _core.VolumeFraction(img, phase, 0)
     pc, tc = vf.value()
     frac = pc / tc if tc > 0 else 0.0
@@ -310,30 +451,15 @@ def percolation_check(
     max_grid_size: Union[int, str] = "auto",
     verbose: int = 0,
 ) -> PercolationResult:
-    """Check whether *phase* percolates across the domain in *direction*.
-
-    Parameters
-    ----------
-    data : np.ndarray
-        3-D integer array of phase IDs.
-    phase : int
-        Phase ID to check.
-    direction : str or Direction
-        'x', 'y', or 'z'.
-    max_grid_size : int or str
-        AMReX box decomposition size.  ``'auto'`` picks based on domain size.
-
-    Returns
-    -------
-    PercolationResult
-    """
+    """Check whether *phase* percolates across the domain in *direction*."""
     _ensure_initialized()
 
     if _is_pure_python():
         from . import _solver
-        data = np.ascontiguousarray(data, dtype=np.int32)
+
+        arr = np.ascontiguousarray(data, dtype=np.int32)
         d = _parse_direction_int(direction)
-        percolates, active_vf, _ = _solver.percolation_check(data, phase, 2 - d)
+        percolates, active_vf, _ = _solver.percolation_check(arr, phase, 2 - d)
         return PercolationResult(
             percolates=percolates,
             active_volume_fraction=active_vf,
@@ -342,14 +468,7 @@ def percolation_check(
 
     _core = _get_core()
     d = _parse_direction(direction)
-
-    if isinstance(data, np.ndarray):
-        img = _numpy_to_voxelimage(data, max_grid_size)
-    elif isinstance(data, _core.VoxelImage):
-        img = data
-    else:
-        raise TypeError("data must be a NumPy array or a VoxelImage")
-
+    img = _numpy_to_voxelimage(data, max_grid_size)
     pc = _core.PercolationCheck(img, phase, d, verbose)
     return PercolationResult(
         percolates=pc.percolates,
@@ -364,6 +483,9 @@ def tortuosity(
     direction: Union[str, "Direction"] = "x",
     solver: Union[str, "SolverType"] = "auto",
     *,
+    voxel_size: Optional[VoxelSizeArg] = None,
+    phase_diffusivities: Optional[Mapping[int, float]] = None,
+    return_field: bool = False,
     preconditioner: Union[str, "PrecondType"] = "smg",
     max_grid_size: Union[int, str] = "auto",
     results_path: str = ".",
@@ -372,58 +494,49 @@ def tortuosity(
     mlmg_maxiter: Optional[int] = None,
     mlmg_max_coarsening_level: Optional[int] = None,
 ) -> TortuosityResult:
-    """Compute the tortuosity of *phase* in *direction*.
+    """Compute steady-state tortuosity and effective diffusivity along *direction*.
 
     Parameters
     ----------
-    data : np.ndarray
-        3-D integer array of phase IDs.
+    data : np.ndarray or VoxelImage
+        3-D integer array of phase IDs ``(Nz, Ny, Nx)`` or a ``VoxelImage`` handle.
     phase : int
-        Phase ID for the conducting phase.
+        Conducting phase ID when *phase_diffusivities* is ``None``.
     direction : str or Direction
-        Flow direction ('x', 'y', 'z').
+        Flow direction (``'x'``, ``'y'``, or ``'z'``).
     solver : str or SolverType
-        Solver algorithm.  ``'auto'`` (default) selects AMReX MLMG —
-        matrix-free geometric multigrid on the active voxel network.  Explicit aliases:
-        ``'mlmg'`` (same as ``'auto'``); HYPRE Krylov methods
-        ``'flexgmres'``, ``'pcg'``, ``'gmres'``, ``'bicgstab'``; standalone
-        HYPRE multigrid ``'smg'``, ``'pfmg'``, ``'jacobi'``.  Recommended
-        HYPRE fallback for diagnostic comparison:
-        ``solver='pcg', preconditioner='smg'``.
-    preconditioner : str or PrecondType, keyword-only
-        Multigrid preconditioner for Krylov solvers (PCG/GMRES/FlexGMRES/BiCGSTAB):
-        ``'smg'`` (default) or ``'pfmg'``.  Ignored for standalone SMG/PFMG/Jacobi
-        and for MLMG.  SMG is the default because its point-based smoothing
-        handles the decoupled inactive rows that arise from masked porous-media
-        inputs; PFMG's semicoarsening tends to stall on those rows and may not
-        converge.  Use PFMG for fully-active grids (no masked cells) — it scales
-        better.  Both work on CPU and GPU.
-    max_grid_size : int or str
-        AMReX box decomposition size.  ``'auto'`` picks a value based on the
-        domain dimensions and active MPI rank count.
-    mlmg_eps, mlmg_maxiter, mlmg_max_coarsening_level
-        Tuning knobs for ``solver='mlmg'``.  ``None`` leaves the C++ default
-        (``mlmg_eps=1e-8`` with GMRES-preconditioned MLMG and boundary-scaled
-        stopping tolerance, yielding ~8+ digits of tortuosity accuracy).
-
-    Returns
-    -------
-    TortuosityResult
-
-    Raises
-    ------
-    ConvergenceError
-        If the solver does not converge.
-    PercolationError
-        If the phase does not percolate in the given direction.
+        ``'auto'`` / ``'mlmg'`` (default matrix-free AMReX geometric multigrid),
+        or HYPRE solvers ``'pcg'``, ``'flexgmres'``, ``'gmres'``, ``'bicgstab'``,
+        ``'smg'``, ``'pfmg'``, ``'jacobi'``.
+    voxel_size : float or tuple of 3 floats, optional
+        Physical voxel spacing: either a scalar ``h`` (cubic voxels) or
+        ``(dz, dy, dx)`` matching NumPy ``(Nz, Ny, Nx)`` axis order.
+    phase_diffusivities : Mapping[int, float], optional
+        Multi-phase transport map ``{phase_id: D_phase}``.  Phases with ``D > 0``
+        participate in 6-connected transport with harmonic-mean face conductances;
+        unlisted phases or phases with ``D == 0`` are insulating.
+    return_field : bool
+        If ``True``, populate ``result.solution_field`` with the solved 3-D
+        potential field ``(Nz, Ny, Nx)`` (``float64``).  Defaults to ``False``
+        to avoid host memory copies on large grids.
     """
     _ensure_initialized()
+    phase_map = _normalize_phase_diffusivities(phase_diffusivities)
 
     if _is_pure_python():
         from . import _solver
-        data = np.ascontiguousarray(data, dtype=np.int32)
+
+        arr = np.ascontiguousarray(data, dtype=np.int32)
+        vz = _normalize_voxel_size(voxel_size)
         d = _parse_direction_int(direction)
-        result = _solver.solve_tortuosity(data, phase, 2 - d)
+        result = _solver.solve_tortuosity(
+            arr,
+            phase=phase,
+            direction=2 - d,
+            voxel_size=vz,
+            phase_diffusivities=phase_map if phase_map else None,
+            return_field=return_field,
+        )
         if not result["solver_converged"]:
             raise ConvergenceError(
                 f"Solver did not converge after {result['iterations']} "
@@ -437,24 +550,25 @@ def tortuosity(
             flux_in=result["flux_in"],
             flux_out=result["flux_out"],
             active_volume_fraction=result["active_volume_fraction"],
-            solution_field=result["solution_field"],
+            solution_field=result["solution_field"] if return_field else None,
+            effective_diffusivity=result["effective_diffusivity"],
         )
 
     # --- C++ backend path ---
     _core = _get_core()
     d = _parse_direction(direction)
     st = _parse_solver(solver)
+    img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
 
-    if isinstance(data, np.ndarray):
-        img = _numpy_to_voxelimage(data, max_grid_size)
-    elif isinstance(data, _core.VoxelImage):
-        img = data
+    if phase_map:
+        vf_val = sum(
+            _core.VolumeFraction(img, pid, 0).value_vf()
+            for pid, coeff in phase_map.items()
+            if coeff > 0.0
+        )
     else:
-        raise TypeError("data must be a NumPy array or a VoxelImage")
+        vf_val = _core.VolumeFraction(img, phase, 0).value_vf()
 
-    # Volume fraction (cheap — pure counting, no flood fill)
-    vf_calc = _core.VolumeFraction(img, phase, 0)
-    vf_val = vf_calc.value_vf()
     if vf_val <= 0.0:
         dir_name = _core.PercolationCheck.direction_string(d)
         raise PercolationError(
@@ -463,12 +577,7 @@ def tortuosity(
             f"disconnected between the inlet and outlet faces."
         )
 
-    # Route to the appropriate solver backend.
-    # Both TortuosityMLMG and TortuosityHypre compute the two-sided flood-fill
-    # activity mask in their constructors and return early (skipping matrix
-    # assembly) when active_volume_fraction == 0, avoiding duplicate flood fills.
     if st == "mlmg":
-        # Matrix-free AMReX MLMG solver — no HYPRE, lower memory
         mlmg_kwargs = {}
         if mlmg_eps is not None:
             mlmg_kwargs["eps"] = float(mlmg_eps)
@@ -476,19 +585,35 @@ def tortuosity(
             mlmg_kwargs["maxiter"] = int(mlmg_maxiter)
         if mlmg_max_coarsening_level is not None:
             mlmg_kwargs["max_coarsening_level"] = int(mlmg_max_coarsening_level)
+        if phase_map:
+            mlmg_kwargs["phase_coeffs"] = phase_map
         solver_obj = _core.TortuosityMLMG(
-            img, vf_val, phase, d, results_path,
-            0.0, 1.0, verbose, False,
+            img,
+            vf_val,
+            phase,
+            d,
+            results_path,
+            0.0,
+            1.0,
+            verbose,
+            False,
             **mlmg_kwargs,
         )
     else:
-        # HYPRE-based solver (PCG, FlexGMRES, etc.). The preconditioner is applied
-        # to Krylov solvers; HYPRE ignores it for standalone SMG/PFMG/Jacobi.
         pc = _parse_preconditioner(preconditioner)
         solver_obj = _core.TortuosityHypre(
-            img, vf_val, phase, d, st, results_path,
-            0.0, 1.0, verbose, False,
+            img,
+            vf_val,
+            phase,
+            d,
+            st,
+            results_path,
+            0.0,
+            1.0,
+            verbose,
+            False,
             pc,
+            phase_map,
         )
 
     if solver_obj.active_volume_fraction <= 0.0:
@@ -511,6 +636,8 @@ def tortuosity(
             f"iterations (residual={solver_obj.residual_norm:.2e})"
         )
 
+    field = solver_obj.solution_field() if return_field else None
+
     return TortuosityResult(
         tortuosity=tau,
         solver_converged=solver_obj.solver_converged,
@@ -519,32 +646,421 @@ def tortuosity(
         flux_in=solver_obj.flux_in,
         flux_out=solver_obj.flux_out,
         active_volume_fraction=solver_obj.active_volume_fraction,
+        solution_field=field,
+        effective_diffusivity=float(solver_obj.effective_diffusivity),
     )
+
+
+def effective_diffusivity(
+    data: np.ndarray,
+    phase: int = 1,
+    *,
+    voxel_size: Optional[VoxelSizeArg] = None,
+    phase_diffusivities: Optional[Mapping[int, float]] = None,
+    solver: Union[str, "SolverType"] = "flexgmres",
+    return_fields: bool = False,
+    max_grid_size: Union[int, str] = "auto",
+    results_path: str = ".",
+    verbose: int = 0,
+) -> EffectiveDiffusivityResult:
+    """Compute the full 3x3 homogenised effective-diffusivity tensor ``D_eff``.
+
+    Solves the three periodic homogenisation cell problems in ``x``, ``y``, ``z``
+    and returns ``EffectiveDiffusivityResult`` with ``tensor`` ordered ``(x, y, z)``.
+    """
+    _ensure_initialized()
+    phase_map = _normalize_phase_diffusivities(phase_diffusivities)
+
+    if _is_pure_python():
+        from . import _solver
+
+        arr = np.ascontiguousarray(data, dtype=np.int32)
+        vz = _normalize_voxel_size(voxel_size)
+        raw = _solver.solve_effective_diffusivity(
+            arr,
+            phase=phase,
+            voxel_size=vz,
+            phase_diffusivities=phase_map if phase_map else None,
+            return_chi=return_fields,
+        )
+        if not raw["converged"]:
+            raise ConvergenceError(
+                f"Effective diffusivity cell-problem solver failed to converge "
+                f"(residuals={raw['residuals']})"
+            )
+        return EffectiveDiffusivityResult(
+            tensor=np.asarray(raw["tensor"], dtype=np.float64),
+            active_volume_fraction=float(raw["active_volume_fraction"]),
+            solver_converged=bool(raw["converged"]),
+            iterations=tuple(int(i) for i in raw["iterations"]),
+            residuals=tuple(float(r) for r in raw["residuals"]),
+            corrector_fields=raw.get("chi") if return_fields else None,
+        )
+
+    _core = _get_core()
+    st = _parse_hypre_solver(solver)
+    img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
+    raw = _core.compute_effective_diffusivity_tensor(
+        img,
+        phase_id=phase,
+        solver_type=st,
+        results_path=results_path,
+        verbose=verbose,
+        write_plotfile=False,
+        phase_coeffs=phase_map,
+        return_chi=return_fields,
+    )
+    if not raw["converged"]:
+        raise ConvergenceError(
+            f"Effective diffusivity HYPRE cell-problem solver failed to converge "
+            f"(iterations={raw['iterations']}, residuals={raw['residuals']})"
+        )
+    return EffectiveDiffusivityResult(
+        tensor=np.asarray(raw["tensor"], dtype=np.float64),
+        active_volume_fraction=float(raw["active_volume_fraction"]),
+        solver_converged=bool(raw["converged"]),
+        iterations=tuple(int(i) for i in raw["iterations"]),
+        residuals=tuple(float(r) for r in raw["residuals"]),
+        corrector_fields=dict(raw["chi"]) if return_fields else None,
+    )
+
+
+def specific_surface_area(
+    data: np.ndarray,
+    phase_a: int = 0,
+    phase_b: int = 1,
+    *,
+    voxel_size: Optional[VoxelSizeArg] = None,
+    boundary_padding: int = 0,
+    max_grid_size: Union[int, str] = "auto",
+) -> SpecificSurfaceAreaResult:
+    """Compute interfacial specific surface area between *phase_a* and *phase_b*."""
+    _ensure_initialized()
+    if boundary_padding < 0:
+        raise ValueError(f"boundary_padding must be >= 0, got {boundary_padding}")
+
+    if _is_pure_python():
+        from . import _solver
+
+        arr = np.ascontiguousarray(data, dtype=np.int32)
+        vz = _normalize_voxel_size(voxel_size)
+        raw = _solver.specific_surface_area(
+            arr, phase_a=phase_a, phase_b=phase_b, voxel_size=vz, boundary_padding=boundary_padding
+        )
+        return SpecificSurfaceAreaResult(
+            ssa=raw["ssa"],
+            ssa_corrected=raw["ssa_corrected"],
+            ssa_voxel=raw["ssa_voxel"],
+            ssa_voxel_corrected=raw["ssa_voxel_corrected"],
+            face_count=raw["face_count"],
+            total_count=raw["total_count"],
+            face_counts_xyz=raw["face_counts_xyz"],
+        )
+
+    _core = _get_core()
+    img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
+    dom_shape = img.shape  # (nz, ny, nx)
+    if boundary_padding > 0 and any(s <= 2 * boundary_padding for s in dom_shape):
+        raise ValueError(
+            f"boundary_padding={boundary_padding} is too large for domain of shape {dom_shape}"
+        )
+
+    calc = _core.SpecificSurfaceArea(
+        img, phase_a=phase_a, phase_b=phase_b, comp=0, boundary_padding=boundary_padding
+    )
+    (fx, fy, fz), tc = calc.direction_face_counts()
+    fc = int(fx + fy + fz)
+    ssa_vox = float(fc) / float(tc) if tc > 0 else 0.0
+    dx, dy, dz = img.cell_size_xyz
+    ssa_phys = (fx / dx + fy / dy + fz / dz) / float(tc) if tc > 0 else 0.0
+
+    return SpecificSurfaceAreaResult(
+        ssa=float(ssa_phys),
+        ssa_corrected=(2.0 / 3.0) * float(ssa_phys),
+        ssa_voxel=ssa_vox,
+        ssa_voxel_corrected=(2.0 / 3.0) * ssa_vox,
+        face_count=fc,
+        total_count=int(tc),
+        face_counts_xyz=(int(fx), int(fy), int(fz)),
+    )
+
+
+def connected_components(
+    data: np.ndarray,
+    phase: int = 1,
+    *,
+    return_labels: bool = False,
+    max_grid_size: Union[int, str] = "auto",
+    verbose: int = 0,
+) -> ConnectedComponentsResult:
+    """Label 6-connected components of *phase*."""
+    _ensure_initialized()
+
+    if _is_pure_python():
+        from . import _solver
+
+        arr = np.ascontiguousarray(data, dtype=np.int32)
+        n_comp, vols, labels = _solver.connected_components(
+            arr, phase=phase, return_labels=return_labels
+        )
+        return ConnectedComponentsResult(
+            num_components=n_comp,
+            volumes=vols,
+            labels=labels,
+        )
+
+    _core = _get_core()
+    img = _numpy_to_voxelimage(data, max_grid_size)
+    ccl = _core.ConnectedComponents(img, phase_id=phase, verbose=verbose)
+    vols = np.asarray(ccl.component_volumes, dtype=np.int64)
+    labels = ccl.label_field() if return_labels else None
+    return ConnectedComponentsResult(
+        num_components=int(ccl.num_components),
+        volumes=vols,
+        labels=labels,
+    )
+
+
+def particle_size_distribution(
+    data: np.ndarray,
+    phase: int = 1,
+    *,
+    voxel_size: Optional[VoxelSizeArg] = None,
+    max_grid_size: Union[int, str] = "auto",
+    verbose: int = 0,
+) -> ParticleSizeDistributionResult:
+    """Compute equivalent-sphere radii ``R = (3V / (4*pi))^(1/3)`` of 6-connected components."""
+    _ensure_initialized()
+
+    if _is_pure_python():
+        from . import _solver
+
+        arr = np.ascontiguousarray(data, dtype=np.int32)
+        vz = _normalize_voxel_size(voxel_size)
+        raw = _solver.particle_size_distribution(arr, phase=phase, voxel_size=vz)
+        return ParticleSizeDistributionResult(
+            num_particles=raw["num_particles"],
+            mean_radius=raw["mean_radius"],
+            radii=raw["radii"],
+            volumes=raw["volumes"],
+            radii_voxels=raw["radii_voxels"],
+            volumes_voxels=raw["volumes_voxels"],
+        )
+
+    _core = _get_core()
+    img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
+    psd = _core.ParticleSizeDistribution(img, phase_id=phase, verbose=verbose)
+    dx, dy, dz = img.cell_size_xyz
+    cell_vol = float(dx * dy * dz)
+    length_scale = cell_vol ** (1.0 / 3.0)
+
+    radii_vox = np.asarray(psd.radii, dtype=np.float64)
+    vols_vox = np.asarray(psd.volumes, dtype=np.int64)
+    radii_phys = radii_vox * length_scale
+    vols_phys = vols_vox.astype(np.float64) * cell_vol
+    mean_r_phys = float(psd.mean_radius) * length_scale
+
+    return ParticleSizeDistributionResult(
+        num_particles=int(psd.num_particles),
+        mean_radius=mean_r_phys,
+        radii=radii_phys,
+        volumes=vols_phys,
+        radii_voxels=radii_vox,
+        volumes_voxels=vols_vox,
+    )
+
+
+def through_thickness_profile(
+    data: np.ndarray,
+    phase: int = 1,
+    direction: Union[str, "Direction"] = "x",
+    *,
+    voxel_size: Optional[VoxelSizeArg] = None,
+    max_grid_size: Union[int, str] = "auto",
+) -> ThroughThicknessResult:
+    """Compute slice-by-slice volume fraction profile of *phase* along *direction*."""
+    _ensure_initialized()
+    d_int = _parse_direction_int(direction)
+    dir_label = _DIR_NAMES[d_int]
+
+    if _is_pure_python():
+        from . import _solver
+
+        arr = np.ascontiguousarray(data, dtype=np.int32)
+        vz = _normalize_voxel_size(voxel_size)
+        prof, pos = _solver.through_thickness_profile(
+            arr, phase=phase, direction_xyz=d_int, voxel_size=vz
+        )
+        return ThroughThicknessResult(
+            direction=dir_label,
+            num_slices=int(len(prof)),
+            profile=prof,
+            positions=pos,
+        )
+
+    _core = _get_core()
+    d_enum = _parse_direction(dir_label)
+    img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
+    ttp = _core.ThroughThicknessProfile(img, phase_id=phase, dir=d_enum, comp=0)
+    prof = np.asarray(ttp.volume_fraction_profile, dtype=np.float64)
+    cs_xyz = img.cell_size_xyz
+    h = float(cs_xyz[d_int])
+    pos = (np.arange(len(prof), dtype=np.float64) + 0.5) * h
+    return ThroughThicknessResult(
+        direction=dir_label,
+        num_slices=int(ttp.num_slices),
+        profile=prof,
+        positions=pos,
+    )
+
+
+def _summarize_rev_records(
+    records: list[dict], csv_path: Optional[str]
+) -> REVStudyResult:
+    seen_sizes: list[int] = []
+    grouped: dict[int, list[np.ndarray]] = {}
+    for rec in records:
+        sz = int(rec["target_size"])
+        if sz not in grouped:
+            seen_sizes.append(sz)
+            grouped[sz] = []
+        grouped[sz].append(
+            np.array([rec["D_xx"], rec["D_yy"], rec["D_zz"]], dtype=np.float64)
+        )
+
+    mean_diag: dict[int, np.ndarray] = {}
+    std_diag: dict[int, np.ndarray] = {}
+    for sz in seen_sizes:
+        arr = np.vstack(grouped[sz])
+        mean_diag[sz] = np.mean(arr, axis=0)
+        std_diag[sz] = np.std(arr, axis=0)
+
+    return REVStudyResult(
+        sizes=seen_sizes,
+        samples=records,
+        mean_diagonal=mean_diag,
+        std_diagonal=std_diag,
+        csv_path=csv_path,
+    )
+
+
+def rev_study(
+    data: np.ndarray,
+    sizes: Sequence[int],
+    *,
+    num_samples: int = 3,
+    phase: int = 1,
+    voxel_size: Optional[VoxelSizeArg] = None,
+    solver: Union[str, "SolverType"] = "flexgmres",
+    csv_path: Optional[str] = None,
+    max_grid_size: Union[int, str] = "auto",
+    verbose: int = 0,
+) -> REVStudyResult:
+    """Run a Representative Elementary Volume (REV) convergence study."""
+    _ensure_initialized()
+    size_list = [int(s) for s in sizes if int(s) > 0]
+    if not size_list:
+        return REVStudyResult(
+            sizes=[], samples=[], mean_diagonal={}, std_diagonal={}, csv_path=csv_path
+        )
+
+    if _is_pure_python():
+        from . import _solver
+
+        arr = np.ascontiguousarray(data, dtype=np.int32)
+        vz = _normalize_voxel_size(voxel_size)
+        records = _solver.rev_study(
+            arr,
+            sizes=size_list,
+            num_samples=num_samples,
+            phase=phase,
+            voxel_size=vz,
+            csv_path=csv_path,
+        )
+        return _summarize_rev_records(records, csv_path)
+
+    _core = _get_core()
+    st = _parse_hypre_solver(solver)
+    img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
+    box_sz = 32 if isinstance(max_grid_size, str) else int(max_grid_size)
+
+    def _parse_csv_text(csv_text: str) -> list[dict]:
+        rows: list[dict] = []
+        if not csv_text.strip():
+            return rows
+        reader = csv.DictReader(csv_text.splitlines())
+        for r in reader:
+            dxx = float(r["D_xx"])
+            dyy = float(r["D_yy"])
+            dzz = float(r["D_zz"])
+            dxy = float(r["D_xy"])
+            dxz = float(r["D_xz"])
+            dyz = float(r["D_yz"])
+            tensor = np.array(
+                [[dxx, dxy, dxz], [dxy, dyy, dyz], [dxz, dyz, dzz]],
+                dtype=np.float64,
+            )
+            rows.append(
+                {
+                    "sample": int(r["SampleNo"]),
+                    "seed_xyz": (int(r["SeedX"]), int(r["SeedY"]), int(r["SeedZ"])),
+                    "target_size": int(r["REV_Size_Target"]),
+                    "actual_size_xyz": (
+                        int(r["ActualSizeX"]),
+                        int(r["ActualSizeY"]),
+                        int(r["ActualSizeZ"]),
+                    ),
+                    "D_xx": dxx,
+                    "D_yy": dyy,
+                    "D_zz": dzz,
+                    "D_xy": dxy,
+                    "D_xz": dxz,
+                    "D_yz": dyz,
+                    "tensor": tensor,
+                }
+            )
+        return rows
+
+    if csv_path is not None:
+        target_p = Path(csv_path)
+        target_p.parent.mkdir(parents=True, exist_ok=True)
+        _written, csv_content = _core.run_rev_study(
+            img,
+            sizes=size_list,
+            num_samples=num_samples,
+            phase_id=phase,
+            box_size=box_sz,
+            solver_type=st,
+            results_path=str(target_p.parent),
+            csv_filename=target_p.name,
+            verbose=verbose,
+            write_plotfiles=False,
+        )
+        records = _parse_csv_text(csv_content)
+        return _summarize_rev_records(records, str(target_p))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _written, csv_content = _core.run_rev_study(
+            img,
+            sizes=size_list,
+            num_samples=num_samples,
+            phase_id=phase,
+            box_size=box_sz,
+            solver_type=st,
+            results_path=tmpdir,
+            csv_filename="rev_study_Deff.csv",
+            verbose=verbose,
+            write_plotfiles=False,
+        )
+        records = _parse_csv_text(csv_content)
+    return _summarize_rev_records(records, None)
 
 
 def estimate_memory(
     shape: tuple[int, ...],
     num_ranks: int = 1,
 ) -> dict:
-    """Estimate per-rank memory usage for a tortuosity solve.
-
-    Uses the rule of thumb: ~80 bytes per active voxel (4 bytes phase data,
-    56 bytes HYPRE matrix for 7-point stencil, 8 bytes solution field,
-    ~12 bytes work arrays and ghost cells).
-
-    Parameters
-    ----------
-    shape : tuple of int
-        Domain dimensions (Nz, Ny, Nx).
-    num_ranks : int
-        Number of MPI ranks.
-
-    Returns
-    -------
-    dict
-        Keys: ``total_voxels``, ``voxels_per_rank``, ``bytes_per_rank``,
-        ``mb_per_rank``, ``gb_per_rank``, ``num_ranks``.
-    """
+    """Estimate per-rank memory usage for a tortuosity solve."""
     total = int(np.prod(shape))
     per_rank = total / max(num_ranks, 1)
     bytes_per_rank = per_rank * 80
@@ -559,32 +1075,13 @@ def estimate_memory(
 
 
 def build_info() -> dict:
-    """Return compile-time + runtime feature flags for the installed wheel.
-
-    Critical for Colab users who need to verify they got the GPU wheel
-    (``pip install openimpala-cuda``) and not the default CPU wheel.
-
-    Returns
-    -------
-    dict
-        Keys:
-
-        * ``backend``: ``"cpp-cuda"``, ``"cpp-hip"``, ``"cpp-cpu"``, or ``"pure-python"``
-        * ``cuda_enabled`` / ``hip_enabled`` / ``gpu_enabled``: bool
-        * ``openmp_enabled``: bool; ``openmp_max_threads``: int
-        * ``mpi_enabled``: bool
-        * ``tiny_profile``: bool (BL_PROFILE regions emit a table at shutdown)
-        * ``hypre_cuda`` / ``hypre_hip``: bool (HYPRE solver device support)
-        * ``gpu_device_count``: int (runtime — ``-1`` if AMReX not yet initialised)
-        * ``version``: str (package version)
-    """
+    """Return compile-time + runtime feature flags for the installed wheel."""
     from . import __version__
 
     if _is_pure_python() or not _has_core():
-        # Pure-Python fallback (SciPy/CuPy) — no compiled backend at all.
-        # CuPy CG is GPU-accelerated but has no OpenMP / HYPRE / TinyProfile.
         try:
             import cupy  # noqa: F401
+
             has_cupy = True
         except ImportError:
             has_cupy = False
@@ -620,6 +1117,7 @@ def read_image(
     path: str,
     threshold: float = 0.5,
     *,
+    voxel_size: Optional[VoxelSizeArg] = None,
     file_format: Optional[str] = None,
     hdf5_dataset: str = "/data",
     raw_width: int = 0,
@@ -628,27 +1126,7 @@ def read_image(
     raw_data_type=None,
     max_grid_size: Union[int, str] = "auto",
 ) -> tuple:
-    """Read a 3-D image file and threshold it into a VoxelImage.
-
-    Automatically detects format from the file extension unless *file_format*
-    is explicitly set.
-
-    Parameters
-    ----------
-    path : str
-        Path to the image file.
-    threshold : float
-        Threshold value for binarisation.
-    file_format : str, optional
-        Force format: 'tiff', 'hdf5', 'raw', or 'dat'.
-    max_grid_size : int or str
-        AMReX box decomposition size.  ``'auto'`` picks based on domain size.
-
-    Returns
-    -------
-    (reader, VoxelImage)
-        The reader object and the VoxelImage handle.
-    """
+    """Read a 3-D image file and threshold it into a VoxelImage."""
     _ensure_initialized()
 
     if _is_pure_python():
@@ -663,7 +1141,6 @@ def read_image(
     if raw_data_type is None:
         raw_data_type = _core.RawDataType.UINT8
 
-    # Auto-detect format
     if file_format is None:
         lower = path.lower()
         if lower.endswith((".tif", ".tiff")):
@@ -677,7 +1154,6 @@ def read_image(
         else:
             raise ValueError(f"Cannot auto-detect format for '{path}'. Set file_format explicitly.")
 
-    # Create reader and read metadata
     if file_format == "tiff":
         reader = _core.TiffReader(path)
     elif file_format == "hdf5":
@@ -689,11 +1165,12 @@ def read_image(
     else:
         raise ValueError(f"Unknown file_format '{file_format}'")
 
-    # Resolve "auto" — keep single-rank file reads in large contiguous boxes.
     if isinstance(max_grid_size, str) and max_grid_size.lower() == "auto":
         max_grid_size = 256 if _core.mpi_ranks() <= 1 else 64
 
-    # Threshold directly into a VoxelImage (all AMReX setup happens in C++)
     img = reader.threshold(threshold, max_grid_size)
+    if voxel_size is not None:
+        dz, dy, dx = _normalize_voxel_size(voxel_size)
+        img = img.with_voxel_size(dx=dx, dy=dy, dz=dz)
 
     return reader, img

@@ -62,7 +62,8 @@ public:
                    const amrex::Real vf, const int phase, const OpenImpala::Direction dir,
                    const std::string& resultspath, const amrex::Real vlo = 0.0,
                    const amrex::Real vhi = 1.0, int verbose = 0, bool write_plotfile = false,
-                   amrex::Real eps = 1.0e-8, int maxiter = 200, int max_coarsening_level = 30);
+                   amrex::Real eps = 1.0e-8, int maxiter = 200, int max_coarsening_level = 30,
+                   const std::map<int, amrex::Real>& phase_coeffs = {});
 
     ~TortuosityMLMG() override = default;
 
