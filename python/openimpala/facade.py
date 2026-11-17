@@ -206,17 +206,29 @@ def _parse_preconditioner(p):
 
 
 def _auto_grid_size(shape: tuple[int, ...]) -> int:
-    """Pick a good AMReX max_grid_size based on domain dimensions.
+    """Pick a good AMReX max_grid_size based on domain dimensions and MPI ranks.
 
-    Heuristic: use the largest power-of-two that evenly divides the
-    smallest dimension, clamped to [16, 128].  For small domains this
-    avoids unnecessary box splitting; for large domains it keeps MPI
-    load-balanced.
+    On a single MPI rank, keep domains up to 256^3 in a single contiguous box
+    (OpenMP tiling and GPU thread blocks provide intra-box parallelism without
+    cross-box ghost-exchange overhead).  When multiple MPI ranks are active,
+    split into power-of-two boxes so AMReX can distribute boxes across ranks.
     """
+    n_max = max(shape)
+    n_ranks = 1
+    if not _is_pure_python():
+        try:
+            n_ranks = _get_core().mpi_ranks()
+        except Exception:
+            n_ranks = 1
+
+    if n_ranks <= 1:
+        return max(16, min(256, int(n_max)))
+
     n_min = min(shape)
+    total_voxels = int(np.prod(shape))
     mgs = 16
     for candidate in (128, 64, 32, 16):
-        if n_min >= candidate and n_min % candidate == 0:
+        if n_min >= candidate and (total_voxels // (candidate ** 3)) >= n_ranks:
             mgs = candidate
             break
     return mgs
@@ -224,7 +236,7 @@ def _auto_grid_size(shape: tuple[int, ...]) -> int:
 
 def _numpy_to_voxelimage(
     data: np.ndarray,
-    max_grid_size: Union[int, str] = 32,
+    max_grid_size: Union[int, str] = "auto",
 ):
     """Convert a 3-D int32 NumPy array to a VoxelImage (native C++ ingestion).
 
@@ -250,7 +262,7 @@ def volume_fraction(
     data: np.ndarray,
     phase: int = 0,
     *,
-    max_grid_size: Union[int, str] = 32,
+    max_grid_size: Union[int, str] = "auto",
 ) -> VolumeFractionResult:
     """Compute the volume fraction of *phase* in a 3-D NumPy array.
 
@@ -295,7 +307,7 @@ def percolation_check(
     phase: int = 0,
     direction: Union[str, "Direction"] = "x",
     *,
-    max_grid_size: Union[int, str] = 32,
+    max_grid_size: Union[int, str] = "auto",
     verbose: int = 0,
 ) -> PercolationResult:
     """Check whether *phase* percolates across the domain in *direction*.
@@ -353,7 +365,7 @@ def tortuosity(
     solver: Union[str, "SolverType"] = "auto",
     *,
     preconditioner: Union[str, "PrecondType"] = "smg",
-    max_grid_size: Union[int, str] = 32,
+    max_grid_size: Union[int, str] = "auto",
     results_path: str = ".",
     verbose: int = 0,
     mlmg_eps: Optional[float] = None,
@@ -388,13 +400,11 @@ def tortuosity(
         better.  Both work on CPU and GPU.
     max_grid_size : int or str
         AMReX box decomposition size.  ``'auto'`` picks a value based on the
-        domain dimensions.
+        domain dimensions and active MPI rank count.
     mlmg_eps, mlmg_maxiter, mlmg_max_coarsening_level
         Tuning knobs for ``solver='mlmg'``.  ``None`` leaves the C++ default
-        (``mlmg_eps=1e-11``, two orders tighter than HYPRE's default because
-        MLMG's relative residual norm is referenced to a different baseline —
-        see TortuosityMLMG.H for the derivation).  Loosen ``mlmg_eps`` only
-        for trivial geometries; tightening it further is rarely needed.
+        (``mlmg_eps=1e-8`` with GMRES-preconditioned MLMG and boundary-scaled
+        stopping tolerance, yielding ~8+ digits of tortuosity accuracy).
 
     Returns
     -------
@@ -430,7 +440,7 @@ def tortuosity(
             solution_field=result["solution_field"],
         )
 
-    # --- C++ backend path (unchanged) ---
+    # --- C++ backend path ---
     _core = _get_core()
     d = _parse_direction(direction)
     st = _parse_solver(solver)
@@ -442,10 +452,10 @@ def tortuosity(
     else:
         raise TypeError("data must be a NumPy array or a VoxelImage")
 
-    # Pre-flight percolation check — fail fast before expensive solver
-    # construction and HYPRE matrix assembly.
-    pc = _core.PercolationCheck(img, phase, d, verbose)
-    if not pc.percolates:
+    # Volume fraction (cheap — pure counting, no flood fill)
+    vf_calc = _core.VolumeFraction(img, phase, 0)
+    vf_val = vf_calc.value_vf()
+    if vf_val <= 0.0:
         dir_name = _core.PercolationCheck.direction_string(d)
         raise PercolationError(
             f"Phase {phase} does not percolate in the {dir_name} direction. "
@@ -453,11 +463,10 @@ def tortuosity(
             f"disconnected between the inlet and outlet faces."
         )
 
-    # Volume fraction (cheap — pure counting, no flood fill)
-    vf_calc = _core.VolumeFraction(img, phase, 0)
-    vf_val = vf_calc.value_vf()
-
-    # Route to the appropriate solver backend
+    # Route to the appropriate solver backend.
+    # Both TortuosityMLMG and TortuosityHypre compute the two-sided flood-fill
+    # activity mask in their constructors and return early (skipping matrix
+    # assembly) when active_volume_fraction == 0, avoiding duplicate flood fills.
     if st == "mlmg":
         # Matrix-free AMReX MLMG solver — no HYPRE, lower memory
         mlmg_kwargs = {}
@@ -480,6 +489,14 @@ def tortuosity(
             img, vf_val, phase, d, st, results_path,
             0.0, 1.0, verbose, False,
             pc,
+        )
+
+    if solver_obj.active_volume_fraction <= 0.0:
+        dir_name = _core.PercolationCheck.direction_string(d)
+        raise PercolationError(
+            f"Phase {phase} does not percolate in the {dir_name} direction. "
+            f"The Krylov solver cannot converge when the conducting phase is "
+            f"disconnected between the inlet and outlet faces."
         )
 
     try:
@@ -579,6 +596,7 @@ def build_info() -> dict:
             "openmp_enabled": False,
             "openmp_max_threads": 1,
             "mpi_enabled": False,
+            "mpi_ranks": 1,
             "tiny_profile": False,
             "hypre_cuda": False,
             "hypre_hip": False,
@@ -608,7 +626,7 @@ def read_image(
     raw_height: int = 0,
     raw_depth: int = 0,
     raw_data_type=None,
-    max_grid_size: Union[int, str] = 32,
+    max_grid_size: Union[int, str] = "auto",
 ) -> tuple:
     """Read a 3-D image file and threshold it into a VoxelImage.
 
@@ -671,10 +689,9 @@ def read_image(
     else:
         raise ValueError(f"Unknown file_format '{file_format}'")
 
-    # Resolve "auto" — for file-based reads we don't know dimensions until
-    # after the reader is constructed, so default to 32 (good general choice).
+    # Resolve "auto" — keep single-rank file reads in large contiguous boxes.
     if isinstance(max_grid_size, str) and max_grid_size.lower() == "auto":
-        max_grid_size = 32
+        max_grid_size = 256 if _core.mpi_ranks() <= 1 else 64
 
     # Threshold directly into a VoxelImage (all AMReX setup happens in C++)
     img = reader.threshold(threshold, max_grid_size)

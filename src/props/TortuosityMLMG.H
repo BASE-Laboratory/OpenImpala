@@ -48,21 +48,21 @@ public:
      *  @param vhi             Dirichlet potential at outlet face. Default 1.0.
      *  @param verbose         Verbosity level (0=silent). Default 0.
      *  @param write_plotfile  Write AMReX plotfile of solution. Default false.
-     *  @param eps             Solver relative tolerance. Default 1e-9.
+     *  @param eps             Solver relative tolerance. Default 1e-8.
      *  @param maxiter         Max V-cycles before giving up. Default 200.
      *  @param max_coarsening_level  Deepest MG level. Default 30 (i.e. unlimited
      *                               in practice — bounded by the grid).
      *
      *  Explicit params are the starting values; a ``[mlmg]`` block in the inputs
-     *  file (``mlmg.eps``, ``mlmg.maxiter``, ``mlmg.max_coarsening_level``) can
-     *  still override at runtime.
+     *  file (``mlmg.eps``, ``mlmg.maxiter``, ``mlmg.max_coarsening_level``,
+     *  ``mlmg.use_gmres``, ``mlmg.gmres_restart``) can still override at runtime.
      */
     TortuosityMLMG(const amrex::Geometry& geom, const amrex::BoxArray& ba,
                    const amrex::DistributionMapping& dm, const amrex::iMultiFab& mf_phase_input,
                    const amrex::Real vf, const int phase, const OpenImpala::Direction dir,
                    const std::string& resultspath, const amrex::Real vlo = 0.0,
                    const amrex::Real vhi = 1.0, int verbose = 0, bool write_plotfile = false,
-                   amrex::Real eps = 1.0e-11, int maxiter = 200, int max_coarsening_level = 30);
+                   amrex::Real eps = 1.0e-8, int maxiter = 200, int max_coarsening_level = 30);
 
     ~TortuosityMLMG() override = default;
 
@@ -74,9 +74,11 @@ public:
     bool solve() override;
 
 private:
-    amrex::Real m_eps = 1.0e-11;
+    amrex::Real m_eps = 1.0e-8;
     int m_maxiter = 200;
     int m_max_coarsening_level = 30;
+    bool m_use_gmres = true;
+    int m_gmres_restart = 24;
 };
 
 } // namespace OpenImpala

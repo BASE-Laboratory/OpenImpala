@@ -22,6 +22,7 @@
 #include <AMReX_Geometry.H>
 #include <AMReX_IntVect.H>
 #include <AMReX_MFIter.H>
+#include <AMReX_ParallelDescriptor.H>
 #include <AMReX_RealBox.H>
 #include <AMReX_iMultiFab.H>
 
@@ -83,6 +84,10 @@ static bool amrex_initialized() {
     return amrex::Initialized();
 }
 
+static int mpi_ranks() {
+    return amrex::Initialized() ? amrex::ParallelDescriptor::NProcs() : 1;
+}
+
 // =========================================================================
 // Build info — lets users verify which wheel they installed (CPU vs CUDA),
 // whether TinyProfile is on, OpenMP thread count, and visible GPU devices.
@@ -122,6 +127,7 @@ static py::dict build_info() {
 #else
     info["mpi_enabled"] = false;
 #endif
+    info["mpi_ranks"] = mpi_ranks();
 
 #ifdef AMREX_TINY_PROFILING
     info["tiny_profile"] = true;
@@ -244,6 +250,7 @@ PYBIND11_MODULE(_core, m) {
           "Shut down the AMReX runtime (no-op if not initialised).");
     m.def("amrex_initialized", &amrex_initialized,
           "Return True if the AMReX runtime is currently active.");
+    m.def("mpi_ranks", &mpi_ranks, "Return the number of active MPI ranks (1 if not initialised).");
     m.def("build_info", &build_info,
           "Return a dict of compile-time feature flags (cuda, openmp, mpi, tiny_profile, "
           "hypre_cuda) plus runtime GPU device count.  Use this to verify which wheel "
