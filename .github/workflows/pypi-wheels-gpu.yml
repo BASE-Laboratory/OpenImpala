@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  GPU_DEPS_CACHE_KEY: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-89-noeb-nofort-nompicxx-zstd-v15
+  GPU_DEPS_CACHE_KEY: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-89-noeb-nofort-nompicxx-compressall-v16
 
 jobs:
   build_core_and_cp39:
@@ -40,8 +40,9 @@ jobs:
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel==2.22.0
 
-      - name: Cache native GPU dependencies
-        uses: actions/cache@v4
+      - name: Restore native GPU dependencies cache
+        id: deps-cache
+        uses: actions/cache/restore@v4
         with:
           path: /tmp/cibw-deps-cache
           key: ${{ env.GPU_DEPS_CACHE_KEY }}
@@ -118,7 +119,7 @@ jobs:
             CC=mpicc CXX=mpicxx
             CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC -DOMPI_SKIP_MPICXX=1"
             CUDA_HOME=/usr/local/cuda &&
-            sed -i '/^CUDA_ARCH/s/$/ -gencode arch=compute_75,code=compute_75 -Xfatbin=-compress-all -Xfatbin=-compress-mode=size/' config/Makefile.config &&
+            sed -i '/^CUDA_ARCH/s/$/ -gencode arch=compute_75,code=compute_75/' config/Makefile.config &&
             grep '^CUDA_ARCH' config/Makefile.config &&
             make -j$(nproc) &&
             make install &&
@@ -149,10 +150,9 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
             '-DCMAKE_CUDA_ARCHITECTURES=80-real;89-real;75-virtual'
             -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++
-            '-DCMAKE_CUDA_FLAGS=-Xfatbin=-compress-all -Xfatbin=-compress-mode=size' &&
+            '-DCMAKE_CUDA_FLAGS=-Xfatbin --compress-all' &&
             cmake --build /tmp/amrex/build -j$(nproc) &&
             cmake --install /tmp/amrex/build &&
-            (strip --strip-debug /usr/local/lib/libamrex_3d.a /usr/local/lib/libHYPRE.a /usr/local/lib/libhdf5*.a /usr/local/lib/libtiff.a 2>/dev/null || true) &&
             mkdir -p /host/tmp/cibw-deps-cache &&
             tar czf /host/tmp/cibw-deps-cache/deps.tar.gz /usr/local &&
             chmod -R a+rwX /host/tmp/cibw-deps-cache ;
@@ -187,7 +187,7 @@ jobs:
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
             CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=80-real;89-real;75-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++ -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache -DFETCHCONTENT_BASE_DIR=/tmp/fc-deps"
-            CUDAFLAGS="-Xfatbin=-compress-all -Xfatbin=-compress-mode=size"
+            CUDAFLAGS="-Xfatbin --compress-all"
             SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
 
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
@@ -221,6 +221,24 @@ jobs:
             --exclude libcurand.so.10
             --exclude libnvJitLink.so
             --exclude libnvJitLink.so.12
+
+      - name: Check GPU dependencies tarball
+        id: check-deps
+        if: always()
+        run: |
+          if [ -f /tmp/cibw-deps-cache/deps.tar.gz ]; then
+            ls -lh /tmp/cibw-deps-cache/deps.tar.gz
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save native GPU dependencies cache
+        if: always() && steps.deps-cache.outputs.cache-hit != 'true' && steps.check-deps.outputs.exists == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/cibw-deps-cache
+          key: ${{ env.GPU_DEPS_CACHE_KEY }}
 
       - name: Verify host GPU caches populated
         run: |
@@ -334,7 +352,7 @@ jobs:
             CMAKE_PREFIX_PATH="/usr/local"
             CMAKE_GENERATOR="Unix Makefiles"
             CMAKE_ARGS="-DGPU_BACKEND=CUDA '-DCMAKE_CUDA_ARCHITECTURES=80-real;89-real;75-virtual' -DCMAKE_CUDA_HOST_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/g++ -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache -DFETCHCONTENT_BASE_DIR=/tmp/fc-deps"
-            CUDAFLAGS="-Xfatbin=-compress-all -Xfatbin=-compress-mode=size"
+            CUDAFLAGS="-Xfatbin --compress-all"
             SETUPTOOLS_SCM_PRETEND_VERSION="${{ steps.version.outputs.version }}"
 
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
