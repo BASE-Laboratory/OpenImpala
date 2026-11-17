@@ -37,7 +37,7 @@ jobs:
           python-version: "3.x"
 
       - name: Install cibuildwheel
-        run: python -m pip install cibuildwheel==2.16.5
+        run: python -m pip install cibuildwheel==2.22.0
 
       # Cache the compiled GPU dependencies (HDF5, libtiff, HYPRE+CUDA, AMReX+CUDA)
       # These take ~15-20 minutes to build from source with CUDA support.
@@ -45,12 +45,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cibw-deps-cache
-          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-eb-v11
+          key: cibw-deps-gpu-cuda12.6-manylinux_2_34-x86_64-hdf5_1.14.6-tiff_4.6.0-hypre_2.31.0-amrex_25.03-gcc13-nvtx3.1.1-arch75-80-noeb-nofort-v12
 
       - name: Build GPU wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
-          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-*"
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
           CIBW_SKIP: "*musllinux* *i686*"
           CIBW_ARCHS_LINUX: "x86_64"
 
@@ -65,15 +65,13 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: >
             dnf install -y epel-release &&
             dnf --enablerepo=crb install -y
-            openmpi-devel gcc-gfortran gcc-c++ wget git
+            openmpi-devel gcc-c++ wget git
             zlib-devel libjpeg-turbo-devel python3-pip
-            gcc-toolset-13 gcc-toolset-13-gcc gcc-toolset-13-gcc-c++
-            gcc-toolset-13-gcc-gfortran &&
+            gcc-toolset-13 gcc-toolset-13-gcc gcc-toolset-13-gcc-c++ &&
             pip3 install "cmake>=3.28,<4" &&
             export PATH=/opt/rh/gcc-toolset-13/root/usr/bin:/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH &&
             export CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc &&
             export CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++ &&
-            export FC=/opt/rh/gcc-toolset-13/root/usr/bin/gfortran &&
             export CUDA_HOME=/usr/local/cuda &&
             if [ -f /project/.cibw-deps-cache/deps.tar.gz ]; then
             echo "=== Restoring cached GPU dependencies ===" &&
@@ -108,9 +106,9 @@ jobs:
             tar xzf v2.31.0.tar.gz &&
             cd hypre-2.31.0/src &&
             ./configure --prefix=/usr/local --with-MPI --with-cuda
-            --with-cuda-home=/usr/local/cuda --enable-shared=no
-            CC=mpicc CXX=mpicxx FC=mpif90
-            CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" FFLAGS="-O2 -fPIC"
+            --with-cuda-home=/usr/local/cuda --disable-fortran --enable-shared=no
+            CC=mpicc CXX=mpicxx
+            CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC"
             CUDA_HOME=/usr/local/cuda
             CUDAFLAGS="-allow-unsupported-compiler" &&
             make -j$(nproc) &&
@@ -130,9 +128,9 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF
             -DAMReX_MPI=ON
             -DAMReX_OMP=ON
-            -DAMReX_EB=ON
+            -DAMReX_EB=OFF
             -DAMReX_SPACEDIM=3
-            -DAMReX_FORTRAN=ON
+            -DAMReX_FORTRAN=OFF
             -DAMReX_PARTICLES=OFF
             -DAMReX_TINY_PROFILE=ON
             -DAMReX_GPU_BACKEND=CUDA
@@ -168,7 +166,6 @@ jobs:
             PATH="/opt/rh/gcc-toolset-13/root/usr/bin:/usr/lib64/openmpi/bin:/usr/local/cuda/bin:$PATH"
             CC="/opt/rh/gcc-toolset-13/root/usr/bin/gcc"
             CXX="/opt/rh/gcc-toolset-13/root/usr/bin/g++"
-            FC="/opt/rh/gcc-toolset-13/root/usr/bin/gfortran"
             CUDA_HOME="/usr/local/cuda"
             CUDAHOSTCXX="/opt/rh/gcc-toolset-13/root/usr/bin/g++"
             CMAKE_C_COMPILER="mpicc"

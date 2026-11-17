@@ -2,7 +2,7 @@
 
 Usage::
 
-    openimpala analyze microstructure.tif --phase 0 --solver hypre
+    openimpala analyze microstructure.tif --phase 0 --solver mlmg
     openimpala vf microstructure.tif --phase 0
     openimpala percolation microstructure.tif --phase 0 --direction x
 """
@@ -12,6 +12,24 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from typing import Union
+
+from . import __version__
+
+
+def _parse_max_grid_size(val: str) -> Union[int, str]:
+    """Accept ``'auto'`` or a positive integer for ``--max-grid-size``."""
+    if val.strip().lower() == "auto":
+        return "auto"
+    try:
+        parsed = int(val)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Expected 'auto' or a positive integer, got {val!r}"
+        ) from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"max_grid_size must be > 0, got {parsed}")
+    return parsed
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -19,7 +37,9 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="openimpala",
         description="OpenImpala — transport-property computation on 3-D voxel images.",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
     # --- analyze ---
@@ -28,9 +48,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_analyze.add_argument("--phase", type=int, default=0, help="Phase ID (default: 0)")
     p_analyze.add_argument("--threshold", type=float, default=0.5, help="Binarisation threshold")
     p_analyze.add_argument("--direction", default="x", help="Flow direction (x/y/z, default: x)")
-    p_analyze.add_argument("--solver", default="flexgmres", help="HYPRE solver (default: flexgmres)")
+    p_analyze.add_argument(
+        "--solver",
+        default="auto",
+        help="Solver backend: auto, mlmg, pcg, flexgmres, bicgstab, gmres, smg, pfmg (default: auto)",
+    )
+    p_analyze.add_argument(
+        "--preconditioner",
+        default="smg",
+        help="HYPRE Krylov preconditioner: smg or pfmg (default: smg)",
+    )
     p_analyze.add_argument("--output", default=None, help="Output JSON path (default: stdout)")
-    p_analyze.add_argument("--max-grid-size", type=int, default=32)
+    p_analyze.add_argument("--max-grid-size", type=_parse_max_grid_size, default="auto")
     p_analyze.add_argument("--verbose", type=int, default=0)
 
     # --- vf ---
@@ -38,7 +67,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_vf.add_argument("image", help="Path to the 3-D image file")
     p_vf.add_argument("--phase", type=int, default=0)
     p_vf.add_argument("--threshold", type=float, default=0.5)
-    p_vf.add_argument("--max-grid-size", type=int, default=32)
+    p_vf.add_argument("--max-grid-size", type=_parse_max_grid_size, default="auto")
 
     # --- percolation ---
     p_perc = sub.add_parser("percolation", help="Percolation connectivity check")
@@ -46,7 +75,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_perc.add_argument("--phase", type=int, default=0)
     p_perc.add_argument("--threshold", type=float, default=0.5)
     p_perc.add_argument("--direction", default="x")
-    p_perc.add_argument("--max-grid-size", type=int, default=32)
+    p_perc.add_argument("--max-grid-size", type=_parse_max_grid_size, default="auto")
     p_perc.add_argument("--verbose", type=int, default=0)
 
     return parser
@@ -83,10 +112,13 @@ def _cmd_vf(args: argparse.Namespace) -> int:
         threshold=args.threshold,
         max_grid_size=args.max_grid_size,
     )
-    vf = oi.core.VolumeFraction(img, args.phase, 0)
-    pc, tc = vf.value()
-    frac = pc / tc if tc > 0 else 0.0
-    result = {"phase": args.phase, "phase_count": pc, "total_count": tc, "volume_fraction": frac}
+    vf_res = oi.volume_fraction(img, phase=args.phase)
+    result = {
+        "phase": args.phase,
+        "phase_count": vf_res.phase_count,
+        "total_count": vf_res.total_count,
+        "volume_fraction": vf_res.fraction,
+    }
     print(json.dumps(result, indent=2))
     return 0
 
@@ -99,13 +131,14 @@ def _cmd_percolation(args: argparse.Namespace) -> int:
         threshold=args.threshold,
         max_grid_size=args.max_grid_size,
     )
-    d = oi.facade._parse_direction(args.direction)
-    pc = oi.core.PercolationCheck(img, args.phase, d, args.verbose)
+    pc_res = oi.percolation_check(
+        img, phase=args.phase, direction=args.direction, verbose=args.verbose
+    )
     result = {
         "phase": args.phase,
         "direction": args.direction.upper(),
-        "percolates": pc.percolates,
-        "active_volume_fraction": pc.active_volume_fraction,
+        "percolates": pc_res.percolates,
+        "active_volume_fraction": pc_res.active_volume_fraction,
     }
     print(json.dumps(result, indent=2))
     return 0
@@ -120,42 +153,45 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         max_grid_size=args.max_grid_size,
     )
 
-    d = oi.facade._parse_direction(args.direction)
-
-    # Volume fraction
-    vf_calc = oi.core.VolumeFraction(img, args.phase, 0)
-    vf_val = vf_calc.value_vf()
-
-    # Percolation
-    pc = oi.core.PercolationCheck(img, args.phase, d, args.verbose)
+    vf_res = oi.volume_fraction(img, phase=args.phase)
 
     result: dict = {
         "input_file": args.image,
         "phase": args.phase,
         "direction": args.direction.upper(),
-        "volume_fraction": vf_val,
-        "percolates": pc.percolates,
-        "active_volume_fraction": pc.active_volume_fraction,
+        "volume_fraction": vf_res.fraction,
     }
 
-    if pc.percolates:
-        st = oi.facade._parse_solver(args.solver)
-        solver = oi.core.TortuosityHypre(
-            img, vf_val, args.phase, d, st, ".",
-            0.0, 1.0, args.verbose, False,
+    try:
+        tau_res = oi.tortuosity(
+            img,
+            phase=args.phase,
+            direction=args.direction,
+            solver=args.solver,
+            preconditioner=args.preconditioner,
+            verbose=args.verbose,
         )
-        try:
-            tau = solver.value()
-        except RuntimeError as exc:
-            result["error"] = str(exc)
-        else:
-            result["tortuosity"] = tau
-            result["solver_converged"] = solver.solver_converged
-            result["iterations"] = solver.iterations
-            result["residual_norm"] = solver.residual_norm
-    else:
+    except oi.PercolationError:
+        result["percolates"] = False
+        result["active_volume_fraction"] = 0.0
         result["tortuosity"] = None
         result["note"] = "Phase does not percolate — tortuosity is undefined."
+    except oi.ConvergenceError as exc:
+        pc_res = oi.percolation_check(
+            img, phase=args.phase, direction=args.direction, verbose=args.verbose
+        )
+        result["percolates"] = pc_res.percolates
+        result["active_volume_fraction"] = pc_res.active_volume_fraction
+        result["error"] = str(exc)
+    else:
+        result["percolates"] = True
+        result["active_volume_fraction"] = tau_res.active_volume_fraction
+        result["tortuosity"] = tau_res.tortuosity
+        result["solver_converged"] = tau_res.solver_converged
+        result["iterations"] = tau_res.iterations
+        result["residual_norm"] = tau_res.residual_norm
+        result["flux_in"] = tau_res.flux_in
+        result["flux_out"] = tau_res.flux_out
 
     output = json.dumps(result, indent=2)
     if args.output:

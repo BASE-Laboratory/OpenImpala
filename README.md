@@ -38,8 +38,8 @@ image[:, :, 16:48] = 1   # solid slab through the middle
 with oi.Session():
     vf  = oi.volume_fraction(image, phase=0)
     tau = oi.tortuosity(image, phase=0, direction="z", solver="mlmg")
-    print(f"Volume fraction: {vf.value:.4f}")
-    print(f"Tortuosity:      {tau.value:.4f}")
+    print(f"Volume fraction: {vf.fraction:.4f}")
+    print(f"Tortuosity:      {tau.tortuosity:.4f}")
 ```
 
 ## Install
@@ -64,7 +64,7 @@ Pre-built Apptainer/Singularity images are attached to each
 
 ```bash
 apptainer exec -B "$(pwd):/data" openimpala-vX.Y.Z.sif \
-    /usr/local/bin/Diffusion /data/inputs
+    /usr/bin/Diffusion /data/inputs
 ```
 
 For batch SLURM scripts, see

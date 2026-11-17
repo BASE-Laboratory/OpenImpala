@@ -49,8 +49,8 @@ CANONICAL_REFERENCE = {
     "experimental_porosity": 0.40,
     "experimental_tortuosity_z": 1.45,
     "tolerance_fraction": 0.05,
-    "reference_paper": "Doe et al. 2024",
-    "reference_doi": "10.xxxx/placeholder",
+    "reference_paper": "Le Houx & Kramer, SoftwareX 15, 100729 (2021)",
+    "reference_doi": "10.1016/j.softx.2021.100729",
 }
 
 
@@ -173,9 +173,9 @@ def validate_against_reference(
             return False, results
 
         # --- Tortuosity ---
-        print(f"  Solving tortuosity (Z-direction, FlexGMRES)...")
+        print(f"  Solving tortuosity (Z-direction, auto/MLMG)...")
         t0 = time.time()
-        tau_result = oi.tortuosity(img, phase=1, direction="z", solver="flexgmres")
+        tau_result = oi.tortuosity(img, phase=1, direction="z", solver="auto")
         dt = time.time() - t0
 
         results["computed_tortuosity_z"] = tau_result.tortuosity
