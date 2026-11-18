@@ -129,6 +129,7 @@ public:
     // the same reason.
     void setupMatrixEquation();
     void generateActiveMask(); // Simpler version for D=0/1 based on phase_id
+    int buildCellTypeMask(amrex::iMultiFab& mf_cell_type) const;
 
 
 private:

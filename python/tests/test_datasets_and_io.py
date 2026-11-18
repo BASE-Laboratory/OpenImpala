@@ -467,3 +467,170 @@ class TestTortuosityAllHtmlReprsAndSession:
             with oi.Session():
                 assert oi.volume_fraction(vol, phase=1).fraction == pytest.approx(0.5)
 
+    def test_session_ensure_active_and_cleanup(self):
+        from openimpala.session import Session
+
+        saved_depth = Session._depth
+        saved_auto = Session._auto_session
+        try:
+            Session._depth = 0
+            Session._auto_session = None
+            Session.ensure_active()
+            assert Session._depth == 1
+            assert Session._auto_session is not None
+            Session._cleanup_auto()
+            assert Session._depth == 0
+            assert Session._auto_session is None
+        finally:
+            Session._depth = saved_depth
+            Session._auto_session = saved_auto
+
+    def test_empty_psd_html_and_facade_input_helpers(self, tmp_path, monkeypatch):
+        import struct
+        from types import SimpleNamespace
+        import openimpala.datasets as ds_mod
+        import openimpala.facade as facade_mod
+        from openimpala._io import (
+            PureVoxelImage,
+            _decode_uncompressed_chunk,
+            _resolve_raw_dtype,
+            _sample_numpy_dtype,
+            read_dat_volume,
+            read_tiff_volume,
+        )
+
+        # datasets._cache_dir default branch when OPENIMPALA_DATA_DIR is unset
+        monkeypatch.delenv("OPENIMPALA_DATA_DIR", raising=False)
+        assert ds_mod._cache_dir().name == "openimpala"
+
+        # Empty PSD _repr_html_ branch
+        empty_vol = np.zeros((6, 6, 6), dtype=np.int32)
+        psd_empty = oi.particle_size_distribution(empty_vol, phase=1)
+        assert "<table>" in psd_empty._repr_html_()
+
+        # PureVoxelImage.__array__ with dtype=None and explicit dtype
+        pvi = PureVoxelImage(np.ones((4, 4, 4), dtype=np.int32))
+        assert np.asarray(pvi).dtype == np.int32
+        assert np.asarray(pvi, dtype=np.float32).dtype == np.float32
+
+        # _io low-level validation and padding branches
+        with pytest.raises(ValueError):
+            _sample_numpy_dtype("<", 8, 99)
+        assert _decode_uncompressed_chunk(b"\x80", 2, 8, 1, 1, "<", 1).shape == (2, 8)
+        assert _decode_uncompressed_chunk(b"\x01\x02", 2, 2, 8, 1, "<", 1).shape == (2, 2)
+        with pytest.raises(ValueError):
+            _decode_uncompressed_chunk(b"\x00", 2, 2, 4, 1, "<", 1)
+
+        bad_bigtiff = tmp_path / "bad_big.tif"
+        bad_bigtiff.write_bytes(struct.pack("<2sHHH", b"II", 43, 4, 0))
+        with pytest.raises(ValueError):
+            read_tiff_volume(bad_bigtiff)
+
+        bad_magic = tmp_path / "bad_magic.tif"
+        bad_magic.write_bytes(struct.pack("<2sHI", b"II", 99, 8))
+        with pytest.raises(ValueError):
+            read_tiff_volume(bad_magic)
+
+        bad_dat = tmp_path / "bad_dims.dat"
+        bad_dat.write_bytes(struct.pack("<iii", 0, 4, 4))
+        with pytest.raises(ValueError):
+            read_dat_volume(bad_dat)
+
+        assert _resolve_raw_dtype(None) == np.dtype("<u1")
+        assert _resolve_raw_dtype("<f4") == np.dtype("<f4")
+        assert _resolve_raw_dtype(SimpleNamespace(name="UINT16_LE")) == np.dtype("<u2")
+        with pytest.raises(ValueError):
+            _resolve_raw_dtype(object())
+
+        # facade helper validation branches
+        npy_2d = tmp_path / "flat.npy"
+        np.save(npy_2d, np.ones((4, 4), dtype=np.int32))
+        with pytest.raises(ValueError):
+            facade_mod._resolve_pure_input(npy_2d)
+        with pytest.raises(TypeError):
+            facade_mod._resolve_pure_input(12345)  # type: ignore[arg-type]
+        with pytest.raises(ValueError):
+            facade_mod._resolve_pure_input(np.ones((4, 4), dtype=np.int32))
+
+        assert facade_mod._detect_file_format("volume.bin", "RAW") == "raw"
+        with pytest.raises(ValueError):
+            facade_mod._detect_file_format("volume.unknown", None)
+        with pytest.raises(ValueError):
+            oi.read_image(npy_2d, file_format="unsupported_fmt")
+
+        # _coerce_core_raw_data_type branches via lightweight stub
+        class _FakeRawDT:
+            pass
+
+        u8 = _FakeRawDT()
+        u16 = _FakeRawDT()
+        f32 = _FakeRawDT()
+        i16 = _FakeRawDT()
+        fake_core = SimpleNamespace(
+            RawDataType=_FakeRawDT,
+        )
+        _FakeRawDT.UINT8 = u8
+        _FakeRawDT.UINT16_LE = u16
+        _FakeRawDT.FLOAT32_LE = f32
+        _FakeRawDT.INT16_LE = i16
+
+        assert facade_mod._coerce_core_raw_data_type(fake_core, None) is u8
+        assert facade_mod._coerce_core_raw_data_type(fake_core, u16) is u16
+        assert facade_mod._coerce_core_raw_data_type(fake_core, "uint16_le") is u16
+        assert facade_mod._coerce_core_raw_data_type(fake_core, "<f4") is f32
+        assert facade_mod._coerce_core_raw_data_type(fake_core, np.dtype("<i2")) is i16
+        with pytest.raises(ValueError):
+            facade_mod._coerce_core_raw_data_type(fake_core, "not_a_dtype")
+        with pytest.raises(ValueError):
+            facade_mod._coerce_core_raw_data_type(fake_core, object())
+
+        # _auto_grid_size multi-rank selection branch
+        monkeypatch.setattr(facade_mod, "_is_pure_python", lambda: False)
+        monkeypatch.setattr(
+            facade_mod, "_get_core", lambda: SimpleNamespace(mpi_ranks=lambda: 4)
+        )
+        assert facade_mod._auto_grid_size((128, 128, 128)) == 64
+
+
+class TestIsolatedPocketHomogenization:
+    def test_isolated_pockets_and_singletons_yield_zero_deff(self):
+        # Non-percolating singletons + multi-voxel pockets (including one straddling
+        # the periodic X seam) have exact zero macroscopic diffusivity and must
+        # converge cleanly without near-singular modes.
+        vol = np.zeros((12, 12, 12), dtype=np.int32)
+        vol[2, 2, 2] = 1  # singleton
+        vol[5:8, 5:8, 5:8] = 1  # bounded 3x3x3 pocket
+        vol[9, 9, 0] = 1  # 2-voxel pocket straddling periodic X seam
+        vol[9, 9, 11] = 1
+
+        res_singletons = oi.effective_diffusivity((vol == 999).astype(np.int32), phase=1)
+        assert res_singletons.solver_converged
+        np.testing.assert_allclose(res_singletons.tensor, 0.0, atol=1e-14)
+
+        only_singletons = np.zeros((8, 8, 8), dtype=np.int32)
+        only_singletons[1, 1, 1] = 1
+        only_singletons[4, 5, 6] = 1
+        res_iso = oi.effective_diffusivity(only_singletons, phase=1)
+        assert res_iso.solver_converged
+        assert res_iso.iterations == (0, 0, 0)
+        np.testing.assert_allclose(res_iso.tensor, 0.0, atol=1e-14)
+
+        res_pockets = oi.effective_diffusivity(vol, phase=1)
+        assert res_pockets.solver_converged
+        np.testing.assert_allclose(res_pockets.tensor, 0.0, atol=1e-12)
+
+    def test_disconnected_pockets_do_not_perturb_percolating_channel(self):
+        base = np.zeros((12, 12, 12), dtype=np.int32)
+        base[:, 2:6, 2:6] = 1  # percolating Z channel
+
+        with_pockets = base.copy()
+        with_pockets[1:4, 8:11, 8:11] = 1  # isolated pocket 1
+        with_pockets[8:10, 9:11, 1:3] = 1  # isolated pocket 2
+        with_pockets[6, 10, 10] = 1  # isolated singleton
+
+        r_base = oi.effective_diffusivity(base, phase=1)
+        r_pockets = oi.effective_diffusivity(with_pockets, phase=1)
+        assert r_base.solver_converged and r_pockets.solver_converged
+        np.testing.assert_allclose(r_pockets.tensor, r_base.tensor, rtol=1e-10, atol=1e-12)
+
+

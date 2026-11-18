@@ -42,6 +42,7 @@ except Exception:
 
 import scipy.ndimage as ndimage
 import scipy.sparse as sp
+from scipy.sparse import csgraph as sp_csgraph
 import scipy.sparse.linalg as sp_linalg
 
 
@@ -462,7 +463,7 @@ def _build_cell_problem_operator(
     active_mask: np.ndarray,
     diff_coeff: np.ndarray,
     voxel_size: tuple[float, float, float],
-) -> tuple[sp.csr_matrix, list[np.ndarray], Optional[int]]:
+) -> tuple[sp.csr_matrix, list[np.ndarray], np.ndarray]:
     """Assemble the SPD conservative finite-volume periodic cell-problem matrix.
 
     Solves ``-div(D (e_k + grad chi_k)) = 0`` on the periodic 3-torus with
@@ -480,7 +481,7 @@ def _build_cell_problem_operator(
     d_max = float(np.max(diff_coeff)) if N > 0 else 1.0
     d_scale = d_max if d_max > 0.0 else 1.0
     inv_h2_sum = sum(1.0 / (h * h) for h in voxel_size)
-    pin_scale = d_scale * max(1.0 / (h * h) for h in voxel_size)
+    pin_scale = d_scale * inv_h2_sum
 
     # Precompute +d face harmonic diffusivities D_{i+1/2}^{(d)} for d_xyz = 0(X), 1(Y), 2(Z)
     d_face_plus: list[np.ndarray] = []
@@ -491,13 +492,14 @@ def _build_cell_problem_operator(
         denom = np.where(both, diff_coeff + d_nbr, 1.0)
         d_face_plus.append(np.where(both, 2.0 * diff_coeff * d_nbr / denom, 0.0))
 
-    rows = [inactive_idx]
-    cols = [inactive_idx]
-    vals = [np.full(len(inactive_idx), pin_scale, dtype=np.float64)]
-    pin_idx: Optional[int] = None
+    pin_indices = np.empty(0, dtype=np.int64)
 
     if len(active_idx) > 0:
+        off_rows_list: list[np.ndarray] = []
+        off_cols_list: list[np.ndarray] = []
+        off_vals_list: list[np.ndarray] = []
         diag = np.zeros(N, dtype=np.float64)
+
         for d_xyz in range(3):
             ax = 2 - d_xyz
             inv_h2 = 1.0 / (voxel_size[ax] * voxel_size[ax])
@@ -508,41 +510,57 @@ def _build_cell_problem_operator(
 
             has_p = dp > 0.0
             if np.any(has_p):
-                rows.append(idx_grid[has_p])
-                cols.append(p_idx[has_p])
-                vals.append(-dp[has_p] * inv_h2)
+                off_rows_list.append(idx_grid[has_p])
+                off_cols_list.append(p_idx[has_p])
+                off_vals_list.append(-dp[has_p] * inv_h2)
 
             has_m = dm > 0.0
             if np.any(has_m):
-                rows.append(idx_grid[has_m])
-                cols.append(m_idx[has_m])
-                vals.append(-dm[has_m] * inv_h2)
+                off_rows_list.append(idx_grid[has_m])
+                off_cols_list.append(m_idx[has_m])
+                off_vals_list.append(-dm[has_m] * inv_h2)
 
             diag += ((dp + dm) * inv_h2).ravel()
 
-        # Tiny regularisation ensures disconnected active pockets are nonsingular
-        diag[active_idx] += 1e-12 * diff_coeff[is_active_3d] * inv_h2_sum
-        rows.append(active_idx)
-        cols.append(active_idx)
-        vals.append(diag[active_idx])
+        if len(off_rows_list) > 0:
+            off_r = np.concatenate(off_rows_list)
+            off_c = np.concatenate(off_cols_list)
+            off_v = np.concatenate(off_vals_list)
 
-        all_rows = np.concatenate(rows)
-        all_cols = np.concatenate(cols)
-        all_vals = np.concatenate(vals)
+            # Symmetrically pin the first active cell of EVERY periodic connected
+            # component to chi = 0 so every component is strictly SPD with zero
+            # artificial diagonal perturbation.
+            adj = sp.coo_matrix(
+                (np.ones(len(off_r), dtype=np.int8), (off_r, off_c)), shape=(N, N)
+            )
+            _, comp_labels = sp_csgraph.connected_components(adj, directed=False)
+            _, first_pos = np.unique(comp_labels[active_idx], return_index=True)
+            pin_indices = active_idx[first_pos]
 
-        # Symmetrically pin the first active cell to chi = 0 to remove the constant nullspace
-        pin_idx = int(active_idx[0])
-        keep = (all_rows != pin_idx) & (all_cols != pin_idx)
-        all_rows = np.append(all_rows[keep], pin_idx)
-        all_cols = np.append(all_cols[keep], pin_idx)
-        all_vals = np.append(all_vals[keep], pin_scale)
+            is_pinned = np.zeros(N, dtype=bool)
+            is_pinned[pin_indices] = True
+            keep = (~is_pinned[off_r]) & (~is_pinned[off_c])
+
+            diag_vals = diag.copy()
+            diag_vals[inactive_idx] = pin_scale
+            diag_vals[pin_indices] = pin_scale
+
+            all_rows = np.concatenate([np.arange(N, dtype=np.int64), off_r[keep]])
+            all_cols = np.concatenate([np.arange(N, dtype=np.int64), off_c[keep]])
+            all_vals = np.concatenate([diag_vals, off_v[keep]])
+        else:
+            # All active cells are isolated singletons with no conducting faces
+            pin_indices = active_idx
+            all_rows = np.arange(N, dtype=np.int64)
+            all_cols = np.arange(N, dtype=np.int64)
+            all_vals = np.full(N, pin_scale, dtype=np.float64)
     else:
-        all_rows = np.concatenate(rows)
-        all_cols = np.concatenate(cols)
-        all_vals = np.concatenate(vals)
+        all_rows = inactive_idx
+        all_cols = inactive_idx
+        all_vals = np.full(len(inactive_idx), pin_scale, dtype=np.float64)
 
     A = sp.coo_matrix((all_vals, (all_rows, all_cols)), shape=(N, N)).tocsr()
-    return A, d_face_plus, pin_idx
+    return A, d_face_plus, pin_indices
 
 
 def solve_effective_diffusivity(
@@ -589,7 +607,7 @@ def solve_effective_diffusivity(
             out["chi"] = {"x": zeros.copy(), "y": zeros.copy(), "z": zeros.copy()}
         return out
 
-    A_sp, d_face_plus, pin_idx = _build_cell_problem_operator(active_mask, diff_coeff, vz)
+    A_sp, d_face_plus, pin_indices = _build_cell_problem_operator(active_mask, diff_coeff, vz)
 
     chi_fields: list[np.ndarray] = []
     dir_iters: list[int] = []
@@ -602,8 +620,8 @@ def solve_effective_diffusivity(
         dp_k = d_face_plus[dir_k_xyz]
         dm_k = np.roll(dp_k, 1, axis=ax_k)
         rhs = ((dp_k - dm_k) / vz[ax_k]).ravel()
-        if pin_idx is not None:
-            rhs[pin_idx] = 0.0
+        if len(pin_indices) > 0:
+            rhs[pin_indices] = 0.0
 
         rhs_norm = float(np.linalg.norm(rhs))
         if rhs_norm == 0.0:

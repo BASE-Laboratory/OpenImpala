@@ -5,7 +5,10 @@
 #include "HypreCheck.H"
 
 #include <cstdlib>
+#include <cstddef>
+#include <cstdint>
 #include <mutex>
+#include <utility>
 #include <vector>
 #include <string>
 #include <cmath>
@@ -19,6 +22,7 @@
 
 #include <AMReX_MultiFab.H>
 #include <AMReX_iMultiFab.H>
+#include <AMReX_Gpu.H>
 #ifdef OPENIMPALA_USE_GPU
 #include <AMReX_GpuDevice.H>
 #include <AMReX_GpuContainers.H>
@@ -370,6 +374,256 @@ void EffectiveDiffusivityHypre::generateActiveMask() {
 // setupGrids() and setupStencil() are now provided by the HypreStructSolver base class.
 
 
+int EffectiveDiffusivityHypre::buildCellTypeMask(amrex::iMultiFab& mf_cell_type) const {
+    BL_PROFILE("EffectiveDiffusivityHypre::buildCellTypeMask");
+
+    const amrex::Box& domain = m_geom.Domain();
+    const int dom_lo_x = domain.smallEnd(0);
+    const int dom_lo_y = domain.smallEnd(1);
+    const int dom_lo_z = domain.smallEnd(2);
+    const int nx = domain.length(0);
+    const int ny = domain.length(1);
+    const int nz = domain.length(2);
+    const long total_pts_long = domain.numPts();
+
+    mf_cell_type.setVal(CELL_INACTIVE);
+
+#ifndef AMREX_USE_GPU
+    // Fast single-rank O(N) periodic BFS on CPU: visits every active cell once and
+    // marks the lexicographically smallest (k, j, i) cell of each periodic 6-connected
+    // component as CELL_PINNED (chi = 0).
+    if (amrex::ParallelDescriptor::NProcs() == 1) {
+        const auto total_pts = static_cast<std::size_t>(total_pts_long);
+        const auto snx = static_cast<std::size_t>(nx);
+        const auto sny = static_cast<std::size_t>(ny);
+        auto flat_idx = [=](int ix, int iy, int iz) noexcept -> std::size_t {
+            return (static_cast<std::size_t>(iz) * sny + static_cast<std::size_t>(iy)) * snx +
+                   static_cast<std::size_t>(ix);
+        };
+
+        // 0 = inactive, 1 = unvisited active, 2 = visited active, 3 = pinned active
+        std::vector<std::uint8_t> state(total_pts, 0u);
+        for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+            const amrex::Box& vbox = mfi.validbox();
+            const auto mask_arr = m_mf_active_mask.const_array(mfi);
+            amrex::LoopOnCpu(vbox, [&](int i, int j, int k) {
+                if (mask_arr(i, j, k, MaskComp) == cell_active) {
+                    state[flat_idx(i - dom_lo_x, j - dom_lo_y, k - dom_lo_z)] = 1u;
+                }
+            });
+        }
+
+        const bool per_x = m_geom.isPeriodic(0);
+        const bool per_y = m_geom.isPeriodic(1);
+        const bool per_z = m_geom.isPeriodic(2);
+
+        struct Coord {
+            int x;
+            int y;
+            int z;
+        };
+        std::vector<Coord> queue;
+        queue.reserve(total_pts / 8 + 16);
+
+        auto try_visit = [&](int nbx, int nby, int nbz) {
+            const std::size_t nb_idx = flat_idx(nbx, nby, nbz);
+            if (state[nb_idx] == 1u) {
+                state[nb_idx] = 2u;
+                queue.push_back({nbx, nby, nbz});
+            }
+        };
+
+        int num_components = 0;
+        for (int kz = 0; kz < nz; ++kz) {
+            for (int jy = 0; jy < ny; ++jy) {
+                for (int ix = 0; ix < nx; ++ix) {
+                    const std::size_t seed_idx = flat_idx(ix, jy, kz);
+                    if (state[seed_idx] != 1u) {
+                        continue;
+                    }
+                    state[seed_idx] = 3u;
+                    ++num_components;
+                    queue.clear();
+                    queue.push_back({ix, jy, kz});
+
+                    std::size_t head = 0;
+                    while (head < queue.size()) {
+                        const Coord c = queue[head++];
+                        if (c.x > 0) {
+                            try_visit(c.x - 1, c.y, c.z);
+                        } else if (per_x) {
+                            try_visit(nx - 1, c.y, c.z);
+                        }
+                        if (c.x + 1 < nx) {
+                            try_visit(c.x + 1, c.y, c.z);
+                        } else if (per_x) {
+                            try_visit(0, c.y, c.z);
+                        }
+                        if (c.y > 0) {
+                            try_visit(c.x, c.y - 1, c.z);
+                        } else if (per_y) {
+                            try_visit(c.x, ny - 1, c.z);
+                        }
+                        if (c.y + 1 < ny) {
+                            try_visit(c.x, c.y + 1, c.z);
+                        } else if (per_y) {
+                            try_visit(c.x, 0, c.z);
+                        }
+                        if (c.z > 0) {
+                            try_visit(c.x, c.y, c.z - 1);
+                        } else if (per_z) {
+                            try_visit(c.x, c.y, nz - 1);
+                        }
+                        if (c.z + 1 < nz) {
+                            try_visit(c.x, c.y, c.z + 1);
+                        } else if (per_z) {
+                            try_visit(c.x, c.y, 0);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (amrex::MFIter mfi(mf_cell_type); mfi.isValid(); ++mfi) {
+            const amrex::Box& vbox = mfi.validbox();
+            auto ct_arr = mf_cell_type.array(mfi);
+            amrex::LoopOnCpu(vbox, [&](int i, int j, int k) {
+                const std::uint8_t s = state[flat_idx(i - dom_lo_x, j - dom_lo_y, k - dom_lo_z)];
+                if (s == 3u) {
+                    ct_arr(i, j, k, 0) = CELL_PINNED;
+                } else if (s == 2u) {
+                    ct_arr(i, j, k, 0) = CELL_ACTIVE;
+                } else {
+                    ct_arr(i, j, k, 0) = CELL_INACTIVE;
+                }
+            });
+        }
+
+        if (mf_cell_type.nGrow() > 0) {
+            mf_cell_type.FillBoundary(m_geom.periodicity());
+        }
+        return num_components;
+    }
+#endif
+
+    // General MPI + CUDA GPU path: double-buffered parallel min-label propagation.
+    // Every active cell starts with its 1-based global linear index; propagating the
+    // minimum label across 6-connected periodic neighbors converges all components
+    // simultaneously, and each component's unique minimum-index cell satisfies
+    // label == self_label -> CELL_PINNED.
+    AMREX_ALWAYS_ASSERT(total_pts_long < static_cast<long>(std::numeric_limits<int>::max()));
+    const int sentinel = std::numeric_limits<int>::max();
+
+    amrex::iMultiFab mf_curr(m_ba, m_dm, 1, 1);
+    amrex::iMultiFab mf_next(m_ba, m_dm, 1, 1);
+    mf_curr.setVal(sentinel);
+    mf_next.setVal(sentinel);
+
+    for (amrex::MFIter mfi(mf_curr, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.tilebox();
+        auto curr_arr = mf_curr.array(mfi);
+        const auto mask_arr = m_mf_active_mask.const_array(mfi);
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            if (mask_arr(i, j, k, MaskComp) == cell_active) {
+                curr_arr(i, j, k, 0) =
+                    (i - dom_lo_x) + nx * ((j - dom_lo_y) + ny * (k - dom_lo_z)) + 1;
+            } else {
+                curr_arr(i, j, k, 0) = sentinel;
+            }
+        });
+    }
+
+    const int max_label_iter = static_cast<int>(std::min<long>(total_pts_long + 2L, 100000L));
+    int iter = 0;
+    bool changed_globally = true;
+
+    int h_changed = 0;
+#ifdef AMREX_USE_GPU
+    amrex::Gpu::DeviceScalar<int> d_changed(0);
+#endif
+
+    while (changed_globally && iter < max_label_iter) {
+        ++iter;
+        mf_curr.FillBoundary(m_geom.periodicity());
+
+        int* d_flag_ptr = nullptr;
+#ifdef AMREX_USE_GPU
+        int zero = 0;
+        amrex::Gpu::htod_memcpy(d_changed.dataPtr(), &zero, sizeof(int));
+        d_flag_ptr = d_changed.dataPtr();
+#else
+        h_changed = 0;
+        d_flag_ptr = &h_changed;
+#endif
+
+        for (amrex::MFIter mfi(mf_curr, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.tilebox();
+            const auto curr_arr = mf_curr.const_array(mfi);
+            auto next_arr = mf_next.array(mfi);
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                const int cur = curr_arr(i, j, k, 0);
+                if (cur == sentinel) {
+                    next_arr(i, j, k, 0) = sentinel;
+                    return;
+                }
+                int best = cur;
+                best = amrex::min(best, curr_arr(i - 1, j, k, 0));
+                best = amrex::min(best, curr_arr(i + 1, j, k, 0));
+                best = amrex::min(best, curr_arr(i, j - 1, k, 0));
+                best = amrex::min(best, curr_arr(i, j + 1, k, 0));
+                best = amrex::min(best, curr_arr(i, j, k - 1, 0));
+                best = amrex::min(best, curr_arr(i, j, k + 1, 0));
+                next_arr(i, j, k, 0) = best;
+                if (best < cur) {
+                    amrex::Gpu::Atomic::Max(d_flag_ptr, 1);
+                }
+            });
+        }
+
+#ifdef AMREX_USE_GPU
+        changed_globally = (d_changed.dataValue() != 0);
+#else
+        changed_globally = (h_changed != 0);
+#endif
+        amrex::ParallelDescriptor::ReduceBoolOr(changed_globally);
+        std::swap(mf_curr, mf_next);
+    }
+
+    amrex::ReduceOps<amrex::ReduceOpSum> pin_count_op;
+    amrex::ReduceData<long> pin_count_data(pin_count_op);
+    for (amrex::MFIter mfi(mf_cell_type); mfi.isValid(); ++mfi) {
+        const amrex::Box& vbox = mfi.validbox();
+        auto ct_arr = mf_cell_type.array(mfi);
+        const auto curr_arr = mf_curr.const_array(mfi);
+        const auto mask_arr = m_mf_active_mask.const_array(mfi);
+        pin_count_op.eval(
+            vbox, pin_count_data,
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept -> amrex::GpuTuple<long> {
+                if (mask_arr(i, j, k, MaskComp) != cell_active) {
+                    ct_arr(i, j, k, 0) = CELL_INACTIVE;
+                    return {0L};
+                }
+                const int self_lbl =
+                    (i - dom_lo_x) + nx * ((j - dom_lo_y) + ny * (k - dom_lo_z)) + 1;
+                if (curr_arr(i, j, k, 0) == self_lbl) {
+                    ct_arr(i, j, k, 0) = CELL_PINNED;
+                    return {1L};
+                }
+                ct_arr(i, j, k, 0) = CELL_ACTIVE;
+                return {0L};
+            });
+    }
+
+    long total_components = amrex::get<0>(pin_count_data.value());
+    amrex::ParallelDescriptor::ReduceLongSum(total_components);
+
+    if (mf_cell_type.nGrow() > 0) {
+        mf_cell_type.FillBoundary(m_geom.periodicity());
+    }
+    return static_cast<int>(total_components);
+}
+
+
 void EffectiveDiffusivityHypre::setupMatrixEquation() {
     BL_PROFILE("EffectiveDiffusivityHypre::setupMatrixEquation");
     HYPRE_Int ierr = 0;
@@ -390,22 +644,38 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
     const int current_dir_int = static_cast<int>(m_dir_solve);
 
     if (m_mf_active_mask.nGrow() > 0) {
-        // This FillBoundary is crucial for the Fortran kernel if it accesses ghost cells
         if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  DEBUG HYPRE setupMatrixEquation: Calling "
-                              "m_mf_active_mask.FillBoundary() before Fortran..."
+                              "m_mf_active_mask.FillBoundary()..."
                            << std::endl;
         }
         m_mf_active_mask.FillBoundary(m_geom.periodicity());
         if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
             long sum_check = ManualSumActiveCells(m_mf_active_mask, MaskComp, cell_active);
             amrex::Print() << "  DEBUG HYPRE setupMatrixEquation: Manual sum of m_mf_active_mask "
-                              "after FillBoundary (before Fortran) = "
+                              "after FillBoundary = "
                            << sum_check << std::endl;
         }
     }
     m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
 
+    amrex::Real max_d = 0.0;
+    for (const auto& kv : m_phase_coeff_map) {
+        max_d = std::max(max_d, kv.second);
+    }
+    const amrex::Real d_ref = (max_d > 0.0) ? max_d : 1.0;
+    const amrex::Real pin_scale =
+        d_ref * (1.0 / (m_dx[0] * m_dx[0]) + 1.0 / (m_dx[1] * m_dx[1]) + 1.0 / (m_dx[2] * m_dx[2]));
+
+    // Build cell-state mask with one cell symmetrically pinned (chi = 0) in
+    // every periodic 6-connected active component to eliminate all constant
+    // nullspace modes without artificial diagonal regularisation.
+    amrex::iMultiFab mf_cell_type(m_ba, m_dm, 1, 1);
+    const int num_pinned_components = buildCellTypeMask(mf_cell_type);
+    if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
+        amrex::Print() << "  setupMatrixEquation: Symmetrically pinned " << num_pinned_components
+                       << " periodic connected component(s) to chi=0." << std::endl;
+    }
 
     if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
         amrex::Print()
@@ -422,10 +692,8 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
     // HYPRE_SetMemoryLocation(HYPRE_MEMORY_DEVICE) configured in the base
     // class's createMatrixAndVectors, HYPRE expects device pointers in
     // SetBoxValues — pass d_matrix.data() / d_rhs.data() / d_xinit.data()
-    // directly with no host roundtrip. effDiffFillMatrixGpu handles BCs
-    // in-kernel so there's no need to bounce to host like TortuosityHypre
-    // does.
-    for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
+    // directly with no host roundtrip.
+    for (amrex::MFIter mfi(mf_cell_type); mfi.isValid(); ++mfi) {
         const amrex::Box& valid_bx = mfi.validbox();
         const int npts_valid = static_cast<int>(valid_bx.numPts());
         if (npts_valid == 0)
@@ -436,11 +704,12 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
         amrex::Gpu::DeviceVector<amrex::Real> d_rhs(npts_valid);
         amrex::Gpu::DeviceVector<amrex::Real> d_xinit(npts_valid);
 
-        const auto mask_arr = m_mf_active_mask.const_array(mfi, MaskComp);
+        const auto mask_arr = mf_cell_type.const_array(mfi, 0);
         const auto dc_arr = m_mf_diff_coeff.const_array(mfi, 0);
 
         OpenImpala::effDiffFillMatrixGpu(valid_bx, d_matrix.data(), d_rhs.data(), d_xinit.data(),
-                                         mask_arr, dc_arr, m_dx.dataPtr(), current_dir_int);
+                                         mask_arr, dc_arr, m_dx.dataPtr(), current_dir_int,
+                                         pin_scale);
         amrex::Gpu::streamSynchronize();
 
         auto hypre_lo_valid = EffectiveDiffusivityHypre::loV(valid_bx);
@@ -459,7 +728,7 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
 #else
     // CPU path: no OMP parallelism here because HYPRE_StructMatrixSetBoxValues
     // and HYPRE_StructVectorSetBoxValues are not thread-safe for the same object.
-    for (amrex::MFIter mfi(m_mf_active_mask, false); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(mf_cell_type, false); mfi.isValid(); ++mfi) {
         const amrex::Box& valid_bx = mfi.validbox();
         const long npts_long = valid_bx.numPts();
         AMREX_ALWAYS_ASSERT(npts_long <= static_cast<long>(std::numeric_limits<int>::max()));
@@ -471,8 +740,8 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
         rhs_values_buffer.resize(npts_valid);
         initial_guess_buffer.resize(npts_valid);
 
-        const amrex::IArrayBox& mask_fab = m_mf_active_mask[mfi];
-        const int* mask_ptr = mask_fab.dataPtr(MaskComp);
+        const amrex::IArrayBox& mask_fab = mf_cell_type[mfi];
+        const int* mask_ptr = mask_fab.dataPtr(0);
         const auto* mask_fab_lo = mask_fab.loVect();
         const auto* mask_fab_hi = mask_fab.hiVect();
 
@@ -485,7 +754,7 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
             matrix_values_buffer.data(), rhs_values_buffer.data(), initial_guess_buffer.data(),
             npts_valid, mask_ptr, mask_fab_lo, mask_fab_hi, dc_ptr, dc_fab_lo, dc_fab_hi,
             valid_bx.loVect(), valid_bx.hiVect(), domain_for_kernel.loVect(),
-            domain_for_kernel.hiVect(), m_dx.dataPtr(), current_dir_int, m_verbose);
+            domain_for_kernel.hiVect(), m_dx.dataPtr(), current_dir_int, m_verbose, pin_scale);
 
         auto hypre_lo_valid = EffectiveDiffusivityHypre::loV(valid_bx);
         auto hypre_hi_valid = EffectiveDiffusivityHypre::hiV(valid_bx);
@@ -502,117 +771,6 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
         HYPRE_CHECK(ierr);
     }
 #endif
-
-    // --- Pin one active cell to remove the constant null space ---
-    // The periodic cell problem div(D grad(chi)) = -div(D e_k) has a singular
-    // matrix (any constant can be added to chi). Pinning one active cell to
-    // chi=0 makes the system non-singular without affecting D_eff.
-    {
-        // Find the globally first active cell (lowest index in domain order).
-        // Each rank checks its own boxes; we reduce to find the global minimum.
-        amrex::IntVect local_pin(-1, -1, -1);
-        long local_pin_rank_idx = std::numeric_limits<long>::max(); // linearized index
-
-        // Find the lexicographically-first active cell on this rank via a
-        // GPU-compatible Min reduction over the linearised (i,j,k) index of
-        // active cells. Inactive cells contribute LONG_MAX so they never win.
-        // mask_arr is an Array4 view into device memory on CUDA builds —
-        // reading it from a host loop would segfault.
-        const amrex::Box& domain = m_geom.Domain();
-        const long dom_lo_x = domain.smallEnd(0);
-        const long dom_lo_y = domain.smallEnd(1);
-        const long dom_lo_z = domain.smallEnd(2);
-        const long dom_len_x = domain.length(0);
-        const long dom_len_y = domain.length(1);
-        const long sentinel = std::numeric_limits<long>::max();
-
-        amrex::ReduceOps<amrex::ReduceOpMin> pin_reduce_op;
-        amrex::ReduceData<long> pin_reduce_data(pin_reduce_op);
-        for (amrex::MFIter mfi(m_mf_active_mask); mfi.isValid(); ++mfi) {
-            const amrex::Box& vbx = mfi.validbox();
-            auto mask_arr = m_mf_active_mask.const_array(mfi);
-            pin_reduce_op.eval(
-                vbx, pin_reduce_data,
-                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept -> amrex::GpuTuple<long> {
-                    if (mask_arr(i, j, k, MaskComp) != cell_active) {
-                        return {sentinel};
-                    }
-                    const long lin = static_cast<long>(i - dom_lo_x) +
-                                     dom_len_x * (static_cast<long>(j - dom_lo_y) +
-                                                  dom_len_y * static_cast<long>(k - dom_lo_z));
-                    return {lin};
-                });
-        }
-        local_pin_rank_idx = amrex::get<0>(pin_reduce_data.value());
-        if (local_pin_rank_idx < sentinel) {
-            // Recover (i,j,k) from the linearised index.
-            const long k_off = local_pin_rank_idx / (dom_len_x * dom_len_y);
-            const long rem = local_pin_rank_idx - k_off * dom_len_x * dom_len_y;
-            const long j_off = rem / dom_len_x;
-            const long i_off = rem - j_off * dom_len_x;
-            local_pin = amrex::IntVect(static_cast<int>(i_off + dom_lo_x),
-                                       static_cast<int>(j_off + dom_lo_y),
-                                       static_cast<int>(k_off + dom_lo_z));
-        }
-
-        // Find the globally minimum linearized index across all ranks
-        struct {
-            long idx;
-            int rank;
-        } local_val, global_val;
-        local_val.idx = local_pin_rank_idx;
-        local_val.rank = amrex::ParallelDescriptor::MyProc();
-        MPI_Allreduce(&local_val, &global_val, 1, MPI_LONG_INT, MPI_MINLOC,
-                      amrex::ParallelDescriptor::Communicator());
-
-        // The rank that owns the pinned cell overwrites its HYPRE row
-        if (amrex::ParallelDescriptor::MyProc() == global_val.rank && local_pin[0] >= 0) {
-            amrex::Box pin_box(local_pin, local_pin);
-            auto lo = EffectiveDiffusivityHypre::loV(pin_box);
-            auto hi = EffectiveDiffusivityHypre::hiV(pin_box);
-
-            amrex::Real max_d = 0.0;
-            for (const auto& kv : m_phase_coeff_map) {
-                max_d = std::max(max_d, kv.second);
-            }
-            const amrex::Real pin_scale = (max_d > 0.0 ? max_d : 1.0) / (m_dx[0] * m_dx[0]);
-
-            std::vector<amrex::Real> pin_mtx(stencil_size, 0.0);
-            pin_mtx[0] = pin_scale;
-#ifdef OPENIMPALA_USE_GPU
-            amrex::Gpu::DeviceVector<amrex::Real> d_pin_mtx(stencil_size);
-            amrex::Gpu::copy(amrex::Gpu::hostToDevice, pin_mtx.begin(), pin_mtx.end(),
-                             d_pin_mtx.begin());
-            amrex::Gpu::DeviceVector<amrex::Real> d_pin_zero(1, 0.0);
-            amrex::Gpu::streamSynchronize();
-
-            ierr = HYPRE_StructMatrixSetBoxValues(m_A, lo.data(), hi.data(), stencil_size,
-                                                  stencil_indices_hypre, d_pin_mtx.data());
-            HYPRE_CHECK(ierr);
-            ierr = HYPRE_StructVectorSetBoxValues(m_b, lo.data(), hi.data(), d_pin_zero.data());
-            HYPRE_CHECK(ierr);
-            ierr = HYPRE_StructVectorSetBoxValues(m_x, lo.data(), hi.data(), d_pin_zero.data());
-            HYPRE_CHECK(ierr);
-#else
-            amrex::Real pin_rhs = 0.0;
-            amrex::Real pin_x = 0.0;
-
-            ierr = HYPRE_StructMatrixSetBoxValues(m_A, lo.data(), hi.data(), stencil_size,
-                                                  stencil_indices_hypre, pin_mtx.data());
-            HYPRE_CHECK(ierr);
-            ierr = HYPRE_StructVectorSetBoxValues(m_b, lo.data(), hi.data(), &pin_rhs);
-            HYPRE_CHECK(ierr);
-            ierr = HYPRE_StructVectorSetBoxValues(m_x, lo.data(), hi.data(), &pin_x);
-            HYPRE_CHECK(ierr);
-#endif
-
-            if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
-                amrex::Print() << "  setupMatrixEquation: Pinned active cell (" << local_pin[0]
-                               << "," << local_pin[1] << "," << local_pin[2]
-                               << ") to chi=0 (removes null space)." << std::endl;
-            }
-        }
-    }
 
     // Assemble via base class
     assembleSystem();
