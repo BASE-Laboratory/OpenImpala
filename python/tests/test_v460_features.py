@@ -181,14 +181,38 @@ class TestEffectiveDiffusivityTensor:
         assert res.active_volume_fraction == 0.0
         np.testing.assert_allclose(res.tensor, np.zeros((3, 3)), atol=1e-12)
 
+    def test_blocked_slab_zero_normal_and_voigt_parallel(self):
+        # Insulating wall normal to X: half active (phase=1), half solid (phase=0)
+        # Exact periodic D_eff: D_xx = 0, D_yy = D_zz = 0.5
+        slab = np.zeros((8, 8, 16), dtype=np.int32)
+        slab[:, :, :8] = 1
+        res = oi.effective_diffusivity(slab, phase=1)
+        assert res.solver_converged
+        assert res.active_volume_fraction == pytest.approx(0.5)
+        expected = np.diag([0.0, 0.5, 0.5])
+        np.testing.assert_allclose(res.tensor, expected, atol=1e-6)
+
+    def test_multiphase_reuss_voigt_laminate(self):
+        # Two-phase periodic laminate normal to X: D_1 = 1.0, D_0 = 0.25 (equal thickness)
+        # Exact Reuss normal to X: 2 * 1.0 * 0.25 / (1.0 + 0.25) = 0.4
+        # Exact Voigt parallel (Y, Z): 0.5 * (1.0 + 0.25) = 0.625
+        lam = np.zeros((8, 8, 16), dtype=np.int32)
+        lam[:, :, :8] = 1
+        res = oi.effective_diffusivity(lam, phase_diffusivities={0: 0.25, 1: 1.0})
+        assert res.solver_converged
+        assert res.active_volume_fraction == pytest.approx(1.0)
+        expected = np.diag([0.4, 0.625, 0.625])
+        np.testing.assert_allclose(res.tensor, expected, atol=1e-5)
+
     def test_diagonal_channels_off_diagonal_symmetry(self):
-        # Periodic 45-degree diagonal sheets in the (x, y) plane: (ix - iy) % 4 < 2
-        # Transport is preferential along x+y => D_xy = D_yx > 0 and D_xx == D_yy, D_xz == D_yz == 0
-        nz, ny, nx = 8, 12, 12
+        # Periodic 45-degree diagonal sheets in the (x, y) plane: (ix - iy) % 8 < 4
+        # Note: staircase diagonal sheets require width >= 2 voxels so active cells
+        # connect across faces; width 4 gives percolating 45-degree sheets with D_xy = D_yx > 0.
+        nz, ny, nx = 8, 16, 16
         iz, iy, ix = np.meshgrid(
             np.arange(nz), np.arange(ny), np.arange(nx), indexing="ij"
         )
-        data = (((ix - iy) % 4) < 2).astype(np.int32)
+        data = (((ix - iy) % 8) < 4).astype(np.int32)
 
         res = oi.effective_diffusivity(data, phase=1)
         assert res.solver_converged
@@ -196,7 +220,7 @@ class TestEffectiveDiffusivityTensor:
         np.testing.assert_allclose(D, D.T, atol=1e-6)
         assert D[0, 0] == pytest.approx(D[1, 1], rel=1e-5)
         assert D[2, 2] == pytest.approx(0.5, rel=1e-5)
-        assert D[0, 1] > 0.02
+        assert D[0, 1] > 0.1
         assert abs(D[0, 2]) < 1e-6
         assert abs(D[1, 2]) < 1e-6
 

@@ -1,6 +1,7 @@
 // tests/tEffectiveDiffusivity.cpp
 
 #include "TiffReader.H"
+#include "DeffTensor.H"
 #include "EffectiveDiffusivityHypre.H"
 #include "Tortuosity.H"
 #include "SolverConfig.H"
@@ -36,120 +37,8 @@ void calculate_Deff_tensor_homogenization(amrex::Real Deff_tensor[AMREX_SPACEDIM
                                           const amrex::iMultiFab& active_mask,
                                           const amrex::MultiFab& diff_coeff,
                                           const amrex::Geometry& geom, int verbose_level) {
-    BL_PROFILE("calculate_Deff_tensor_homogenization");
-    for (int i = 0; i < AMREX_SPACEDIM; ++i) {
-        for (int j = 0; j < AMREX_SPACEDIM; ++j) {
-            Deff_tensor[i][j] = 0.0;
-        }
-    }
-    AMREX_ASSERT(mf_chi_x_in.nGrow() >= 1);
-    AMREX_ASSERT(mf_chi_y_in.nGrow() >= 1);
-    if (AMREX_SPACEDIM == 3) {
-        AMREX_ASSERT(mf_chi_z_in.isDefined() && mf_chi_z_in.nGrow() >= 1);
-    }
-    AMREX_ASSERT(active_mask.nGrow() == 0);
-    AMREX_ASSERT(diff_coeff.nGrow() == 0);
-
-    const amrex::Real* dx_arr = geom.CellSize();
-    amrex::Real inv_2dx[AMREX_SPACEDIM];
-    for (int i = 0; i < AMREX_SPACEDIM; ++i) {
-        inv_2dx[i] = 1.0 / (2.0 * dx_arr[i]);
-    }
-
-    amrex::Real sum_integrand_tensor_comp_local[AMREX_SPACEDIM][AMREX_SPACEDIM];
-    for (int i = 0; i < AMREX_SPACEDIM; ++i) {
-        for (int j = 0; j < AMREX_SPACEDIM; ++j) {
-            sum_integrand_tensor_comp_local[i][j] = 0.0;
-        }
-    }
-
-#ifdef AMREX_USE_OMP
-#pragma omp parallel reduction(+ : sum_integrand_tensor_comp_local)
-#endif
-    for (amrex::MFIter mfi(active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& bx = mfi.tilebox();
-        amrex::Array4<const int> const mask_arr = active_mask.const_array(mfi);
-        amrex::Array4<const amrex::Real> const dc_arr = diff_coeff.const_array(mfi);
-        amrex::Array4<const amrex::Real> const chi_x_arr = mf_chi_x_in.const_array(mfi);
-        amrex::Array4<const amrex::Real> const chi_y_arr = mf_chi_y_in.const_array(mfi);
-        amrex::Array4<const amrex::Real> const chi_z_arr =
-            (AMREX_SPACEDIM == 3 && mf_chi_z_in.isDefined()) ? mf_chi_z_in.const_array(mfi)
-                                                             : mf_chi_x_in.const_array(mfi);
-
-        amrex::LoopOnCpu(bx, [=, &sum_integrand_tensor_comp_local](int i, int j, int k) noexcept {
-            if (mask_arr(i, j, k, 0) == 1) {
-                amrex::Real D_val = dc_arr(i, j, k, 0);
-                amrex::Real grad_chi_x[AMREX_SPACEDIM] = {0.0};
-                amrex::Real grad_chi_y[AMREX_SPACEDIM] = {0.0};
-                amrex::Real grad_chi_z[AMREX_SPACEDIM] = {0.0};
-
-                grad_chi_x[0] =
-                    (chi_x_arr(i + 1, j, k, 0) - chi_x_arr(i - 1, j, k, 0)) * inv_2dx[0];
-                grad_chi_x[1] =
-                    (chi_x_arr(i, j + 1, k, 0) - chi_x_arr(i, j - 1, k, 0)) * inv_2dx[1];
-                if (AMREX_SPACEDIM == 3)
-                    grad_chi_x[2] =
-                        (chi_x_arr(i, j, k + 1, 0) - chi_x_arr(i, j, k - 1, 0)) * inv_2dx[2];
-
-                grad_chi_y[0] =
-                    (chi_y_arr(i + 1, j, k, 0) - chi_y_arr(i - 1, j, k, 0)) * inv_2dx[0];
-                grad_chi_y[1] =
-                    (chi_y_arr(i, j + 1, k, 0) - chi_y_arr(i, j - 1, k, 0)) * inv_2dx[1];
-                if (AMREX_SPACEDIM == 3)
-                    grad_chi_y[2] =
-                        (chi_y_arr(i, j, k + 1, 0) - chi_y_arr(i, j, k - 1, 0)) * inv_2dx[2];
-
-                if (AMREX_SPACEDIM == 3) {
-                    grad_chi_z[0] =
-                        (chi_z_arr(i + 1, j, k, 0) - chi_z_arr(i - 1, j, k, 0)) * inv_2dx[0];
-                    grad_chi_z[1] =
-                        (chi_z_arr(i, j + 1, k, 0) - chi_z_arr(i, j - 1, k, 0)) * inv_2dx[1];
-                    grad_chi_z[2] =
-                        (chi_z_arr(i, j, k + 1, 0) - chi_z_arr(i, j, k - 1, 0)) * inv_2dx[2];
-                }
-
-                // D_eff[i][j] = (1/|V|) * sum( D(x) * (delta_ij + d_chi_j/d_x_i) )
-                sum_integrand_tensor_comp_local[0][0] += D_val * (1.0 - grad_chi_x[0]);
-                sum_integrand_tensor_comp_local[0][1] += D_val * (-grad_chi_y[0]);
-                sum_integrand_tensor_comp_local[1][0] += D_val * (-grad_chi_x[1]);
-                sum_integrand_tensor_comp_local[1][1] += D_val * (1.0 - grad_chi_y[1]);
-
-                if (AMREX_SPACEDIM == 3) {
-                    sum_integrand_tensor_comp_local[0][2] += D_val * (-grad_chi_z[0]);
-                    sum_integrand_tensor_comp_local[2][0] += D_val * (-grad_chi_x[2]);
-                    sum_integrand_tensor_comp_local[1][2] += D_val * (-grad_chi_z[1]);
-                    sum_integrand_tensor_comp_local[2][1] += D_val * (-grad_chi_y[2]);
-                    sum_integrand_tensor_comp_local[2][2] += D_val * (1.0 - grad_chi_z[2]);
-                }
-            }
-        });
-    }
-
-    for (int r = 0; r < AMREX_SPACEDIM; ++r) {
-        for (int c = 0; c < AMREX_SPACEDIM; ++c) {
-            amrex::ParallelDescriptor::ReduceRealSum(sum_integrand_tensor_comp_local[r][c]);
-        }
-    }
-
-    amrex::Long N_total_cells_in_domain = geom.Domain().numPts();
-    if (N_total_cells_in_domain > 0) {
-        for (int l_idx = 0; l_idx < AMREX_SPACEDIM; ++l_idx) {
-            for (int m_idx = 0; m_idx < AMREX_SPACEDIM; ++m_idx) {
-                Deff_tensor[l_idx][m_idx] = sum_integrand_tensor_comp_local[l_idx][m_idx] /
-                                            static_cast<amrex::Real>(N_total_cells_in_domain);
-            }
-        }
-    } else {
-        if (amrex::ParallelDescriptor::IOProcessor() && verbose_level > 0) {
-            amrex::Warning("Total cells in domain is zero, D_eff cannot be calculated.");
-        }
-    }
-
-    if (verbose_level > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  [TestCalcDeff] Raw summed D*(1-dchi_x_dx): "
-                       << sum_integrand_tensor_comp_local[0][0]
-                       << ", N_total_cells: " << N_total_cells_in_domain << std::endl;
-    }
+    OpenImpala::calculateDeffTensor(Deff_tensor, mf_chi_x_in, mf_chi_y_in, mf_chi_z_in, active_mask,
+                                    geom, verbose_level, &diff_coeff);
 }
 } // end anonymous namespace
 

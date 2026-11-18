@@ -571,8 +571,29 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
             auto lo = EffectiveDiffusivityHypre::loV(pin_box);
             auto hi = EffectiveDiffusivityHypre::hiV(pin_box);
 
+            amrex::Real max_d = 0.0;
+            for (const auto& kv : m_phase_coeff_map) {
+                max_d = std::max(max_d, kv.second);
+            }
+            const amrex::Real pin_scale = (max_d > 0.0 ? max_d : 1.0) / (m_dx[0] * m_dx[0]);
+
             std::vector<amrex::Real> pin_mtx(stencil_size, 0.0);
-            pin_mtx[0] = 1.0; // center diagonal = 1
+            pin_mtx[0] = pin_scale;
+#ifdef OPENIMPALA_USE_GPU
+            amrex::Gpu::DeviceVector<amrex::Real> d_pin_mtx(stencil_size);
+            amrex::Gpu::copy(amrex::Gpu::hostToDevice, pin_mtx.begin(), pin_mtx.end(),
+                             d_pin_mtx.begin());
+            amrex::Gpu::DeviceVector<amrex::Real> d_pin_zero(1, 0.0);
+            amrex::Gpu::streamSynchronize();
+
+            ierr = HYPRE_StructMatrixSetBoxValues(m_A, lo.data(), hi.data(), stencil_size,
+                                                  stencil_indices_hypre, d_pin_mtx.data());
+            HYPRE_CHECK(ierr);
+            ierr = HYPRE_StructVectorSetBoxValues(m_b, lo.data(), hi.data(), d_pin_zero.data());
+            HYPRE_CHECK(ierr);
+            ierr = HYPRE_StructVectorSetBoxValues(m_x, lo.data(), hi.data(), d_pin_zero.data());
+            HYPRE_CHECK(ierr);
+#else
             amrex::Real pin_rhs = 0.0;
             amrex::Real pin_x = 0.0;
 
@@ -583,6 +604,7 @@ void EffectiveDiffusivityHypre::setupMatrixEquation() {
             HYPRE_CHECK(ierr);
             ierr = HYPRE_StructVectorSetBoxValues(m_x, lo.data(), hi.data(), &pin_x);
             HYPRE_CHECK(ierr);
+#endif
 
             if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << "  setupMatrixEquation: Pinned active cell (" << local_pin[0]
