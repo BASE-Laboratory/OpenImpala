@@ -1312,6 +1312,52 @@ def _detect_file_format(path_str: str, file_format: Optional[str]) -> str:
     raise ValueError(f"Cannot auto-detect format for '{path_str}'. Set file_format explicitly.")
 
 
+_NUMPY_STR_TO_RAW_ENUM: dict[str, str] = {
+    "|u1": "UINT8",
+    "<u1": "UINT8",
+    ">u1": "UINT8",
+    "|i1": "INT8",
+    "<i1": "INT8",
+    ">i1": "INT8",
+    "<i2": "INT16_LE",
+    ">i2": "INT16_BE",
+    "<u2": "UINT16_LE",
+    ">u2": "UINT16_BE",
+    "<i4": "INT32_LE",
+    ">i4": "INT32_BE",
+    "<u4": "UINT32_LE",
+    ">u4": "UINT32_BE",
+    "<f4": "FLOAT32_LE",
+    ">f4": "FLOAT32_BE",
+    "<f8": "FLOAT64_LE",
+    ">f8": "FLOAT64_BE",
+}
+
+
+def _coerce_core_raw_data_type(_core, raw_data_type):
+    """Map None, string names, or NumPy dtypes to ``_core.RawDataType``."""
+    if raw_data_type is None:
+        return _core.RawDataType.UINT8
+    if isinstance(raw_data_type, _core.RawDataType):
+        return raw_data_type
+    if isinstance(raw_data_type, str):
+        name = raw_data_type.strip().upper()
+        if name != "UNKNOWN" and hasattr(_core.RawDataType, name):
+            return getattr(_core.RawDataType, name)
+        try:
+            dt = np.dtype(raw_data_type)
+        except TypeError as exc:
+            raise ValueError(f"Unsupported raw_data_type: {raw_data_type!r}") from exc
+        enum_name = _NUMPY_STR_TO_RAW_ENUM.get(dt.str)
+        if enum_name is not None:
+            return getattr(_core.RawDataType, enum_name)
+    if isinstance(raw_data_type, np.dtype):
+        enum_name = _NUMPY_STR_TO_RAW_ENUM.get(raw_data_type.str)
+        if enum_name is not None:
+            return getattr(_core.RawDataType, enum_name)
+    raise ValueError(f"Unsupported raw_data_type: {raw_data_type!r}")
+
+
 def read_image(
     path: Union[str, os.PathLike],
     threshold: float = 0.5,
@@ -1374,16 +1420,14 @@ def read_image(
         return reader, pure_img
 
     _core = _get_core()
-
-    if raw_data_type is None:
-        raw_data_type = _core.RawDataType.UINT8
+    core_raw_dt = _coerce_core_raw_data_type(_core, raw_data_type)
 
     if fmt == "tiff":
         reader = _core.TiffReader(path_str)
     elif fmt == "hdf5":
         reader = _core.HDF5Reader(path_str, hdf5_dataset)
     elif fmt == "raw":
-        reader = _core.RawReader(path_str, raw_width, raw_height, raw_depth, raw_data_type)
+        reader = _core.RawReader(path_str, raw_width, raw_height, raw_depth, core_raw_dt)
     elif fmt == "dat":
         reader = _core.DatReader(path_str)
     else:

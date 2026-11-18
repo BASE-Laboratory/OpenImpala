@@ -89,6 +89,8 @@ install(FILES
     openimpala/facade.py
     openimpala/cli.py
     openimpala/_solver.py
+    openimpala/_io.py
+    openimpala/datasets.py
     DESTINATION openimpala
     COMPONENT python
 )
@@ -127,9 +129,11 @@ if(BUILD_TESTING)
             )
         endfunction()
         
-        # --- Pure-Python tests (no compiled module needed) ---
+        # --- Dual-backend tests (run with either pure-Python or _core) ---
         openimpala_add_pytest(pytest_cli
             "${PYTHON_TEST_DIR}/test_cli.py")
+        openimpala_add_pytest(pytest_datasets_and_io
+            "${PYTHON_TEST_DIR}/test_datasets_and_io.py")
 
         # --- Tests requiring _core module ---
         openimpala_add_pytest(pytest_enums

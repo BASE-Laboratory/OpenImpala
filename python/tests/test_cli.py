@@ -1,11 +1,46 @@
 """Tests for the CLI argument parser and command dispatch."""
 
 import json
+import struct
+
+import numpy as np
 import pytest
 
 import openimpala as oi
-from openimpala.cli import _build_parser, _cmd_analyze
-from openimpala.facade import TortuosityResult, VolumeFractionResult
+from openimpala.cli import _build_parser, _cmd_analyze, main
+from openimpala.facade import PercolationResult, TortuosityResult, VolumeFractionResult
+
+
+def _write_tiny_tiff(path, vol: np.ndarray) -> None:
+    """Write a minimal uncompressed little-endian 3-D uint8 Classic TIFF."""
+    arr = np.ascontiguousarray(vol, dtype="<u1")
+    nz, ny, nx = arr.shape
+    chunks = [b"II" + struct.pack("<HI", 42, 8)]
+    pos = 8
+    for z in range(nz):
+        raw = arr[z].tobytes()
+        pad = b"\x00" if (len(raw) % 2) else b""
+        data_off = pos + 2 + 10 * 12 + 4
+        next_ifd = (data_off + len(raw) + len(pad)) if z < nz - 1 else 0
+        entries = [
+            (256, 4, struct.pack("<I", nx)),
+            (257, 4, struct.pack("<I", ny)),
+            (258, 3, struct.pack("<HH", 8, 0)),
+            (259, 3, struct.pack("<HH", 1, 0)),
+            (262, 3, struct.pack("<HH", 1, 0)),
+            (273, 4, struct.pack("<I", data_off)),
+            (277, 3, struct.pack("<HH", 1, 0)),
+            (278, 4, struct.pack("<I", ny)),
+            (279, 4, struct.pack("<I", len(raw))),
+            (339, 3, struct.pack("<HH", 1, 0)),
+        ]
+        ifd = struct.pack("<H", len(entries))
+        for tag, ftype, val4 in entries:
+            ifd += struct.pack("<HHI4s", tag, ftype, 1, val4)
+        ifd += struct.pack("<I", next_ifd)
+        chunks.extend([ifd, raw, pad])
+        pos = next_ifd
+    path.write_bytes(b"".join(chunks))
 
 
 def test_parser_version(capsys):
@@ -15,6 +50,13 @@ def test_parser_version(capsys):
     assert exc.value.code == 0
     out = capsys.readouterr().out.strip()
     assert out == f"openimpala {oi.__version__}"
+
+
+def test_main_no_command_prints_help(capsys):
+    rc = main([])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "usage: openimpala" in out
 
 
 def test_parser_vf_defaults_and_grid_size():
@@ -62,7 +104,7 @@ def test_parser_percolation():
     assert args.max_grid_size == "auto"
 
 
-def test_cmd_analyze_mlmg_and_non_percolating(monkeypatch, capsys):
+def test_cmd_analyze_mlmg_and_error_paths(monkeypatch, capsys):
     parser = _build_parser()
     args = parser.parse_args(["analyze", "sample.tif", "--solver", "mlmg", "--direction", "z"])
 
@@ -105,6 +147,76 @@ def test_cmd_analyze_mlmg_and_non_percolating(monkeypatch, capsys):
     assert payload2["percolates"] is False
     assert payload2["tortuosity"] is None
 
+    # ConvergenceError path falls back to percolation_check and records error message
+    def _raise_conv(*a, **kw):
+        raise oi.ConvergenceError("stagnated at 1e-4")
+
+    monkeypatch.setattr(oi, "tortuosity", _raise_conv)
+    monkeypatch.setattr(
+        oi,
+        "percolation_check",
+        lambda img, **kw: PercolationResult(
+            percolates=True, active_volume_fraction=0.48, direction="Z"
+        ),
+    )
+    rc3 = _cmd_analyze(args)
+    assert rc3 == 0
+    payload3 = json.loads(capsys.readouterr().out)
+    assert payload3["percolates"] is True
+    assert payload3["active_volume_fraction"] == pytest.approx(0.48)
+    assert "stagnated" in payload3["error"]
+
+
+def test_main_end_to_end_subcommands(tmp_path, capsys):
+    vol = np.zeros((8, 8, 8), dtype=np.uint8)
+    vol[:, :, :4] = 200  # Straight half-domain channel along Z and Y
+    tif_path = tmp_path / "channel.tif"
+    _write_tiny_tiff(tif_path, vol)
+
+    # 1. openimpala vf
+    assert main(["vf", str(tif_path), "--phase", "1", "--threshold", "100"]) == 0
+    vf_json = json.loads(capsys.readouterr().out)
+    assert vf_json["volume_fraction"] == pytest.approx(0.5)
+    assert vf_json["phase_count"] == 256
+
+    # 2. openimpala percolation
+    assert main(["percolation", str(tif_path), "--phase", "1", "--threshold", "100", "--direction", "z"]) == 0
+    perc_json = json.loads(capsys.readouterr().out)
+    assert perc_json["percolates"] is True
+    assert perc_json["direction"] == "Z"
+
+    # 3. openimpala analyze with isotropic --voxel-size and --output file
+    out_iso = tmp_path / "res_iso.json"
+    assert main([
+        "analyze", str(tif_path),
+        "--phase", "1",
+        "--threshold", "100",
+        "--direction", "z",
+        "--voxel-size", "0.5",
+        "--output", str(out_iso),
+    ]) == 0
+    capsys.readouterr()
+    iso_data = json.loads(out_iso.read_text())
+    assert iso_data["percolates"] is True
+    assert iso_data["voxel_size"] == pytest.approx([0.5, 0.5, 0.5])
+    assert iso_data["tortuosity"] == pytest.approx(1.0, rel=1e-5)
+
+    # 4. openimpala analyze with anisotropic 3-component --voxel-size DZ DY DX
+    assert main([
+        "analyze", str(tif_path),
+        "--phase", "1",
+        "--threshold", "100",
+        "--direction", "z",
+        "--voxel-size", "2.0", "1.5", "1.0",
+    ]) == 0
+    aniso_data = json.loads(capsys.readouterr().out)
+    assert aniso_data["voxel_size"] == pytest.approx([2.0, 1.5, 1.0])
+    assert aniso_data["tortuosity"] == pytest.approx(1.0, rel=1e-5)
+
+    # 5. Invalid --voxel-size count (2 values) raises SystemExit
+    with pytest.raises(SystemExit):
+        main(["analyze", str(tif_path), "--voxel-size", "1.0", "2.0"])
+
 
 def test_build_info_fallback_outside_session(monkeypatch):
     import openimpala.facade as facade_mod
@@ -114,4 +226,5 @@ def test_build_info_fallback_outside_session(monkeypatch):
     info = oi.build_info()
     assert info["backend"] == "pure-python"
     assert info["version"] == oi.__version__
+
 
