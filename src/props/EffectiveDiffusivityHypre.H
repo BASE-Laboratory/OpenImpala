@@ -1,3 +1,6 @@
+/** @file EffectiveDiffusivityHypre.H
+ *  @brief HYPRE structured-grid solver for periodic homogenisation cell problems.
+ */
 #ifndef EFFECTIVEDIFFUSIVITYHYPRE_H
 #define EFFECTIVEDIFFUSIVITYHYPRE_H
 

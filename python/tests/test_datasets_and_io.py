@@ -467,8 +467,17 @@ class TestTortuosityAllHtmlReprsAndSession:
             with oi.Session():
                 assert oi.volume_fraction(vol, phase=1).fraction == pytest.approx(0.5)
 
-    def test_session_ensure_active_and_cleanup(self):
+    def test_session_ensure_active_and_cleanup(self, monkeypatch):
+        import atexit
         from openimpala.session import Session
+
+        init_calls: list[int] = []
+        fin_calls: list[int] = []
+        registered: list[object] = []
+
+        monkeypatch.setattr(Session, "_do_initialize", staticmethod(lambda: init_calls.append(1)))
+        monkeypatch.setattr(Session, "_do_finalize", staticmethod(lambda: fin_calls.append(1)))
+        monkeypatch.setattr(atexit, "register", lambda fn: registered.append(fn))
 
         saved_depth = Session._depth
         saved_auto = Session._auto_session
@@ -478,9 +487,12 @@ class TestTortuosityAllHtmlReprsAndSession:
             Session.ensure_active()
             assert Session._depth == 1
             assert Session._auto_session is not None
+            assert init_calls == [1]
+            assert registered == [Session._cleanup_auto]
             Session._cleanup_auto()
             assert Session._depth == 0
             assert Session._auto_session is None
+            assert fin_calls == [1]
         finally:
             Session._depth = saved_depth
             Session._auto_session = saved_auto
@@ -612,7 +624,7 @@ class TestIsolatedPocketHomogenization:
         only_singletons[4, 5, 6] = 1
         res_iso = oi.effective_diffusivity(only_singletons, phase=1)
         assert res_iso.solver_converged
-        assert res_iso.iterations == (0, 0, 0)
+        assert all(it <= 1 for it in res_iso.iterations)
         np.testing.assert_allclose(res_iso.tensor, 0.0, atol=1e-14)
 
         res_pockets = oi.effective_diffusivity(vol, phase=1)

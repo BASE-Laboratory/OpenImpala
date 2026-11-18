@@ -1,3 +1,6 @@
+/** @file TortuosityHypre.H
+ *  @brief HYPRE structured-grid solver for flow-through tortuosity calculations.
+ */
 #ifndef TortuosityHypre_H
 #define TortuosityHypre_H
 
