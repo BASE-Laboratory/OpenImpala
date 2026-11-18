@@ -1,15 +1,10 @@
 # C++ API Reference
 
-The C++ API reference is generated from Doxygen comments in the source code
-using [Breathe](https://breathe.readthedocs.io/).
+The C++ API reference is generated from Doxygen comments in `src/` via
+[Breathe](https://breathe.readthedocs.io/). All public symbols live in
+`namespace OpenImpala`.
 
-## Namespace
-
-All OpenImpala classes live in the `OpenImpala` namespace.
-
-## Key classes
-
-### I/O Readers
+## I/O Readers
 
 ```{eval-rst}
 .. doxygenclass:: OpenImpala::TiffReader
@@ -23,32 +18,24 @@ All OpenImpala classes live in the `OpenImpala` namespace.
 .. doxygenclass:: OpenImpala::RawReader
    :members:
    :outline:
-```
 
-### Transport Solvers
-
-```{eval-rst}
-.. doxygenclass:: OpenImpala::TortuosityHypre
+.. doxygenclass:: OpenImpala::DatReader
    :members:
    :outline:
+```
 
+## Transport Solvers
+
+```{eval-rst}
 .. doxygenclass:: OpenImpala::TortuosityMLMG
    :members:
    :outline:
 
+.. doxygenclass:: OpenImpala::TortuosityHypre
+   :members:
+   :outline:
+
 .. doxygenclass:: OpenImpala::EffectiveDiffusivityHypre
-   :members:
-   :outline:
-```
-
-### Utilities
-
-```{eval-rst}
-.. doxygenclass:: OpenImpala::VolumeFraction
-   :members:
-   :outline:
-
-.. doxygenclass:: OpenImpala::PercolationCheck
    :members:
    :outline:
 
@@ -61,7 +48,39 @@ All OpenImpala classes live in the `OpenImpala` namespace.
    :outline:
 ```
 
-### Configuration
+## Microstructural Characterisation
+
+```{eval-rst}
+.. doxygenclass:: OpenImpala::VolumeFraction
+   :members:
+   :outline:
+
+.. doxygenclass:: OpenImpala::PercolationCheck
+   :members:
+   :outline:
+
+.. doxygenclass:: OpenImpala::SpecificSurfaceArea
+   :members:
+   :outline:
+
+.. doxygenclass:: OpenImpala::ConnectedComponents
+   :members:
+   :outline:
+
+.. doxygenclass:: OpenImpala::ParticleSizeDistribution
+   :members:
+   :outline:
+
+.. doxygenclass:: OpenImpala::ThroughThicknessProfile
+   :members:
+   :outline:
+
+.. doxygenstruct:: OpenImpala::REVConfig
+   :members:
+   :outline:
+```
+
+## Configuration
 
 ```{eval-rst}
 .. doxygenstruct:: OpenImpala::PhysicsConfig
@@ -69,7 +88,8 @@ All OpenImpala classes live in the `OpenImpala` namespace.
    :outline:
 ```
 
-## Full Doxygen output
+## Full Doxygen Output
 
-For the complete class hierarchy, include dependency graphs, and file-level
-documentation, see the [Doxygen pages](../doxygen/html/index.html).
+For the complete C++ class hierarchy, include graphs, and file-level
+documentation, see the
+[standalone Doxygen reference](https://base-laboratory.github.io/OpenImpala/doxygen/index.html).

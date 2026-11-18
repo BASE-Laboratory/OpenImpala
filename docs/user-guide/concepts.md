@@ -1,77 +1,52 @@
-# Concepts
+# Mathematical Formulation
 
-## What OpenImpala computes
+OpenImpala discretises steady-state conservation equations directly on segmented 3D voxel grids using a cell-centred conservative finite-volume (7-point stencil) scheme.
 
-OpenImpala takes a **segmented 3D voxel image** (where each voxel is labelled
-with a phase ID) and computes **effective transport properties** by solving
-partial differential equations directly on the voxel grid.
+## Array and Coordinate Conventions
 
-### Phase data
+All 3D NumPy arrays ingested or returned by OpenImpala follow `(Nz, Ny, Nx)` memory layout (`z` = axis 0, `y` = axis 1, `x` = axis 2) to match multi-page TIFF stacks and HDF5 datasets:
 
-Images are segmented into integer phase IDs stored in an AMReX `iMultiFab`.
-Typically:
+- **Voxel spacing**: scalar `voxel_size=h` or anisotropic 3-tuple `voxel_size=(dz, dy, dx)`.
+- **Tensor and directional ordering**: `EffectiveDiffusivityResult.tensor` has rows and columns ordered `(x, y, z)`, i.e. index `(0, 1, 2)` corresponds to `(X, Y, Z)`.
 
-- **Phase 0** = pore / void
-- **Phase 1** = solid matrix
+## Steady-State Flow-Through Diffusion and Tortuosity
 
-This is configurable via the `phase` parameter. Multi-phase transport is
-supported: each phase can be assigned a different transport coefficient.
+Given a conducting domain $\Omega_p \subset [0, L_x] \times [0, L_y] \times [0, L_z]$ with local diffusivity $D(\mathbf{x}) > 0$ (and $D(\mathbf{x}) = 0$ in insulating solid cells), OpenImpala solves
 
-### Volume fraction
+$$-\nabla \cdot \bigl(D(\mathbf{x})\,\nabla \phi\bigr) = 0 \quad \text{in } \Omega_p,$$
 
-The simplest metric: the fraction of voxels belonging to a given phase.
+with zero-flux Neumann conditions ($\nabla \phi \cdot \mathbf{n} = 0$) on all internal solid walls and the four lateral domain faces. On the inlet and outlet faces normal to the transport direction $d \in \{x, y, z\}$, fixed potentials $\phi_{\text{lo}} = 0$ and $\phi_{\text{hi}} = 1$ are imposed at the **physical domain boundary** ($h_d / 2$ from the outermost cell centres), contributing half-cell boundary conductance $2 D_i A_d / h_d$.
 
-$$\varepsilon = \frac{N_{\text{phase}}}{N_{\text{total}}}$$
+:::{note}
+Because the Dirichlet potentials sit on the exterior cell faces rather than on the first and last cell centres, a uniform medium or straight parallel channel of arbitrary grid resolution $N$ yields the exact continuum values $D_{\text{eff}} / D_0 = \varepsilon$ and $\tau = 1$ to solver tolerance (prior to `v4.5.0`, cell-centred pinning introduced an $O(1/N)$ offset $\tau = (N-1)/N$).
+:::
 
-### Percolation
+Across interior faces separating cells $i$ and $j$, normal flux continuity requires the **harmonic-mean face diffusivity**
 
-Before solving transport equations, OpenImpala checks whether the target phase
-forms a **connected path** from inlet to outlet using a GPU-accelerated
-flood-fill algorithm. If the phase does not percolate, transport is zero.
+$$D_{i+1/2} = \begin{cases} \dfrac{2 D_i D_j}{D_i + D_j}, & D_i > 0 \text{ and } D_j > 0, \\[6pt] 0, & \text{otherwise.} \end{cases}$$
 
-### Tortuosity
+From the cross-sectionally averaged steady-state flux $J_d$, the effective diffusivity and tortuosity factor are
 
-Tortuosity quantifies how much a winding pore structure impedes transport
-compared to a straight channel. OpenImpala solves the steady-state diffusion
-equation:
+$$D_{\text{eff},d} = \frac{|J_d|\,L_d}{A_d\,|\phi_{\text{hi}} - \phi_{\text{lo}}|}, \qquad \tau_d = \frac{\varepsilon_{\text{active}}\,D_{\text{ref}}}{D_{\text{eff},d}},$$
 
-$$\nabla \cdot (D \nabla \phi) = 0$$
+where for single-phase runs $D_{\text{ref}} = 1$ so $\tau_d = \varepsilon / D_{\text{eff},d}$.
 
-with Dirichlet boundary conditions at inlet ($\phi = 0$) and outlet
-($\phi = 1$), and zero-flux Neumann conditions on lateral faces.
+## Periodic Homogenisation ($\mathbf{D}_{\text{eff}} \in \mathbb{R}^{3\times 3}$)
 
-The effective diffusivity is computed from the resulting flux:
+To capture full directional anisotropy—including off-diagonal cross-terms $D_{\text{eff},ij}$ when principal material axes are oblique to the image axes—`oi.effective_diffusivity()` solves three periodic unit-cell corrector problems on the 3-torus $Y$:
 
-$$D_{\text{eff}} = \frac{|\text{average flux}|}{\text{cross-section area} \times |\nabla\phi_{\text{imposed}}|}$$
+$$-\nabla \cdot \Bigl(D(\mathbf{x})\bigl(\mathbf{e}_k + \nabla \chi_k\bigr)\Bigr) = 0 \quad \text{in } Y, \qquad k \in \{x, y, z\}.$$
 
-Tortuosity is then:
+Using the same conservative harmonic face conductances $D_{i+1/2}^{(r)}$, the discrete cell-problem RHS at cell $\mathbf{i}$ is $(D_{\mathbf{i}+1/2}^{(k)} - D_{\mathbf{i}-1/2}^{(k)}) / h_k$, and the homogenised tensor is assembled from the periodic face fluxes:
 
-$$\tau = \frac{\varepsilon_{\text{active}}}{D_{\text{eff}}}$$
+$$D_{\text{eff},rc} = \frac{1}{N_{\text{total}}} \sum_{\mathbf{i} \in Y} D_{\mathbf{i}+1/2}^{(r)} \left(\delta_{rc} + \frac{\chi_c(\mathbf{i} + \mathbf{e}_r) - \chi_c(\mathbf{i})}{h_r}\right).$$
 
-where $\varepsilon_{\text{active}}$ is the volume fraction of the percolating
-(connected) phase.
+Because this discretisation corresponds to the inner product $\langle \mathbf{e}_r + \nabla_h \chi_r, \mathbf{e}_c + \nabla_h \chi_c \rangle_D$, the discrete tensor satisfies exact Onsager reciprocity ($D_{\text{eff},rc} = D_{\text{eff},cr}$), positive semi-definiteness, and discrete Wiener (Voigt/Reuss) bounds at every grid resolution.
 
-For a uniform medium on an $N$-cell grid, the discrete solution gives
-$D_{\text{eff}} = N/(N-1)$, so $\tau = (N-1)/N$.
+## Cauchy–Crofton Specific Surface Area
 
-### Effective diffusivity tensor
+Counting raw voxel faces between phase $a$ and phase $b$ yields the Manhattan surface area
 
-For anisotropic microstructures, the full effective diffusivity tensor
-$\mathbf{D}_{\text{eff}}$ is computed by solving the **cell problem** from
-homogenisation theory:
+$$S_V^{\text{raw}} = \frac{N_x h_y h_z + N_y h_x h_z + N_z h_x h_y}{N_{\text{total}}\,h_x h_y h_z}.$$
 
-$$\nabla_\xi \cdot \left( D \nabla_\xi \chi_k \right) = -\nabla_\xi \cdot \left( D \hat{e}_k \right)$$
-
-for corrector functions $\chi_k$ in each direction $k \in \{x, y, z\}$, with
-periodic boundary conditions. The tensor components are:
-
-$$D_{\text{eff},ij} = \frac{1}{|Y|} \int_Y D(\mathbf{x}) \left( \delta_{ij} + \frac{\partial \chi_j}{\partial x_i} \right) \, d\mathbf{x}$$
-
-### Face coefficients
-
-Inter-cell diffusivities use the **harmonic mean** of adjacent cell values:
-
-$$D_{\text{face}} = \frac{2 D_L D_R}{D_L + D_R}$$
-
-This is physically correct for resistances in series and ensures that a solid
-cell ($D = 0$) adjacent to a pore cell correctly blocks transport.
+For smooth isotropic interfaces, axis-aligned voxel staircasing inflates surface area by $3/2$. `oi.specific_surface_area()` returns both `ssa` ($S_V^{\text{raw}}$) and `ssa_corrected` ($\frac{2}{3} S_V^{\text{raw}}$, the three-line Cauchy–Crofton stereological estimator).

@@ -1,77 +1,69 @@
-# HPC Usage
+# MPI & HPC Clusters
 
-OpenImpala is designed for distributed-memory parallelism via MPI, making it
-suitable for large-scale simulations on HPC clusters.
+OpenImpala decomposes 3D voxel domains into distributed AMReX `BoxArray` patches across MPI ranks, combining MPI inter-rank halo exchanges with OpenMP host threading or multi-GPU CUDA execution.
 
-## Running with MPI
+## Multi-Rank Python Scripts (`mpi4py`)
 
-### Python
+Import and run the exact same `openimpala` facade under `mpirun` or `srun`. Always wrap multi-rank scripts in `with oi.Session():` so `amrex::Finalize()` runs cleanly before `MPI_Finalize()`, and guard console/file output on rank 0:
 
-```bash
-# Install mpi4py
-pip install openimpala mpi4py
+```python
+# hpc_tortuosity.py
+from mpi4py import MPI
+import openimpala as oi
 
-# Run on 4 MPI ranks
-mpirun -np 4 python my_script.py
+comm = MPI.COMM_WORLD
+
+with oi.Session():
+    _, img = oi.read_image("electrode_1024cubed.tif", threshold=128, max_grid_size=128)
+    vf = oi.volume_fraction(img, phase=1)
+    res = oi.tortuosity(img, phase=1, direction="z", solver="mlmg")
+
+    if comm.Get_rank() == 0:
+        print(f"Porosity:   {vf.fraction:.5f}")
+        print(f"Tortuosity: {res.tortuosity:.5f} ({res.iterations} MLMG iterations)")
 ```
 
-### C++ executable
+Launch across MPI ranks:
 
 ```bash
-mpirun -np 16 ./Diffusion3d inputs
+mpirun -np 16 python hpc_tortuosity.py
 ```
 
-### Apptainer on a cluster
+:::{tip}
+Prefer `oi.read_image("volume.tif", ...)` over loading a full NumPy array on every rank—C++ `TiffReader` and `Hdf5Reader` populate distributed AMReX `iMultiFab` boxes without duplicating a multi-gigabyte Python array per rank.
+:::
 
-```bash
-mpirun -np 16 apptainer exec openimpala-v4.0.0.sif /opt/OpenImpala/build/Diffusion3d inputs
-```
+## Running the C++ Executable via Apptainer & SLURM
 
-## SLURM batch script
+Each GitHub Release provides a self-contained Apptainer image (`openimpala-v4.6.0.sif`) containing `/usr/bin/Diffusion` built with OpenMPI, OpenMP, AMReX, HYPRE, HDF5, and `libtiff`:
 
 ```bash
 #!/bin/bash
 #SBATCH --job-name=openimpala
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=32
+#SBATCH --cpus-per-task=2
 #SBATCH --time=02:00:00
 #SBATCH --partition=compute
 
-module load mpi
+module load openmpi apptainer
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
 
-srun apptainer exec openimpala-v4.0.0.sif \
-    /opt/OpenImpala/build/Diffusion3d inputs
+srun --mpi=pmix apptainer exec -B "${PWD}:/data" openimpala-v4.6.0.sif \
+    /usr/bin/Diffusion /data/inputs
 ```
 
-## Domain decomposition
+## Tuning `max_grid_size`
 
-AMReX decomposes the 3D domain into boxes distributed across MPI ranks. The
-`max_grid_size` parameter controls the maximum box size:
+AMReX subdivides an $(N_z, N_y, N_x)$ domain into cubic patches of at most `max_grid_size` voxels per side (`amr.max_grid_size` in input files, or `max_grid_size=` in Python):
 
-```ini
-amr.max_grid_size = 64
-```
+- **Too large** (e.g. `max_grid_size=512` on a $512^3$ volume with 16 ranks): produces only 1 box, leaving 15 MPI ranks idle.
+- **Too small** (e.g. `max_grid_size=16` on $512^3$): creates $32^3 = 32{,}768$ tiny boxes, inflating halo-exchange latency.
+- **Rule of thumb**: aim for 1–8 boxes per MPI rank (or 1–4 boxes per GPU), using powers of two that divide the domain size cleanly:
 
-- **Smaller values** create more boxes, improving load balance across many ranks
-- **Larger values** reduce inter-rank communication but may cause load imbalance
-- Choose a power of 2 that evenly divides your domain dimensions
-
-## Scaling guidelines
-
-| Domain size | Recommended ranks | max_grid_size |
-|-------------|-------------------|---------------|
-| 128^3 | 1-4 | 64 |
-| 256^3 | 4-16 | 64 |
-| 512^3 | 16-64 | 64 |
-| 1024^3 | 64-256 | 128 |
-
-## Memory estimates
-
-Approximate memory per rank for a tortuosity solve:
-
-- Phase data: ~4 bytes/voxel (int32)
-- Solution field: ~8 bytes/voxel (float64)
-- HYPRE matrix: ~56 bytes/voxel (7-point stencil)
-- **Total: ~70 bytes/voxel**
-
-For a 512^3 domain on 64 ranks: ~140 MB per rank.
+| Domain Size | Typical CPU Ranks | Recommended `max_grid_size` | Approx. Total Memory (`mlmg` / `hypre`) |
+|-------------|-------------------|-----------------------------|-----------------------------------------|
+| $128^3$ | 1–4 | `64` | 0.06 GB / 0.15 GB |
+| $256^3$ | 4–16 | `64` | 0.5 GB / 1.2 GB |
+| $512^3$ | 16–64 | `64` or `128` | 3.8 GB / 9.5 GB |
+| $1024^3$ | 64–256 | `128` | 30 GB / 75 GB |

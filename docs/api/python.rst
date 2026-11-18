@@ -1,11 +1,15 @@
 Python API Reference
 ====================
 
-High-level API
---------------
+High-level NumPy-native interface for computing transport and microstructural
+properties on segmented 3D voxel images. All functions listed below are
+re-exported at the top level of ``openimpala`` (e.g. ``oi.tortuosity(...)``)
+and operate identically across the compiled AMReX/HYPRE C++ backend (CPU and
+CUDA) and the pure-Python SciPy/CuPy solver.
 
-The recommended interface for most users. These functions accept NumPy arrays
-and return Python dataclasses.
+
+Transport & Phase Analysis
+--------------------------
 
 .. autofunction:: openimpala.facade.volume_fraction
 
@@ -13,11 +17,46 @@ and return Python dataclasses.
 
 .. autofunction:: openimpala.facade.tortuosity
 
+.. autofunction:: openimpala.facade.tortuosity_all
+
+.. autofunction:: openimpala.facade.effective_diffusivity
+
+
+Microstructural Characterisation
+--------------------------------
+
+.. autofunction:: openimpala.facade.specific_surface_area
+
+.. autofunction:: openimpala.facade.connected_components
+
+.. autofunction:: openimpala.facade.particle_size_distribution
+
+.. autofunction:: openimpala.facade.through_thickness_profile
+
+.. autofunction:: openimpala.facade.rev_study
+
+
+I/O, Diagnostics & Datasets
+---------------------------
+
 .. autofunction:: openimpala.facade.read_image
 
+.. autofunction:: openimpala.facade.estimate_memory
 
-Result types
-~~~~~~~~~~~~
+.. autofunction:: openimpala.facade.build_info
+
+Sample Datasets (``openimpala.datasets``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: openimpala.datasets
+   :members: two_phase_stack, two_phase_cubic, sphere_pack, fetch_path
+
+
+Result Dataclasses
+------------------
+
+All result objects are frozen Python dataclasses that render structured HTML
+summary tables automatically in Jupyter notebooks and MyST-NB documentation.
 
 .. autoclass:: openimpala.facade.VolumeFractionResult
    :members:
@@ -28,8 +67,26 @@ Result types
 .. autoclass:: openimpala.facade.TortuosityResult
    :members:
 
+.. autoclass:: openimpala.facade.EffectiveDiffusivityResult
+   :members:
 
-Session management
+.. autoclass:: openimpala.facade.SpecificSurfaceAreaResult
+   :members:
+
+.. autoclass:: openimpala.facade.ConnectedComponentsResult
+   :members:
+
+.. autoclass:: openimpala.facade.ParticleSizeDistributionResult
+   :members:
+
+.. autoclass:: openimpala.facade.ThroughThicknessResult
+   :members:
+
+.. autoclass:: openimpala.facade.REVStudyResult
+   :members:
+
+
+Session Management
 ------------------
 
 .. autoclass:: openimpala.Session

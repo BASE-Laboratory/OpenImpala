@@ -51,6 +51,32 @@ jobs:
             echo '   */'
           fi
 
+  pure-python-test:
+    name: Pure-Python Solver & API (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest numpy "scipy>=1.7" tifffile h5py
+
+      - name: Run pure-Python test suite
+        env:
+          PYTHONPATH: ${{ github.workspace }}/python
+        run: pytest python/tests/ -v --tb=short
+
   static-analysis:
     name: Static Analysis (clang-tidy)
     runs-on: ubuntu-latest

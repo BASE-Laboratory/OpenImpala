@@ -4,7 +4,7 @@
   <img width="1729" height="910" alt="Banner" src="https://github.com/user-attachments/assets/8af54b12-c3c2-4c9a-8416-d2eacb626a9d" />
 </p>
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/01_hello_openimpala.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/01_getting_started.ipynb)
 [![PyPI](https://img.shields.io/pypi/v/openimpala)](https://pypi.org/project/openimpala/)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![DOI](https://img.shields.io/badge/DOI-10.1016/j.softx.2021.100729-blue)](https://doi.org/10.1016/j.softx.2021.100729)
@@ -24,7 +24,7 @@ Outputs parameterise continuum-scale models such as
 [PyBaMM](https://github.com/pybamm-team/PyBaMM).
 
 📖 **Documentation:** <https://base-laboratory.github.io/OpenImpala/>
-📓 **Tutorials:** [`tutorials/`](tutorials/) (runnable on Google Colab)
+📓 **Tutorials:** <https://base-laboratory.github.io/OpenImpala/tutorials/index.html>
 
 ## Quick example
 
@@ -33,7 +33,7 @@ import numpy as np
 import openimpala as oi
 
 image = np.zeros((64, 64, 64), dtype=np.int32)
-image[:, :, 16:48] = 1   # solid slab through the middle
+image[16:48, 16:48, 16:48] = 1   # central solid obstacle
 
 with oi.Session():
     vf  = oi.volume_fraction(image, phase=0)
@@ -41,6 +41,18 @@ with oi.Session():
     print(f"Volume fraction: {vf.fraction:.4f}")
     print(f"Tortuosity:      {tau.tortuosity:.4f}")
 ```
+
+## Tutorials
+
+All tutorials are pre-rendered in the [online documentation](https://base-laboratory.github.io/OpenImpala/tutorials/index.html) and runnable on Google Colab:
+
+| # | Tutorial | Launch |
+| :- | :--- | :--- |
+| 01 | [First Transport Solve & Analytical Verification](https://base-laboratory.github.io/OpenImpala/tutorials/01_getting_started.html) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/01_getting_started.ipynb) |
+| 02 | [Microstructural Metrics & Directional Anisotropy](https://base-laboratory.github.io/OpenImpala/tutorials/02_microstructure_and_anisotropy.html) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/02_microstructure_and_anisotropy.ipynb) |
+| 03 | [Periodic Homogenisation & the 3×3 Effective Diffusivity Tensor](https://base-laboratory.github.io/OpenImpala/tutorials/03_homogenisation_tensor.html) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/03_homogenisation_tensor.ipynb) |
+| 04 | [Multi-Phase Transport in Composite Media](https://base-laboratory.github.io/OpenImpala/tutorials/04_multiphase_transport.html) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/04_multiphase_transport.ipynb) |
+| 05 | [Representative Elementary Volume (REV) & Subvolume Uncertainty](https://base-laboratory.github.io/OpenImpala/tutorials/05_rev_and_uncertainty.html) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/05_rev_and_uncertainty.ipynb) |
 
 ## Install
 
@@ -55,7 +67,8 @@ On Linux `x86_64`, `openimpala` installs pre-built AMReX/HYPRE C++ bindings —
 install an MPI runtime (`libopenmpi-dev`, `openmpi`, or
 `conda install -c conda-forge openmpi`) to enable multi-rank C++ execution. On
 macOS, Windows, and ARM64 (or when MPI is absent), `openimpala` automatically
-uses its pure-Python SciPy/CuPy solver with the same API. See
+uses its pure-Python SciPy solver (with optional CuPy acceleration) under the
+same API. See
 [Getting Started](https://base-laboratory.github.io/OpenImpala/getting-started.html)
 for full details.
 
