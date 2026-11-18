@@ -10,6 +10,15 @@ Backtrace*
 # Python
 __pycache__/
 *.pyc
+.venv/
+.pytest_cache/
+
+# Docs
+docs/_build/
+docs/xml/
+docs/doxygen/
+docs/jupyter_execute/
+docs/tutorials/*.ipynb
 
 # CMake
 CMakeCache.txt

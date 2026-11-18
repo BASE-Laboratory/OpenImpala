@@ -51,6 +51,46 @@ jobs:
             echo '   */'
           fi
 
+  pure-python-test:
+    name: Pure-Python Solver & API (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.13"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-cov numpy "scipy>=1.7" tifffile h5py
+
+      - name: Run pure-Python test suite
+        env:
+          PYTHONPATH: ${{ github.workspace }}/python
+        run: |
+          pytest python/tests/ -v --tb=short \
+            --cov=openimpala \
+            --cov-report=xml:coverage-python-pure.xml \
+            --cov-report=term
+
+      - name: Upload pure-Python coverage to Codecov
+        if: matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-python-pure.xml
+          flags: python-pure
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   static-analysis:
     name: Static Analysis (clang-tidy)
     runs-on: ubuntu-latest
@@ -261,8 +301,9 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch'
     permissions:
+      contents: read
       pull-requests: write
 
     steps:
@@ -288,57 +329,76 @@ jobs:
         run: |
           sudo apptainer build --force dependency_image.sif containers/Singularity.deps.def
 
-      - name: Build with coverage and run tests
+      - name: Build with coverage and run C++ + Python tests
         run: |
           sudo apptainer exec \
             --writable-tmpfs \
             --bind $PWD:/src \
             ./dependency_image.sif \
             bash -c '
+              set -euo pipefail
               source /opt/rh/gcc-toolset-11/enable
+              export OMPI_ALLOW_RUN_AS_ROOT=1
+              export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+
+              python3.11 -m pip install pytest-cov tifffile h5py
+
               cd /src
-              rm -rf cmake_build_cov && mkdir cmake_build_cov && cd cmake_build_cov
-              
-              # Changed cmake3 to cmake
+              rm -rf cmake_build_cov /src/python/openimpala/_core*.so
+              mkdir cmake_build_cov && cd cmake_build_cov
+
+              PYBIND11_DIR=$(python3.11 -m pybind11 --cmakedir)
               cmake .. \
                 -DCMAKE_BUILD_TYPE=Debug \
                 -DCMAKE_C_COMPILER=$(which mpicc) \
                 -DCMAKE_CXX_COMPILER=$(which mpicxx) \
+                -DPython_EXECUTABLE=/usr/bin/python3.11 \
+                -Dpybind11_DIR=${PYBIND11_DIR} \
                 -DCMAKE_PREFIX_PATH="/opt/amrex/25.03;/opt/hypre/v2.32.0;/opt/hdf5/1.12.3;/opt/libtiff/4.6.0" \
                 -DBUILD_TESTING=ON \
+                -DOPENIMPALA_PYTHON=ON \
                 -DENABLE_COVERAGE=ON
-              
+
               make -j$(nproc)
-              ctest --output-on-failure --timeout 300 || true
+              ctest --output-on-failure --timeout 300 -LE python
+
+              cd /src
+              PYTHONPATH=/src/python /usr/bin/python3.11 -m pytest python/tests/ \
+                -v --tb=short -p no:cacheprovider \
+                --cov=openimpala \
+                --cov-report=xml:/src/coverage-python-bindings.xml \
+                --cov-report=term
             '
 
-      - name: Generate coverage report
+      - name: Generate C++ coverage report
         run: |
           sudo apptainer exec \
             --writable-tmpfs \
             --bind $PWD:/src \
             ./dependency_image.sif \
             bash -c '
+              set -euo pipefail
               source /opt/rh/gcc-toolset-11/enable
-              
-              # Dropped the dnf install and used native python3.11 pip!
               python3.11 -m pip install gcovr
-              
+
               cd /src
               gcovr --root . \
                 --filter "src/" \
+                --filter "python/bindings/" \
                 --print-summary \
                 --gcov-ignore-parse-errors=suspicious_hits.warn_once_per_file \
                 --xml coverage.xml \
                 --txt coverage.txt \
                 cmake_build_cov/
+
+              rm -f /src/python/openimpala/_core*.so
             '
 
       - name: Generate summary
         if: always()
         run: |
           if [ -f coverage.txt ]; then
-            echo "## Code Coverage Report" >> $GITHUB_STEP_SUMMARY
+            echo "## Code Coverage Report (C++ Engine & Bindings)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             cat coverage.txt >> $GITHUB_STEP_SUMMARY
@@ -353,14 +413,26 @@ jobs:
           path: |
             coverage.xml
             coverage.txt
+            coverage-python-bindings.xml
           retention-days: 30
           if-no-files-found: warn
 
-      - name: Upload to Codecov
+      - name: Upload C++ coverage to Codecov
         if: always()
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
+          flags: cpp
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload Python (_core) coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-python-bindings.xml
+          flags: python-bindings
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -388,7 +460,7 @@ jobs:
               '```',
               '',
               '---',
-              '*Generated by CI — coverage data from [gcovr](https://gcovr.com/)*',
+              '*Generated by CI — C++ & bindings coverage from [gcovr](https://gcovr.com/), Python coverage uploaded to [Codecov](https://codecov.io/gh/BASE-Laboratory/OpenImpala)*',
             ].join('\n');
 
             const { data: comments } = await github.rest.issues.listComments({

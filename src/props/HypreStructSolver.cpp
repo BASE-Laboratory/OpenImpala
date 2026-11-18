@@ -3,6 +3,7 @@
 #include "HypreStructSolver.H"
 #include "HypreCheck.H"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -240,8 +241,9 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
             HYPRE_CHECK(ierr);
             HYPRE_StructPFMGSetTol(precond, 0.0);
             HYPRE_StructPFMGSetMaxIter(precond, 1);
-            HYPRE_StructPFMGSetNumPreRelax(precond, 1);
-            HYPRE_StructPFMGSetNumPostRelax(precond, 1);
+            HYPRE_StructPFMGSetNumPreRelax(precond, 2);
+            HYPRE_StructPFMGSetNumPostRelax(precond, 2);
+            HYPRE_StructPFMGSetSkipRelax(precond, 0);
             HYPRE_StructPFMGSetPrintLevel(precond, (m_verbose > 3) ? 1 : 0);
         } else {
             ierr = HYPRE_StructSMGCreate(amrex::ParallelDescriptor::Communicator(), &precond);
@@ -274,6 +276,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
     };
 
     const char* precond_name = (precond_type == PrecondType::PFMG) ? "PFMG" : "SMG";
+    const int k_dim = std::max(1, std::min(m_maxiter, 40));
 
     if (m_solvertype == SolverType::FlexGMRES) {
         if (m_verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
@@ -284,6 +287,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         HYPRE_CHECK(ierr);
         HYPRE_StructFlexGMRESSetTol(solver, m_eps);
         HYPRE_StructFlexGMRESSetMaxIter(solver, m_maxiter);
+        HYPRE_StructFlexGMRESSetKDim(solver, k_dim);
         HYPRE_StructFlexGMRESSetPrintLevel(solver, m_verbose > 1 ? 3 : 0);
 
         createPrecond();
@@ -377,6 +381,7 @@ bool HypreStructSolver::runSolver(PrecondType precond_type) {
         HYPRE_CHECK(ierr);
         HYPRE_StructGMRESSetTol(solver, m_eps);
         HYPRE_StructGMRESSetMaxIter(solver, m_maxiter);
+        HYPRE_StructGMRESSetKDim(solver, k_dim);
         HYPRE_StructGMRESSetPrintLevel(solver, m_verbose > 1 ? 3 : 0);
 
         createPrecond();

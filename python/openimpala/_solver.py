@@ -42,6 +42,7 @@ except Exception:
 
 import scipy.ndimage as ndimage
 import scipy.sparse as sp
+from scipy.sparse import csgraph as sp_csgraph
 import scipy.sparse.linalg as sp_linalg
 
 
@@ -458,13 +459,17 @@ def solve_tortuosity(
 # Periodic homogenization 3x3 D_eff tensor solver
 # ---------------------------------------------------------------------------
 
-def _build_cell_problem_system(
+def _build_cell_problem_operator(
     active_mask: np.ndarray,
     diff_coeff: np.ndarray,
-    dir_k_xyz: int,
     voxel_size: tuple[float, float, float],
-) -> tuple[sp.csr_matrix, np.ndarray]:
-    """Assemble the periodic cell-problem matrix matching EffDiffFillMtx.H + EffectiveDiffusivityHypre."""
+) -> tuple[sp.csr_matrix, list[np.ndarray], np.ndarray]:
+    """Assemble the SPD conservative finite-volume periodic cell-problem matrix.
+
+    Solves ``-div(D (e_k + grad chi_k)) = 0`` on the periodic 3-torus with
+    harmonic-mean face conductances ``D_{i+1/2}`` between active neighbours and
+    zero-flux insulating faces wherever either side has ``D == 0``.
+    """
     shape = active_mask.shape  # (Nz, Ny, Nx)
     N = int(np.prod(shape))
     idx_grid = np.arange(N, dtype=np.int64).reshape(shape)
@@ -475,99 +480,87 @@ def _build_cell_problem_system(
 
     d_max = float(np.max(diff_coeff)) if N > 0 else 1.0
     d_scale = d_max if d_max > 0.0 else 1.0
-    inv_h2_max = max(1.0 / (h * h) for h in voxel_size)
-    pin_scale = d_scale * inv_h2_max
+    inv_h2_sum = sum(1.0 / (h * h) for h in voxel_size)
+    pin_scale = d_scale * inv_h2_sum
 
-    rows = [inactive_idx]
-    cols = [inactive_idx]
-    vals = [np.full(len(inactive_idx), pin_scale, dtype=np.float64)]
-    rhs = np.zeros(N, dtype=np.float64)
+    # Precompute +d face harmonic diffusivities D_{i+1/2}^{(d)} for d_xyz = 0(X), 1(Y), 2(Z)
+    d_face_plus: list[np.ndarray] = []
+    for d_xyz in range(3):
+        ax = 2 - d_xyz
+        d_nbr = np.roll(diff_coeff, -1, axis=ax)
+        both = is_active_3d & np.roll(is_active_3d, -1, axis=ax)
+        denom = np.where(both, diff_coeff + d_nbr, 1.0)
+        d_face_plus.append(np.where(both, 2.0 * diff_coeff * d_nbr / denom, 0.0))
+
+    pin_indices = np.empty(0, dtype=np.int64)
 
     if len(active_idx) > 0:
-        D_c = diff_coeff[is_active_3d]
-        diag = np.zeros(len(active_idx), dtype=np.float64)
-        flux_bc_rhs = np.zeros(len(active_idx), dtype=np.float64)
+        off_rows_list: list[np.ndarray] = []
+        off_cols_list: list[np.ndarray] = []
+        off_vals_list: list[np.ndarray] = []
+        diag = np.zeros(N, dtype=np.float64)
 
-        # Spatial directions d_xyz = 0(X -> axis 2), 1(Y -> axis 1), 2(Z -> axis 0)
         for d_xyz in range(3):
             ax = 2 - d_xyz
-            h = voxel_size[ax]
-            inv_h2 = 1.0 / (h * h)
+            inv_h2 = 1.0 / (voxel_size[ax] * voxel_size[ax])
+            dp = d_face_plus[d_xyz]
+            dm = np.roll(dp, 1, axis=ax)
+            p_idx = np.roll(idx_grid, -1, axis=ax)
+            m_idx = np.roll(idx_grid, 1, axis=ax)
 
-            # -d face (index - 1 along ax -> np.roll +1)
-            m_nbr_idx = np.roll(idx_grid, 1, axis=ax)[is_active_3d]
-            m_nbr_active = np.roll(is_active_3d, 1, axis=ax)[is_active_3d]
-            m_D_nbr = np.roll(diff_coeff, 1, axis=ax)[is_active_3d]
+            has_p = dp > 0.0
+            if np.any(has_p):
+                off_rows_list.append(idx_grid[has_p])
+                off_cols_list.append(p_idx[has_p])
+                off_vals_list.append(-dp[has_p] * inv_h2)
 
-            if np.any(m_nbr_active):
-                dc_m = D_c[m_nbr_active]
-                dn_m = m_D_nbr[m_nbr_active]
-                denom_m = dc_m + dn_m
-                d_face_m = np.where(denom_m > 0.0, 2.0 * dc_m * dn_m / denom_m, 0.0)
-                c_m = -d_face_m * inv_h2
-                rows.append(active_idx[m_nbr_active])
-                cols.append(m_nbr_idx[m_nbr_active])
-                vals.append(c_m)
-                diag[m_nbr_active] -= c_m
+            has_m = dm > 0.0
+            if np.any(has_m):
+                off_rows_list.append(idx_grid[has_m])
+                off_cols_list.append(m_idx[has_m])
+                off_vals_list.append(-dm[has_m] * inv_h2)
 
-            m_inact = ~m_nbr_active
-            if np.any(m_inact):
-                diag[m_inact] += D_c[m_inact] * inv_h2
-                if dir_k_xyz == d_xyz:
-                    flux_bc_rhs[m_inact] += D_c[m_inact] / h
+            diag += ((dp + dm) * inv_h2).ravel()
 
-            # +d face (index + 1 along ax -> np.roll -1)
-            p_nbr_idx = np.roll(idx_grid, -1, axis=ax)[is_active_3d]
-            p_nbr_active = np.roll(is_active_3d, -1, axis=ax)[is_active_3d]
-            p_D_nbr = np.roll(diff_coeff, -1, axis=ax)[is_active_3d]
+        if len(off_rows_list) > 0:
+            off_r = np.concatenate(off_rows_list)
+            off_c = np.concatenate(off_cols_list)
+            off_v = np.concatenate(off_vals_list)
 
-            if np.any(p_nbr_active):
-                dc_p = D_c[p_nbr_active]
-                dn_p = p_D_nbr[p_nbr_active]
-                denom_p = dc_p + dn_p
-                d_face_p = np.where(denom_p > 0.0, 2.0 * dc_p * dn_p / denom_p, 0.0)
-                c_p = -d_face_p * inv_h2
-                rows.append(active_idx[p_nbr_active])
-                cols.append(p_nbr_idx[p_nbr_active])
-                vals.append(c_p)
-                diag[p_nbr_active] -= c_p
+            # Symmetrically pin the first active cell of EVERY periodic connected
+            # component to chi = 0 so every component is strictly SPD with zero
+            # artificial diagonal perturbation.
+            adj = sp.coo_matrix(
+                (np.ones(len(off_r), dtype=np.int8), (off_r, off_c)), shape=(N, N)
+            )
+            _, comp_labels = sp_csgraph.connected_components(adj, directed=False)
+            _, first_pos = np.unique(comp_labels[active_idx], return_index=True)
+            pin_indices = active_idx[first_pos]
 
-            p_inact = ~p_nbr_active
-            if np.any(p_inact):
-                diag[p_inact] += D_c[p_inact] * inv_h2
-                if dir_k_xyz == d_xyz:
-                    flux_bc_rhs[p_inact] -= D_c[p_inact] / h
+            is_pinned = np.zeros(N, dtype=bool)
+            is_pinned[pin_indices] = True
+            keep = (~is_pinned[off_r]) & (~is_pinned[off_c])
 
-        ax_k = 2 - dir_k_xyz
-        h_k = voxel_size[ax_k]
-        rhs_div_De = -(
-            np.roll(diff_coeff, -1, axis=ax_k)[is_active_3d]
-            - np.roll(diff_coeff, 1, axis=ax_k)[is_active_3d]
-        ) / (2.0 * h_k)
-        rhs[active_idx] = rhs_div_De + flux_bc_rhs
+            diag_vals = diag.copy()
+            diag_vals[inactive_idx] = pin_scale
+            diag_vals[pin_indices] = pin_scale
 
-        rows.append(active_idx)
-        cols.append(active_idx)
-        vals.append(diag)
-
-        all_rows = np.concatenate(rows)
-        all_cols = np.concatenate(cols)
-        all_vals = np.concatenate(vals)
-
-        # Pin the first active cell (matching EffectiveDiffusivityHypre.cpp) to remove constant nullspace
-        pin_idx = int(active_idx[0])
-        keep = all_rows != pin_idx
-        all_rows = np.append(all_rows[keep], pin_idx)
-        all_cols = np.append(all_cols[keep], pin_idx)
-        all_vals = np.append(all_vals[keep], pin_scale)
-        rhs[pin_idx] = 0.0
+            all_rows = np.concatenate([np.arange(N, dtype=np.int64), off_r[keep]])
+            all_cols = np.concatenate([np.arange(N, dtype=np.int64), off_c[keep]])
+            all_vals = np.concatenate([diag_vals, off_v[keep]])
+        else:
+            # All active cells are isolated singletons with no conducting faces
+            pin_indices = active_idx
+            all_rows = np.arange(N, dtype=np.int64)
+            all_cols = np.arange(N, dtype=np.int64)
+            all_vals = np.full(N, pin_scale, dtype=np.float64)
     else:
-        all_rows = np.concatenate(rows)
-        all_cols = np.concatenate(cols)
-        all_vals = np.concatenate(vals)
+        all_rows = inactive_idx
+        all_cols = inactive_idx
+        all_vals = np.full(len(inactive_idx), pin_scale, dtype=np.float64)
 
     A = sp.coo_matrix((all_vals, (all_rows, all_cols)), shape=(N, N)).tocsr()
-    return A, rhs
+    return A, d_face_plus, pin_indices
 
 
 def solve_effective_diffusivity(
@@ -614,13 +607,22 @@ def solve_effective_diffusivity(
             out["chi"] = {"x": zeros.copy(), "y": zeros.copy(), "z": zeros.copy()}
         return out
 
+    A_sp, d_face_plus, pin_indices = _build_cell_problem_operator(active_mask, diff_coeff, vz)
+
     chi_fields: list[np.ndarray] = []
     dir_iters: list[int] = []
     dir_res: list[float] = []
     all_converged = True
+    x0_zero = np.zeros(N, dtype=np.float64)
 
     for dir_k_xyz in range(3):
-        A_sp, rhs = _build_cell_problem_system(active_mask, diff_coeff, dir_k_xyz, vz)
+        ax_k = 2 - dir_k_xyz
+        dp_k = d_face_plus[dir_k_xyz]
+        dm_k = np.roll(dp_k, 1, axis=ax_k)
+        rhs = ((dp_k - dm_k) / vz[ax_k]).ravel()
+        if len(pin_indices) > 0:
+            rhs[pin_indices] = 0.0
+
         rhs_norm = float(np.linalg.norm(rhs))
         if rhs_norm == 0.0:
             chi_fields.append(np.zeros(shape, dtype=np.float64))
@@ -628,57 +630,26 @@ def solve_effective_diffusivity(
             dir_res.append(0.0)
             continue
 
-        diag = A_sp.diagonal()
-        inv_diag = np.where(np.abs(diag) > 0.0, 1.0 / diag, 1.0)
-        M = sp.diags(inv_diag)
-
-        iters = [0]
-
-        def _cb(_xk):
-            iters[0] += 1
-
-        try:
-            sol, info = sp_linalg.bicgstab(
-                A_sp, rhs, M=M, rtol=tol, atol=0.0, maxiter=maxiter, callback=_cb
-            )
-        except TypeError:
-            sol, info = sp_linalg.bicgstab(
-                A_sp, rhs, M=M, tol=tol, maxiter=maxiter, callback=_cb
-            )
-
-        if info != 0:
-            iters[0] = 0
-            try:
-                sol, info = sp_linalg.gmres(
-                    A_sp, rhs, M=M, rtol=tol, atol=0.0, maxiter=maxiter, callback=_cb,
-                    callback_type="legacy",
-                )
-            except TypeError:
-                sol, info = sp_linalg.gmres(
-                    A_sp, rhs, M=M, tol=tol, maxiter=maxiter, callback=_cb
-                )
-
-        res_norm = float(np.linalg.norm(rhs - A_sp @ sol) / max(rhs_norm, 1e-300))
-        conv = info == 0 or res_norm <= tol * 10.0
+        sol, conv, iters, res_norm = _solve_spd_cg(
+            A_sp, rhs, x0_zero, tol=tol, maxiter=maxiter
+        )
+        conv = conv or res_norm <= tol * 10.0
         all_converged = all_converged and conv
         chi_fields.append(sol.reshape(shape))
-        dir_iters.append(iters[0])
+        dir_iters.append(iters)
         dir_res.append(res_norm)
 
     tensor = np.full((3, 3), np.nan, dtype=np.float64)
     if all_converged and N > 0:
-        is_act = active_mask == 1
-        D_act = diff_coeff[is_act]
         for r in range(3):
             ax_r = 2 - r
             h_r = vz[ax_r]
+            dp_r = d_face_plus[r]
             for c in range(3):
                 chi_c = chi_fields[c]
-                dchi_dxr = (np.roll(chi_c, -1, axis=ax_r) - np.roll(chi_c, 1, axis=ax_r)) / (
-                    2.0 * h_r
-                )
+                dchi_face = (np.roll(chi_c, -1, axis=ax_r) - chi_c) / h_r
                 delta_rc = 1.0 if r == c else 0.0
-                tensor[r, c] = float(np.sum(D_act * (delta_rc + dchi_dxr[is_act]))) / float(N)
+                tensor[r, c] = float(np.sum(dp_r * (delta_rc + dchi_face))) / float(N)
 
     out = {
         "tensor": tensor,

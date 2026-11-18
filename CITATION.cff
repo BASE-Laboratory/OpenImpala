@@ -1,0 +1,57 @@
+cff-version: 1.2.0
+title: "OpenImpala: Scalable Transport Property Computation on 3D Voxel Images of Porous Media"
+message: "If you use OpenImpala in published work, please cite the software and associated publications below."
+type: software
+authors:
+  - family-names: "Le Houx"
+    given-names: "James"
+    orcid: "https://orcid.org/0000-0002-1576-0673"
+    affiliation: "University of Greenwich"
+    email: "james.le-houx@gre.ac.uk"
+repository-code: "https://github.com/BASE-Laboratory/OpenImpala"
+url: "https://base-laboratory.github.io/OpenImpala/"
+license: BSD-3-Clause
+keywords:
+  - porous media
+  - tortuosity
+  - effective diffusivity
+  - homogenisation
+  - tomography
+  - battery modelling
+  - AMReX
+  - high-performance computing
+preferred-citation:
+  type: article
+  title: "OpenImpala: OPEN source IMage based PArallisable Linear Algebra solver"
+  authors:
+    - family-names: "Le Houx"
+      given-names: "James"
+      orcid: "https://orcid.org/0000-0002-1576-0673"
+    - family-names: "Kramer"
+      given-names: "Denis"
+  journal: "SoftwareX"
+  volume: 15
+  start: 100729
+  year: 2021
+  doi: "10.1016/j.softx.2021.100729"
+references:
+  - type: article
+    title: "Statistical Effective Diffusivity Estimation in Porous Media Using an Integrated On-site Imaging Workflow for Synchrotron Users"
+    authors:
+      - family-names: "Le Houx"
+        given-names: "James"
+      - family-names: "Ruiz"
+        given-names: "Siul"
+      - family-names: "McKay Fletcher"
+        given-names: "Daniel"
+      - family-names: "Ahmed"
+        given-names: "Sharif"
+      - family-names: "Roose"
+        given-names: "Tiina"
+    journal: "Transport in Porous Media"
+    volume: 150
+    issue: 1
+    start: 71
+    end: 88
+    year: 2023
+    doi: "10.1007/s11242-023-01993-7"

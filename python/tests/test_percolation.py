@@ -3,13 +3,17 @@
 import numpy as np
 import pytest
 
-from openimpala import _core
+try:
+    from openimpala import _core
+except ImportError:
+    _core = None
 
 
 def _make_img(data: np.ndarray, max_grid_size: int = 32):
     return _core.VoxelImage.from_numpy(np.ascontiguousarray(data, dtype=np.int32), max_grid_size)
 
 
+@pytest.mark.skipif(_core is None, reason="Requires compiled _core extension")
 class TestPercolationCheckCore:
 
     def test_connected_channel_percolates(self, connected_channel):

@@ -32,6 +32,7 @@ class Session:
 
     _depth: int = 0  # nesting counter (class-level)
     _pure_python: bool = False  # True when _core is unavailable
+    _auto_session: "Session | None" = None
 
     def __enter__(self) -> "Session":
         if Session._depth == 0:
@@ -44,6 +45,23 @@ class Session:
         if Session._depth == 0:
             self._do_finalize()
         return None  # do not suppress exceptions
+
+    @classmethod
+    def ensure_active(cls) -> None:
+        """Lazily start a process-level session if not already inside ``with Session():``."""
+        if cls._depth == 0:
+            import atexit
+
+            cls._auto_session = cls()
+            cls._auto_session.__enter__()
+            atexit.register(cls._cleanup_auto)
+
+    @classmethod
+    def _cleanup_auto(cls) -> None:
+        if cls._auto_session is not None and cls._depth > 0:
+            sess = cls._auto_session
+            cls._auto_session = None
+            sess.__exit__(None, None, None)
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -79,11 +97,14 @@ class Session:
                     "the C++ backend."
                 )
 
+            import logging
+
             from . import _solver
-            backend = _solver.backend_name()
-            import sys
-            print(f"OpenImpala: using pure-Python solver backend ({backend})",
-                  file=sys.stderr)
+
+            logging.getLogger(__name__).debug(
+                "OpenImpala: using pure-Python solver backend (%s)",
+                _solver.backend_name(),
+            )
 
     @staticmethod
     def _do_finalize() -> None:

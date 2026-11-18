@@ -1,79 +1,67 @@
-# Input Files
+# C++ Input Files
 
-When running OpenImpala from the command line (C++ executable), configuration
-is specified via AMReX `ParmParse` text files. The file is passed as the first
-argument:
+When running the standalone C++ driver (`Diffusion`, installed at `/usr/bin/Diffusion` inside the release container or `build/Diffusion` when built from source), simulation parameters are supplied via an AMReX `ParmParse` configuration file:
 
 ```bash
-./Diffusion3d inputs
+/usr/bin/Diffusion inputs
 ```
 
-## Example input file
+Any parameter can also be overridden on the command line after the filename:
+
+```bash
+/usr/bin/Diffusion inputs tortuosity.direction=2 amr.max_grid_size=128
+```
+
+## Example `inputs` File
 
 ```ini
 # --- Image Input ---
-image.filename    = microstructure.tiff
-image.threshold   = 128
+image.filename      = microstructure.tif
+image.threshold     = 128
 
-# --- Solver Configuration ---
-tortuosity.direction      = 2          # 0=X, 1=Y, 2=Z
-tortuosity.phase_id       = 0          # Phase to solve for
-tortuosity.solver_type    = PCG        # PCG, FlexGMRES, GMRES, BiCGSTAB, SMG, PFMG
+# --- Transport Solver Configuration ---
+tortuosity.direction       = 2          # 0 = X, 1 = Y, 2 = Z
+tortuosity.phase_id        = 1          # Conducting phase label
+tortuosity.solver_type     = PCG        # PCG, FlexGMRES, GMRES, BiCGSTAB, SMG, PFMG
 
-# --- HYPRE Solver Parameters ---
-hypre.eps      = 1.0e-9                # Convergence tolerance
-hypre.maxiter  = 200                   # Maximum iterations
+# --- HYPRE Convergence Controls ---
+hypre.eps           = 1.0e-9
+hypre.maxiter       = 500
 
-# --- AMReX Grid Configuration ---
-amr.max_grid_size = 64                 # Box decomposition size
+# --- AMReX Domain Decomposition ---
+amr.max_grid_size   = 64
 
 # --- Output ---
-results.path = ./results               # Output directory
-tortuosity.write_plotfile = false       # Write AMReX plotfile of solution
-tortuosity.verbose = 1                 # 0=silent, 1=basic, 2+=detailed
+results.path              = ./results
+tortuosity.write_plotfile = false       # Write AMReX plotfile directory (plt_*)
+tortuosity.verbose        = 1           # 0 = silent, 1 = summary, 2 = detailed
 ```
 
-## Key parameters
+## Multi-Phase Transport Parameters
 
-### Image input
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `image.filename` | string | Path to 3D image (TIFF, HDF5, RAW, DAT) |
-| `image.threshold` | float | Binarisation threshold value |
-| `image.hdf5_dataset` | string | HDF5 dataset path (default: `/data`) |
-
-### Solver
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `tortuosity.direction` | int | 0 | Flow direction: 0=X, 1=Y, 2=Z |
-| `tortuosity.phase_id` | int | 0 | Phase ID of the conducting phase |
-| `tortuosity.solver_type` | string | PCG | HYPRE solver algorithm |
-| `tortuosity.vlo` | float | 0.0 | Dirichlet BC at inlet |
-| `tortuosity.vhi` | float | 1.0 | Dirichlet BC at outlet |
-
-### Multi-phase transport
+To solve composite conduction across multiple conducting phases, specify matching lists of phase IDs and diffusivities:
 
 ```ini
-tortuosity.active_phases      = 0 2       # Phase IDs with non-zero D
-tortuosity.phase_diffusivities = 1.0 0.5  # Corresponding D values
+tortuosity.active_phases       = 1 2
+tortuosity.phase_diffusivities = 1.0 0.15
 ```
 
-### Grid decomposition
+All unlisted phase IDs are treated as insulating ($D = 0$).
+
+## Key Parameter Reference
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `amr.max_grid_size` | int | 32 | Maximum box size for domain decomposition |
-
-Smaller values create more boxes (better MPI load balance); larger values
-reduce communication overhead. Powers of 2 that divide the domain dimensions
-evenly are recommended.
-
-## Output files
-
-| File | Description |
-|------|-------------|
-| `results.json` | Structured JSON with all computed properties |
-| `results.txt` | Human-readable summary |
-| `plt_*/` | AMReX plotfile (if `write_plotfile = true`) |
+| `image.filename` | string | — | Input volume path (`.tif`, `.tiff`, `.h5`, `.hdf5`, `.raw`, `.dat`) |
+| `image.threshold` | float | — | Optional grayscale binarisation threshold (`pixel > threshold` $\to 1$) |
+| `image.hdf5_dataset` | string | `/data` | Internal dataset path for HDF5 inputs |
+| `tortuosity.direction` | int | `0` | Transport direction (`0` = X, `1` = Y, `2` = Z) |
+| `tortuosity.phase_id` | int | `0` | Conducting phase ID (single-phase mode) |
+| `tortuosity.solver_type` | string | `PCG` | Linear solver (`PCG`, `FlexGMRES`, `GMRES`, `BiCGSTAB`, `SMG`, `PFMG`) |
+| `tortuosity.vlo` | float | `0.0` | Inlet face Dirichlet potential |
+| `tortuosity.vhi` | float | `1.0` | Outlet face Dirichlet potential |
+| `hypre.eps` | float | `1e-9` | Relative residual convergence tolerance |
+| `hypre.maxiter` | int | `200` | Maximum solver iterations |
+| `amr.max_grid_size` | int | `32` | Maximum AMReX patch edge length |
+| `results.path` | string | `.` | Output directory for JSON/text summaries and plotfiles |
+| `tortuosity.write_plotfile` | bool | `false` | Write distributed AMReX plotfile for `yt` / ParaView / VisIt |

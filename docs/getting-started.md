@@ -2,133 +2,106 @@
 
 ## Installation
 
-### Python (recommended)
+::::{tab-set}
 
-OpenImpala is available on PyPI — no compilation required.
-
+:::{tab-item} Linux (CPU + MPI)
 ```bash
 pip install openimpala
 ```
-
-**GPU acceleration** is automatic. If you have an NVIDIA GPU and
-[CuPy](https://cupy.dev/) installed, OpenImpala detects it at runtime and
-offloads compute kernels to the GPU. No separate package is needed:
-
+On Linux `x86_64`, `openimpala` installs pre-built C++ bindings powered by AMReX and HYPRE. For multi-rank MPI execution from Python, also install an OpenMPI runtime and `mpi4py`:
 ```bash
-# Optional: install CuPy for automatic GPU acceleration
-pip install cupy-cuda12x   # match your CUDA toolkit version
+pip install mpi4py
 ```
+:::
 
-If CuPy is not available, OpenImpala falls back to SciPy on the CPU.
-
-**Requirements:** Python 3.8+ and NumPy. Optional: `mpi4py` for MPI parallelism.
-
-#### Advanced / HPC: compiled HYPRE backend
-
-For HPC clusters that need the compiled C++ HYPRE solvers, a separate package
-is available:
-
+:::{tab-item} Linux (CUDA 12 GPU)
 ```bash
 pip install openimpala-cuda
 ```
+`openimpala-cuda` is a drop-in replacement compiled with native CUDA 12 support for AMReX and HYPRE structured solvers (`sm_75` Turing or newer; pre-installed CUDA drivers on Google Colab and GPU cluster nodes work out of the box). Do not install `openimpala` and `openimpala-cuda` in the same virtual environment; both provide the `openimpala` import namespace.
+:::
 
-This package bundles AMReX + HYPRE compiled with CUDA and is a drop-in
-replacement for the pure-Python `openimpala` package. It requires a working
-NVIDIA CUDA 12 runtime (driver + toolkit) on the host, which is already
-present on Colab, Kaggle, and most GPU cluster nodes.
-
-### Container (HPC)
-
-For HPC clusters, download the pre-built Apptainer/Singularity container from
-[GitHub Releases](https://github.com/BASE-Laboratory/OpenImpala/releases):
-
+:::{tab-item} macOS & Windows
 ```bash
-# Download the latest .sif file (replace vX.Y.Z with the release tag)
-wget https://github.com/BASE-Laboratory/OpenImpala/releases/download/vX.Y.Z/openimpala-vX.Y.Z.sif
-
-# Run interactively
-apptainer shell openimpala-vX.Y.Z.sif
-
-# Run a simulation
-apptainer exec openimpala-vX.Y.Z.sif /opt/OpenImpala/build/Diffusion3d inputs
+pip install openimpala
 ```
+On macOS (Apple Silicon and Intel), Windows, and Linux ARM64, `openimpala` installs a universal pure-Python wheel backed by NumPy and SciPy (with optional CuPy GPU acceleration if installed). Every function in the Python API accepts the same arguments and returns the same result dataclasses.
+:::
 
-### From source (developers)
-
+:::{tab-item} HPC Container (Apptainer)
+Pre-built Apptainer (`.sif`) images are attached to each [GitHub Release](https://github.com/BASE-Laboratory/OpenImpala/releases):
 ```bash
-git clone https://github.com/BASE-Laboratory/OpenImpala.git
-cd OpenImpala
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release \
-         -DCMAKE_CXX_COMPILER=$(which mpicxx)
-make -j$(nproc)
-ctest --output-on-failure
+wget https://github.com/BASE-Laboratory/OpenImpala/releases/download/v4.6.0/openimpala-v4.6.0.sif
+
+apptainer exec -B "$(pwd):/data" openimpala-v4.6.0.sif \
+    /usr/bin/Diffusion /data/inputs
 ```
+:::
 
-Dependencies: AMReX, HYPRE, HDF5, LibTIFF. See the
-[README](https://github.com/BASE-Laboratory/OpenImpala#native-installation-advanced)
-for full details.
+:::{tab-item} From Source
+See {doc}`contributing` for containerised and native CMake builds against AMReX, HYPRE, HDF5, and `libtiff`.
+:::
 
-## Your first simulation
+::::
 
-```python
-import numpy as np
-import openimpala as oi
-
-# Create a simple porous medium (random 50/50 mix)
-data = np.random.choice([0, 1], size=(64, 64, 64), dtype=np.int32)
-
-with oi.Session():
-    # Volume fraction
-    vf = oi.volume_fraction(data, phase=1)
-    print(f"Volume fraction: {vf.fraction:.4f}")
-
-    # Percolation check
-    perc = oi.percolation_check(data, phase=1, direction="z")
-    print(f"Percolates: {perc.percolates}")
-
-    # Tortuosity (only if phase percolates)
-    if perc.percolates:
-        result = oi.tortuosity(data, phase=1, direction="z")
-        print(f"Tortuosity: {result.tortuosity:.4f}")
-```
-
-All computation happens inside the `oi.Session()` context manager, which
-manages the AMReX and MPI lifecycle.
-
-## Working with real images
-
-OpenImpala reads TIFF stacks, HDF5, and raw binary files:
+Verify which backend is active at runtime with `oi.build_info()`:
 
 ```python
 import openimpala as oi
 
-with oi.Session():
-    reader, img = oi.read_image("sample.tiff", threshold=128)
-    result = oi.tortuosity(img, phase=1, direction="z")
+print(oi.build_info())
 ```
 
-## Memory-safe workflows
+## Five-Line Quickstart
 
-For large datasets, free the Python array before solving:
+OpenImpala ships sample segmented 3D datasets in `openimpala.datasets` so you can verify your installation immediately:
 
 ```python
-import gc
-import numpy as np
 import openimpala as oi
 
-with oi.Session():
-    arr = np.load("large_volume.npy")
-    dataset = oi.core.VoxelImage.from_numpy(arr)
+vol = oi.datasets.two_phase_cubic()  # (64, 64, 64) int32 array, (Nz, Ny, Nx)
+vf = oi.volume_fraction(vol, phase=1)
+perc = oi.percolation_check(vol, phase=1, direction="z")
+res = oi.tortuosity(vol, phase=1, direction="z", voxel_size=0.5e-6)
 
-    del arr
-    gc.collect()  # Free Python memory
-
-    result = oi.tortuosity(dataset, phase=1, direction="z")
+print(f"eps = {vf.fraction:.4f}, tau_z = {res.tortuosity:.4f}, D_eff/D0 = {res.effective_diffusivity:.4f}")
 ```
 
-## Next steps
+:::{note}
+**Session Lifecycle (`oi.Session`)**
+In interactive Python sessions and Jupyter notebooks, OpenImpala automatically starts a process-level session on the first API call and cleans up at interpreter exit. In multi-rank `mpirun` batch scripts, wrap your workflow in `with oi.Session():` so `AMReX::Finalize()` executes deterministically before `MPI_Finalize()`.
+:::
 
-- {doc}`user-guide/concepts` — Understand tortuosity, effective diffusivity, and the mathematics
-- {doc}`user-guide/solvers` — Choose the right solver for your problem
-- {doc}`tutorials/index` — Interactive Colab notebooks
+## Reading 3D Image Files
+
+`oi.read_image()` reads 3D `.tif`/`.tiff` stacks, `.h5`/`.hdf5` datasets, `.raw` binary volumes, `.npy` arrays, and `.dat` grids—or you can pass a file path directly to any analysis function:
+
+```python
+import openimpala as oi
+
+tiff_path = oi.datasets.fetch_path("SampleData_2Phase_squared.tif")
+
+# Option 1: explicit reader handle (reusable across multiple analyses)
+_, img = oi.read_image(tiff_path, voxel_size=(0.5e-6, 0.5e-6, 0.5e-6))
+taus = oi.tortuosity_all(img, phase=1)
+
+# Option 2: pass path directly
+ssa = oi.specific_surface_area(tiff_path, phase_a=0, phase_b=1, voxel_size=0.5e-6)
+```
+
+For grayscale reconstructions, pass `threshold=128` to binarise (`pixel > threshold` maps to `1`, otherwise `0`).
+
+## Estimating Memory Before Large Runs
+
+Before solving on large tomograms ($512^3$ and above), check peak host/device memory requirements with `oi.estimate_memory()`:
+
+```python
+est = oi.estimate_memory((512, 512, 512), solver="mlmg", mpi_ranks=4)
+print(f"Estimated per-rank peak: {est['per_rank_gb']:.2f} GB")
+```
+
+## Next Steps
+
+- {doc}`tutorials/index` — Work through the five executed tutorial notebooks
+- {doc}`user-guide/concepts` — Finite-volume discretisation, boundary conditions, and homogenisation theory
+- {doc}`user-guide/solvers` — Choosing between AMReX MLMG and HYPRE Krylov/multigrid solvers

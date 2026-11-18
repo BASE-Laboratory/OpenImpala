@@ -39,7 +39,7 @@ your local builds will behave identically to the CI build.
 git clone https://github.com/BASE-Laboratory/OpenImpala.git
 cd OpenImpala
 # Build the container (one-off, ~20 min)
-sudo apptainer build dependency_image.sif containers/dependency.def
+sudo apptainer build dependency_image.sif containers/Singularity.deps.def
 # Configure and build
 apptainer exec --bind "$(pwd):/src" dependency_image.sif \
     bash -c "cd /src && mkdir -p build && cd build && cmake .. && make -j"
@@ -74,10 +74,8 @@ that fail either check.
 * **C++**: clang-tidy with the rules in `.clang-tidy` (bugprone-*,
   performance-*, modernize-use-nullptr). CI runs this against every
   changed file.
-* **Python**: PEP 8 via `ruff` is recommended but not enforced. Public
-  API functions in `python/openimpala/facade.py` should have NumPy-style
-  docstrings.
-* **Fortran files** are not processed by clang-format or clang-tidy.
+* **Python**: PEP 8 via `ruff` is recommended. Public API functions in
+  `python/openimpala/` should have NumPy-style docstrings.
 
 All C++ code lives in `namespace OpenImpala`. Headers use `#ifndef`
 include guards rather than `#pragma once`.
@@ -87,11 +85,12 @@ include guards rather than `#pragma once`.
 The test suite has three layers:
 
 1. **C++ unit and integration tests** (under `tests/`) — Catch2-based,
-   register with CTest. Run with `ctest --output-on-failure`. Each test
+   registered with CTest. Run with `ctest --output-on-failure`. Each test
    is a small standalone solve with an analytical solution or a tightly
    bounded numerical reference.
-2. **Python tests** (under `python/tests/`) — pytest-based, exercise the
-   facade and binding layers. Run with `pytest python/tests/`.
+2. **Python tests** (under `python/tests/`) — pytest-based, exercising both
+   the pure-Python solver and C++ bindings. Run without compiling C++ via
+   `PYTHONPATH=python pytest python/tests/`.
 3. **Regression benchmarks** (under `tests/benchmarks/`) — Python scripts
    generating synthetic datasets with known analytical tortuosity values
    (uniform block, series layers, parallel layers).
@@ -107,10 +106,11 @@ and passes on your fix.
 3. Run the local CI loop:
    ```bash
    clang-format -i src/**/*.{cpp,H} python/bindings/*.cpp
+   PYTHONPATH=python pytest python/tests/
    apptainer exec --bind "$(pwd):/src" dependency_image.sif \
        bash -c "cd /src/build && make -j && ctest --output-on-failure"
    ```
-4. Open a pull request against `main`. The PR description should explain
+4. Open a pull request against `master`. The PR description should explain
    *why* the change is needed, not just *what* it changes.
 5. CI runs clang-format check, clang-tidy static analysis, the C++ test
    suite, Python tests, code-coverage reporting (via Codecov), and wheel

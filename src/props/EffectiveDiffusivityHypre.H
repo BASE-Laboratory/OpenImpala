@@ -1,3 +1,6 @@
+/** @file EffectiveDiffusivityHypre.H
+ *  @brief HYPRE structured-grid solver for periodic homogenisation cell problems.
+ */
 #ifndef EFFECTIVEDIFFUSIVITYHYPRE_H
 #define EFFECTIVEDIFFUSIVITYHYPRE_H
 
@@ -129,6 +132,7 @@ public:
     // the same reason.
     void setupMatrixEquation();
     void generateActiveMask(); // Simpler version for D=0/1 based on phase_id
+    int buildCellTypeMask(amrex::iMultiFab& mf_cell_type) const;
 
 
 private:

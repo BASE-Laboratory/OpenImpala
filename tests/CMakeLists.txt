@@ -453,6 +453,7 @@ add_test(
 )
 set_tests_properties(tDiffusion_tiff PROPERTIES
     ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    FAIL_REGULAR_EXPRESSION "skipped due to chi_k non-convergence"
     TIMEOUT 600
 )
 
@@ -468,6 +469,7 @@ add_test(
 )
 set_tests_properties(tDiffusion_hdf5 PROPERTIES
     ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1"
+    FAIL_REGULAR_EXPRESSION "skipped due to chi_k non-convergence"
     TIMEOUT 600
 )
 

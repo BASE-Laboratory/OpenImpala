@@ -2,7 +2,7 @@
 
 import pytest
 
-from openimpala import _core
+_core = pytest.importorskip("openimpala._core")
 
 
 class TestPhysicsConfig:

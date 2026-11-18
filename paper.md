@@ -22,7 +22,7 @@ affiliations:
    index: 2
  - name: The Faraday Institution, Harwell Science and Innovation Campus, Didcot, OX11 0RA, United Kingdom
    index: 3
-date: 12 May 2026
+date: 18 November 2026
 bibliography: paper.bib
 ---
 
@@ -59,7 +59,7 @@ with oi.Session():
     print(f"Tortuosity: {result.tortuosity:.4f}")
 ```
 
-Compiled CPU wheels (`pip install openimpala`) and CUDA-accelerated GPU wheels (`pip install openimpala-cuda`) bundling the AMReX and HYPRE C++ solvers are distributed via PyPI. Interactive tutorial notebooks for Google Colab cover workflows from basic tortuosity computation to digital twin parameterisation with PyBaMM. Documentation is at <https://base-laboratory.github.io/OpenImpala/>. The test suite includes analytical regression benchmarks (uniform block, series layers / Reuss bound, parallel layers / Voigt bound) verified to machine precision, plus integration tests on real tomographic data via CTest; CI enforces `clang-format`, `clang-tidy`, and code coverage via Codecov.
+Compiled CPU wheels (`pip install openimpala`), CUDA-accelerated GPU wheels (`pip install openimpala-cuda`) bundling the AMReX and HYPRE C++ solvers, and a universal pure-Python fallback wheel are distributed via PyPI. Interactive tutorial notebooks rendered in the documentation and runnable on Google Colab cover workflows from basic tortuosity computation and analytical verification to full $3\times 3$ effective diffusivity tensors, multi-phase transport, and REV uncertainty analysis. Documentation is at <https://base-laboratory.github.io/OpenImpala/>. The test suite includes analytical regression benchmarks (uniform block, series layers / Reuss bound, parallel layers / Voigt bound) verified to machine precision, plus integration tests on real tomographic data via CTest; CI enforces `clang-format`, `clang-tidy`, and code coverage via Codecov.
 
 # Acknowledgements
 

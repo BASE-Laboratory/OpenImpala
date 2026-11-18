@@ -65,8 +65,8 @@ conservation check → τ. Each backend just implements `solve()`.
 historically Fortran 90 but have been **migrated to native C++**
 (`TortuosityKernels.H`, using AMReX `ParallelFor`/`Array4`) so the hot path
 runs on CPU and GPU (CUDA/HIP) from a single source. There are no `.F90` /
-`*_F.H` files in the tree; CMake still lists Fortran as a language for AMReX
-compatibility only.
+`*_F.H` files in the tree, and CMake builds with C and C++ only (no Fortran
+compiler required).
 
 **Configuration** is via AMReX `ParmParse` (text `inputs` files). Key types:
 - `PhysicsConfig.H` — Maps solver output to physical quantities (diffusion,
@@ -134,8 +134,7 @@ apptainer exec --bind "$(pwd):/src" dependency_image.sif bash -c "cd /src && mak
 # Native build (if dependencies are installed)
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release \
-         -DCMAKE_CXX_COMPILER=$(which mpicxx) \
-         -DCMAKE_Fortran_COMPILER=$(which mpif90)
+         -DCMAKE_CXX_COMPILER=$(which mpicxx)
 make -j$(nproc) && ctest --output-on-failure
 ```
 

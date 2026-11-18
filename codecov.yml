@@ -1,0 +1,52 @@
+# Codecov configuration for OpenImpala (C++ engine, pybind11 bindings, and Python package)
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 1
+  round: down
+  range: "60...95"
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 2%
+    patch:
+      default:
+        target: 70%
+        threshold: 5%
+        informational: true
+
+flags:
+  cpp:
+    paths:
+      - src/
+      - python/bindings/
+    carryforward: true
+  python-pure:
+    paths:
+      - python/openimpala/
+    carryforward: true
+  python-bindings:
+    paths:
+      - python/openimpala/
+    carryforward: true
+
+component_management:
+  individual_components:
+    - component_id: cpp_engine
+      name: C++ Engine & Bindings
+      paths:
+        - src/**
+        - python/bindings/**
+    - component_id: python_package
+      name: Python Package
+      paths:
+        - python/openimpala/**
+
+ignore:
+  - "tests/**"
+  - "python/tests/**"
+  - "benchmarks/**"
+  - "docs/**"
+  - "tutorials/**"

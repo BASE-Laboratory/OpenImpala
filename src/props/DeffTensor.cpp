@@ -30,12 +30,38 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
     if (AMREX_SPACEDIM == 3) {
         AMREX_ALWAYS_ASSERT(mf_chi_z.isDefined() && mf_chi_z.nGrow() >= 1);
     }
-    AMREX_ALWAYS_ASSERT(active_mask.nGrow() == 0);
+
+    const amrex::BoxArray& ba = active_mask.boxArray();
+    const amrex::DistributionMapping& dm = active_mask.DistributionMap();
+
+    // Populate 1-ghost periodic copies of active_mask and diff_coeff so +x/+y/+z
+    // harmonic face conductances are exact across tile and periodic boundaries.
+    amrex::iMultiFab mask_1g(ba, dm, 1, 1);
+    mask_1g.setVal(0);
+    amrex::Copy(mask_1g, active_mask, 0, 0, 1, 0);
+    mask_1g.FillBoundary(geom.periodicity());
+
+    const bool has_dc = (mf_diff_coeff != nullptr && mf_diff_coeff->isDefined());
+    amrex::MultiFab dc_1g(ba, dm, 1, 1);
+    dc_1g.setVal(0.0);
+    if (has_dc) {
+        amrex::Copy(dc_1g, *mf_diff_coeff, 0, 0, 1, 0);
+    } else {
+        for (amrex::MFIter mfi(dc_1g, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& tbx = mfi.tilebox();
+            amrex::Array4<amrex::Real> const dc_arr = dc_1g.array(mfi);
+            amrex::Array4<const int> const m_arr = mask_1g.const_array(mfi);
+            amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                dc_arr(i, j, k, 0) = (m_arr(i, j, k, 0) == 1) ? 1.0 : 0.0;
+            });
+        }
+    }
+    dc_1g.FillBoundary(geom.periodicity());
 
     const amrex::Real* dx_arr = geom.CellSize();
-    amrex::Real inv_2dx_0 = 1.0 / (2.0 * dx_arr[0]);
-    amrex::Real inv_2dx_1 = 1.0 / (2.0 * dx_arr[1]);
-    amrex::Real inv_2dx_2 = (AMREX_SPACEDIM == 3) ? 1.0 / (2.0 * dx_arr[2]) : 0.0;
+    const amrex::Real inv_dx_0 = 1.0 / dx_arr[0];
+    const amrex::Real inv_dx_1 = 1.0 / dx_arr[1];
+    const amrex::Real inv_dx_2 = (AMREX_SPACEDIM == 3) ? 1.0 / dx_arr[2] : 0.0;
 
     // GPU-compatible 9-component reduction for the full D_eff tensor
     amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum,
@@ -46,18 +72,15 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
                       amrex::Real, amrex::Real, amrex::Real>
         reduce_data(reduce_op);
 
-    const bool has_dc = (mf_diff_coeff != nullptr && mf_diff_coeff->isDefined());
-
-    for (amrex::MFIter mfi(active_mask); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(mask_1g); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();
-        amrex::Array4<const int> const mask_arr = active_mask.const_array(mfi);
+        amrex::Array4<const int> const mask_arr = mask_1g.const_array(mfi);
+        amrex::Array4<const amrex::Real> const dc_arr = dc_1g.const_array(mfi);
         amrex::Array4<const amrex::Real> const chi_x_arr = mf_chi_x.const_array(mfi);
         amrex::Array4<const amrex::Real> const chi_y_arr = mf_chi_y.const_array(mfi);
         amrex::Array4<const amrex::Real> const chi_z_arr =
             (AMREX_SPACEDIM == 3 && mf_chi_z.isDefined()) ? mf_chi_z.const_array(mfi)
                                                           : mf_chi_x.const_array(mfi);
-        amrex::Array4<const amrex::Real> const dc_arr =
-            has_dc ? mf_diff_coeff->const_array(mfi) : mf_chi_x.const_array(mfi);
 
         reduce_op.eval(
             bx, reduce_data,
@@ -68,33 +91,58 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
                     return {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
                 }
 
-                const amrex::Real D_val = has_dc ? dc_arr(i, j, k, 0) : 1.0;
-
-                amrex::Real dchix_dx =
-                    (chi_x_arr(i + 1, j, k, 0) - chi_x_arr(i - 1, j, k, 0)) * inv_2dx_0;
-                amrex::Real dchix_dy =
-                    (chi_x_arr(i, j + 1, k, 0) - chi_x_arr(i, j - 1, k, 0)) * inv_2dx_1;
-                amrex::Real dchiy_dx =
-                    (chi_y_arr(i + 1, j, k, 0) - chi_y_arr(i - 1, j, k, 0)) * inv_2dx_0;
-                amrex::Real dchiy_dy =
-                    (chi_y_arr(i, j + 1, k, 0) - chi_y_arr(i, j - 1, k, 0)) * inv_2dx_1;
-
-                amrex::Real dchix_dz = 0.0, dchiy_dz = 0.0;
-                amrex::Real dchiz_dx = 0.0, dchiz_dy = 0.0, dchiz_dz = 0.0;
-                if (AMREX_SPACEDIM == 3) {
-                    dchix_dz = (chi_x_arr(i, j, k + 1, 0) - chi_x_arr(i, j, k - 1, 0)) * inv_2dx_2;
-                    dchiy_dz = (chi_y_arr(i, j, k + 1, 0) - chi_y_arr(i, j, k - 1, 0)) * inv_2dx_2;
-                    dchiz_dx = (chi_z_arr(i + 1, j, k, 0) - chi_z_arr(i - 1, j, k, 0)) * inv_2dx_0;
-                    dchiz_dy = (chi_z_arr(i, j + 1, k, 0) - chi_z_arr(i, j - 1, k, 0)) * inv_2dx_1;
-                    dchiz_dz = (chi_z_arr(i, j, k + 1, 0) - chi_z_arr(i, j, k - 1, 0)) * inv_2dx_2;
+                const amrex::Real D_c = dc_arr(i, j, k, 0);
+                if (D_c <= 0.0) {
+                    return {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
                 }
 
-                // D_eff[r][c] = D(x) * (delta_rc + d(chi_c)/d(x_r)), summed over active cells
-                // Cell problem: div(D grad chi_k) = -div(D e_k) => plus sign
-                return {
-                    D_val * (1.0 + dchix_dx), D_val * dchiy_dx,         D_val * dchiz_dx,
-                    D_val * dchix_dy,         D_val * (1.0 + dchiy_dy), D_val * dchiz_dy,
-                    D_val * dchix_dz,         D_val * dchiy_dz,         D_val * (1.0 + dchiz_dz)};
+                amrex::Real D_px = 0.0;
+                if (mask_arr(i + 1, j, k, 0) == 1) {
+                    const amrex::Real D_nbr = dc_arr(i + 1, j, k, 0);
+                    if (D_c + D_nbr > 0.0) {
+                        D_px = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+                    }
+                }
+
+                amrex::Real D_py = 0.0;
+                if (mask_arr(i, j + 1, k, 0) == 1) {
+                    const amrex::Real D_nbr = dc_arr(i, j + 1, k, 0);
+                    if (D_c + D_nbr > 0.0) {
+                        D_py = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+                    }
+                }
+
+                const amrex::Real dchix_dx =
+                    (chi_x_arr(i + 1, j, k, 0) - chi_x_arr(i, j, k, 0)) * inv_dx_0;
+                const amrex::Real dchiy_dx =
+                    (chi_y_arr(i + 1, j, k, 0) - chi_y_arr(i, j, k, 0)) * inv_dx_0;
+                const amrex::Real dchix_dy =
+                    (chi_x_arr(i, j + 1, k, 0) - chi_x_arr(i, j, k, 0)) * inv_dx_1;
+                const amrex::Real dchiy_dy =
+                    (chi_y_arr(i, j + 1, k, 0) - chi_y_arr(i, j, k, 0)) * inv_dx_1;
+
+                amrex::Real D_pz = 0.0;
+                amrex::Real dchiz_dx = 0.0, dchiz_dy = 0.0;
+                amrex::Real dchix_dz = 0.0, dchiy_dz = 0.0, dchiz_dz = 0.0;
+                if (AMREX_SPACEDIM == 3) {
+                    if (mask_arr(i, j, k + 1, 0) == 1) {
+                        const amrex::Real D_nbr = dc_arr(i, j, k + 1, 0);
+                        if (D_c + D_nbr > 0.0) {
+                            D_pz = 2.0 * D_c * D_nbr / (D_c + D_nbr);
+                        }
+                    }
+                    dchiz_dx = (chi_z_arr(i + 1, j, k, 0) - chi_z_arr(i, j, k, 0)) * inv_dx_0;
+                    dchiz_dy = (chi_z_arr(i, j + 1, k, 0) - chi_z_arr(i, j, k, 0)) * inv_dx_1;
+                    dchix_dz = (chi_x_arr(i, j, k + 1, 0) - chi_x_arr(i, j, k, 0)) * inv_dx_2;
+                    dchiy_dz = (chi_y_arr(i, j, k + 1, 0) - chi_y_arr(i, j, k, 0)) * inv_dx_2;
+                    dchiz_dz = (chi_z_arr(i, j, k + 1, 0) - chi_z_arr(i, j, k, 0)) * inv_dx_2;
+                }
+
+                // Conservative face flux: D_{i+1/2}^{(r)} * (delta_rc + (chi_c(i+e_r) - chi_c(i)) /
+                // h_r)
+                return {D_px * (1.0 + dchix_dx), D_px * dchiy_dx,         D_px * dchiz_dx,
+                        D_py * dchix_dy,         D_py * (1.0 + dchiy_dy), D_py * dchiz_dy,
+                        D_pz * dchix_dz,         D_pz * dchiy_dz,         D_pz * (1.0 + dchiz_dz)};
             });
     }
 
@@ -134,7 +182,7 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
     }
 
     if (verbose > 1 && amrex::ParallelDescriptor::IOProcessor()) {
-        amrex::Print() << "  [calculateDeffTensor] Raw summed (1+dchi_x_dx): " << sum_local[0][0]
+        amrex::Print() << "  [calculateDeffTensor] Raw summed flux_xx: " << sum_local[0][0]
                        << ", N_total: " << N_total << std::endl;
     }
 }

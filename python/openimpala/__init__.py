@@ -71,7 +71,8 @@ def _preload_cuda_libs():
 
 _preload_cuda_libs()
 
-# Session context manager (pure Python — always available)
+# Session context manager and datasets (pure Python — always available)
+from . import datasets
 from .session import Session
 
 # Custom exceptions (pure Python — always available)
@@ -105,6 +106,7 @@ def __getattr__(name):
         "volume_fraction",
         "percolation_check",
         "tortuosity",
+        "tortuosity_all",
         "effective_diffusivity",
         "specific_surface_area",
         "connected_components",
@@ -148,6 +150,7 @@ def __getattr__(name):
 
 __all__ = [
     "__version__",
+    "datasets",
     "core",
     "VoxelImage",
     "Direction",
@@ -164,6 +167,7 @@ __all__ = [
     "volume_fraction",
     "percolation_check",
     "tortuosity",
+    "tortuosity_all",
     "effective_diffusivity",
     "specific_surface_area",
     "connected_components",
