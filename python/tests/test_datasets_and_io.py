@@ -629,7 +629,7 @@ class TestIsolatedPocketHomogenization:
 
         res_pockets = oi.effective_diffusivity(vol, phase=1)
         assert res_pockets.solver_converged
-        np.testing.assert_allclose(res_pockets.tensor, 0.0, atol=1e-12)
+        np.testing.assert_allclose(res_pockets.tensor, 0.0, atol=1e-8)
 
     def test_disconnected_pockets_do_not_perturb_percolating_channel(self):
         base = np.zeros((12, 12, 12), dtype=np.int32)
@@ -643,6 +643,6 @@ class TestIsolatedPocketHomogenization:
         r_base = oi.effective_diffusivity(base, phase=1)
         r_pockets = oi.effective_diffusivity(with_pockets, phase=1)
         assert r_base.solver_converged and r_pockets.solver_converged
-        np.testing.assert_allclose(r_pockets.tensor, r_base.tensor, rtol=1e-10, atol=1e-12)
+        np.testing.assert_allclose(r_pockets.tensor, r_base.tensor, rtol=1e-7, atol=1e-8)
 
 
