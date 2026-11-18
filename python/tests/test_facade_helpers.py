@@ -2,7 +2,7 @@
 
 import pytest
 
-from openimpala import _core
+_core = pytest.importorskip("openimpala._core")
 from openimpala.facade import _auto_grid_size, _parse_direction, _parse_solver
 
 

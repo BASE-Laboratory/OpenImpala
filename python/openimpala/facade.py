@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import dataclasses
+import os
 import tempfile
 from pathlib import Path
 from typing import Mapping, Optional, Sequence, Union
@@ -21,6 +22,7 @@ from .exceptions import ConvergenceError, PercolationError
 from .session import Session, _has_core
 
 VoxelSizeArg = Union[float, int, Sequence[float]]
+DataInputArg = Union[np.ndarray, str, os.PathLike, "VoxelImage"]
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +56,17 @@ class PercolationResult:
     percolates: bool
     active_volume_fraction: float
     direction: str
+
+    def _repr_html_(self) -> str:
+        status = "Yes" if self.percolates else "No"
+        return (
+            "<table>"
+            "<tr><th>Metric</th><th>Value</th></tr>"
+            f"<tr><td>Direction</td><td>{self.direction}</td></tr>"
+            f"<tr><td>Percolates</td><td>{status}</td></tr>"
+            f"<tr><td>Active VF</td><td>{self.active_volume_fraction:.6f}</td></tr>"
+            "</table>"
+        )
 
 
 @dataclasses.dataclass
@@ -145,6 +158,19 @@ class SpecificSurfaceAreaResult:
     total_count: int
     face_counts_xyz: tuple[int, int, int]
 
+    def _repr_html_(self) -> str:
+        fx, fy, fz = self.face_counts_xyz
+        return (
+            "<table>"
+            "<tr><th>Metric</th><th>Value</th></tr>"
+            f"<tr><td>SSA (raw)</td><td>{self.ssa:.6e}</td></tr>"
+            f"<tr><td>SSA (2/3 Cauchy–Crofton)</td><td>{self.ssa_corrected:.6e}</td></tr>"
+            f"<tr><td>SSA (voxel⁻¹)</td><td>{self.ssa_voxel:.6f}</td></tr>"
+            f"<tr><td>Interfacial faces (x, y, z)</td><td>{self.face_count:,} ({fx:,}, {fy:,}, {fz:,})</td></tr>"
+            f"<tr><td>Evaluated voxels</td><td>{self.total_count:,}</td></tr>"
+            "</table>"
+        )
+
 
 @dataclasses.dataclass
 class ConnectedComponentsResult:
@@ -153,6 +179,18 @@ class ConnectedComponentsResult:
     num_components: int
     volumes: np.ndarray
     labels: Optional[np.ndarray] = None
+
+    def _repr_html_(self) -> str:
+        largest = int(np.max(self.volumes)) if self.volumes.size > 0 else 0
+        median = float(np.median(self.volumes)) if self.volumes.size > 0 else 0.0
+        return (
+            "<table>"
+            "<tr><th>Metric</th><th>Value</th></tr>"
+            f"<tr><td>Connected components</td><td>{self.num_components:,}</td></tr>"
+            f"<tr><td>Largest volume (voxels)</td><td>{largest:,}</td></tr>"
+            f"<tr><td>Median volume (voxels)</td><td>{median:.1f}</td></tr>"
+            "</table>"
+        )
 
 
 @dataclasses.dataclass
@@ -166,6 +204,24 @@ class ParticleSizeDistributionResult:
     radii_voxels: np.ndarray
     volumes_voxels: np.ndarray
 
+    def _repr_html_(self) -> str:
+        if self.radii.size > 0:
+            p10, p50, p90 = np.percentile(self.radii, [10, 50, 90])
+            pct_rows = (
+                f"<tr><td>R10 / R50 / R90</td>"
+                f"<td>{p10:.4g} / {p50:.4g} / {p90:.4g}</td></tr>"
+            )
+        else:
+            pct_rows = ""
+        return (
+            "<table>"
+            "<tr><th>Metric</th><th>Value</th></tr>"
+            f"<tr><td>Particles</td><td>{self.num_particles:,}</td></tr>"
+            f"<tr><td>Mean radius</td><td>{self.mean_radius:.6g}</td></tr>"
+            f"{pct_rows}"
+            "</table>"
+        )
+
 
 @dataclasses.dataclass
 class ThroughThicknessResult:
@@ -175,6 +231,19 @@ class ThroughThicknessResult:
     num_slices: int
     profile: np.ndarray
     positions: np.ndarray
+
+    def _repr_html_(self) -> str:
+        p_min = float(np.min(self.profile)) if self.profile.size > 0 else 0.0
+        p_mean = float(np.mean(self.profile)) if self.profile.size > 0 else 0.0
+        p_max = float(np.max(self.profile)) if self.profile.size > 0 else 0.0
+        return (
+            "<table>"
+            "<tr><th>Metric</th><th>Value</th></tr>"
+            f"<tr><td>Direction</td><td>{self.direction}</td></tr>"
+            f"<tr><td>Slices</td><td>{self.num_slices}</td></tr>"
+            f"<tr><td>Profile (min / mean / max)</td><td>{p_min:.4f} / {p_mean:.4f} / {p_max:.4f}</td></tr>"
+            "</table>"
+        )
 
 
 @dataclasses.dataclass
@@ -186,6 +255,24 @@ class REVStudyResult:
     mean_diagonal: dict[int, np.ndarray]
     std_diagonal: dict[int, np.ndarray]
     csv_path: Optional[str] = None
+
+    def _repr_html_(self) -> str:
+        rows = [
+            "<table>",
+            "<tr><th>Window L</th><th>Mean D_xx</th><th>Mean D_yy</th><th>Mean D_zz</th><th>Mean ± SD (trace/3)</th></tr>",
+        ]
+        for sz in self.sizes:
+            m = self.mean_diagonal[sz]
+            s = self.std_diagonal[sz]
+            m_iso = float(np.mean(m))
+            s_iso = float(np.mean(s))
+            rows.append(
+                f"<tr><td>{sz}</td>"
+                f"<td>{m[0]:.5f}</td><td>{m[1]:.5f}</td><td>{m[2]:.5f}</td>"
+                f"<td>{m_iso:.5f} ± {s_iso:.5f}</td></tr>"
+            )
+        rows.append("</table>")
+        return "".join(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -280,19 +367,14 @@ def _parse_direction(d):
 
 
 def _ensure_initialized():
-    """Check that a Session is active."""
+    """Ensure a Session is active (auto-starting one for interactive/notebook use)."""
+    Session.ensure_active()
     if _is_pure_python():
-        if Session._depth == 0:
-            raise RuntimeError(
-                "OpenImpala is not initialized! Please wrap your code in a session block:\n\n"
-                "with openimpala.Session():\n"
-                "    openimpala.volume_fraction(...)"
-            )
         return
     _core = _get_core()
     if not _core.amrex_initialized():
         raise RuntimeError(
-            "OpenImpala is not initialized! Please wrap your code in a session block:\n\n"
+            "OpenImpala AMReX runtime is not initialized. Wrap MPI scripts in:\n\n"
             "with openimpala.Session():\n"
             "    openimpala.volume_fraction(...)"
         )
@@ -387,12 +469,42 @@ def _auto_grid_size(shape: tuple[int, ...]) -> int:
     return mgs
 
 
+def _resolve_pure_input(
+    data: DataInputArg,
+    voxel_size: Optional[VoxelSizeArg] = None,
+) -> tuple[np.ndarray, tuple[float, float, float]]:
+    """Resolve *data* into ``(arr_int32, (dz, dy, dx))`` for the pure-Python backend."""
+    from ._io import PureVoxelImage
+
+    if isinstance(data, (str, os.PathLike)):
+        p = Path(data)
+        if p.suffix.lower() == ".npy":
+            raw_arr = np.load(p)
+            if raw_arr.ndim != 3:
+                raise ValueError(f"Expected a 3-D array in '{p}', got shape {raw_arr.shape}")
+            return np.ascontiguousarray(raw_arr, dtype=np.int32), _normalize_voxel_size(voxel_size)
+        _, img = read_image(p, voxel_size=voxel_size)
+        return np.asarray(img, dtype=np.int32), img.voxel_size
+
+    if isinstance(data, PureVoxelImage):
+        vz = data.voxel_size if voxel_size is None else _normalize_voxel_size(voxel_size)
+        return np.asarray(data, dtype=np.int32), vz
+
+    if not isinstance(data, np.ndarray):
+        raise TypeError("data must be a 3-D NumPy array, VoxelImage, or file path")
+    if data.ndim != 3:
+        raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
+    return np.ascontiguousarray(data, dtype=np.int32), _normalize_voxel_size(voxel_size)
+
+
 def _numpy_to_voxelimage(
-    data: np.ndarray,
+    data: DataInputArg,
     max_grid_size: Union[int, str] = "auto",
     voxel_size: Optional[VoxelSizeArg] = None,
 ):
-    """Convert a 3-D int32 NumPy array (or VoxelImage) into a VoxelImage with physical cell sizes."""
+    """Convert a 3-D NumPy array, path, or VoxelImage into a C++ VoxelImage."""
+    from ._io import PureVoxelImage
+
     _core = _get_core()
 
     if isinstance(data, _core.VoxelImage):
@@ -401,8 +513,21 @@ def _numpy_to_voxelimage(
         dz, dy, dx = _normalize_voxel_size(voxel_size)
         return data.with_voxel_size(dx=dx, dy=dy, dz=dz)
 
+    if isinstance(data, (str, os.PathLike)):
+        p = Path(data)
+        if p.suffix.lower() == ".npy":
+            data = np.load(p)
+        else:
+            _, img = read_image(p, voxel_size=voxel_size, max_grid_size=max_grid_size)
+            return img
+
+    if isinstance(data, PureVoxelImage):
+        vz = data.voxel_size if voxel_size is None else _normalize_voxel_size(voxel_size)
+        data = data.to_numpy()
+        voxel_size = vz
+
     if not isinstance(data, np.ndarray):
-        raise TypeError("data must be a 3-D NumPy array or a VoxelImage")
+        raise TypeError("data must be a 3-D NumPy array, VoxelImage, or file path")
 
     if data.ndim != 3:
         raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
@@ -420,18 +545,18 @@ def _numpy_to_voxelimage(
 # ---------------------------------------------------------------------------
 
 def volume_fraction(
-    data: np.ndarray,
+    data: DataInputArg,
     phase: int = 0,
     *,
     max_grid_size: Union[int, str] = "auto",
 ) -> VolumeFractionResult:
-    """Compute the volume fraction of *phase* in a 3-D NumPy array or VoxelImage."""
+    """Compute the volume fraction of *phase* in a 3-D NumPy array, VoxelImage, or file."""
     _ensure_initialized()
 
     if _is_pure_python():
         from . import _solver
 
-        arr = np.ascontiguousarray(data, dtype=np.int32)
+        arr, _ = _resolve_pure_input(data)
         pc, tc, frac = _solver.volume_fraction(arr, phase)
         return VolumeFractionResult(phase_count=pc, total_count=tc, fraction=frac)
 
@@ -444,7 +569,7 @@ def volume_fraction(
 
 
 def percolation_check(
-    data: np.ndarray,
+    data: DataInputArg,
     phase: int = 0,
     direction: Union[str, "Direction"] = "x",
     *,
@@ -457,13 +582,13 @@ def percolation_check(
     if _is_pure_python():
         from . import _solver
 
-        arr = np.ascontiguousarray(data, dtype=np.int32)
+        arr, _ = _resolve_pure_input(data)
         d = _parse_direction_int(direction)
         percolates, active_vf, _ = _solver.percolation_check(arr, phase, 2 - d)
         return PercolationResult(
             percolates=percolates,
             active_volume_fraction=active_vf,
-            direction=_DIR_NAMES[d],
+            direction=_DIR_NAMES[d].upper(),
         )
 
     _core = _get_core()
@@ -478,7 +603,7 @@ def percolation_check(
 
 
 def tortuosity(
-    data: np.ndarray,
+    data: DataInputArg,
     phase: int = 0,
     direction: Union[str, "Direction"] = "x",
     solver: Union[str, "SolverType"] = "auto",
@@ -498,8 +623,9 @@ def tortuosity(
 
     Parameters
     ----------
-    data : np.ndarray or VoxelImage
-        3-D integer array of phase IDs ``(Nz, Ny, Nx)`` or a ``VoxelImage`` handle.
+    data : np.ndarray, VoxelImage, or path-like
+        3-D integer array of phase IDs ``(Nz, Ny, Nx)``, ``VoxelImage`` handle,
+        or path to a supported 3-D volume file.
     phase : int
         Conducting phase ID when *phase_diffusivities* is ``None``.
     direction : str or Direction
@@ -526,8 +652,7 @@ def tortuosity(
     if _is_pure_python():
         from . import _solver
 
-        arr = np.ascontiguousarray(data, dtype=np.int32)
-        vz = _normalize_voxel_size(voxel_size)
+        arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
         d = _parse_direction_int(direction)
         result = _solver.solve_tortuosity(
             arr,
@@ -651,8 +776,70 @@ def tortuosity(
     )
 
 
+def tortuosity_all(
+    data: DataInputArg,
+    phase: int = 0,
+    solver: Union[str, "SolverType"] = "auto",
+    *,
+    directions: Sequence[Union[str, "Direction"]] = ("x", "y", "z"),
+    strict: bool = False,
+    voxel_size: Optional[VoxelSizeArg] = None,
+    phase_diffusivities: Optional[Mapping[int, float]] = None,
+    return_field: bool = False,
+    preconditioner: Union[str, "PrecondType"] = "smg",
+    max_grid_size: Union[int, str] = "auto",
+    results_path: str = ".",
+    verbose: int = 0,
+    mlmg_eps: Optional[float] = None,
+    mlmg_maxiter: Optional[int] = None,
+    mlmg_max_coarsening_level: Optional[int] = None,
+) -> dict[str, Optional[TortuosityResult]]:
+    """Compute steady-state tortuosity across cardinal directions ``('x', 'y', 'z')``.
+
+    Loads or stages *data* once, then solves each direction in *directions*.
+    When ``strict=False`` (default), directions that do not percolate map to
+    ``None`` instead of raising :class:`~openimpala.PercolationError`.
+    """
+    _ensure_initialized()
+
+    if _is_pure_python():
+        arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
+        staged: DataInputArg = arr
+        effective_vz: Optional[VoxelSizeArg] = vz
+    else:
+        staged = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
+        effective_vz = None
+
+    results: dict[str, Optional[TortuosityResult]] = {}
+    for d in directions:
+        d_int = _parse_direction_int(d)
+        key = _DIR_NAMES[d_int]
+        try:
+            results[key] = tortuosity(
+                staged,
+                phase=phase,
+                direction=key,
+                solver=solver,
+                voxel_size=effective_vz,
+                phase_diffusivities=phase_diffusivities,
+                return_field=return_field,
+                preconditioner=preconditioner,
+                max_grid_size=max_grid_size,
+                results_path=results_path,
+                verbose=verbose,
+                mlmg_eps=mlmg_eps,
+                mlmg_maxiter=mlmg_maxiter,
+                mlmg_max_coarsening_level=mlmg_max_coarsening_level,
+            )
+        except PercolationError:
+            if strict:
+                raise
+            results[key] = None
+    return results
+
+
 def effective_diffusivity(
-    data: np.ndarray,
+    data: DataInputArg,
     phase: int = 1,
     *,
     voxel_size: Optional[VoxelSizeArg] = None,
@@ -674,8 +861,7 @@ def effective_diffusivity(
     if _is_pure_python():
         from . import _solver
 
-        arr = np.ascontiguousarray(data, dtype=np.int32)
-        vz = _normalize_voxel_size(voxel_size)
+        arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
         raw = _solver.solve_effective_diffusivity(
             arr,
             phase=phase,
@@ -726,7 +912,7 @@ def effective_diffusivity(
 
 
 def specific_surface_area(
-    data: np.ndarray,
+    data: DataInputArg,
     phase_a: int = 0,
     phase_b: int = 1,
     *,
@@ -742,8 +928,7 @@ def specific_surface_area(
     if _is_pure_python():
         from . import _solver
 
-        arr = np.ascontiguousarray(data, dtype=np.int32)
-        vz = _normalize_voxel_size(voxel_size)
+        arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
         raw = _solver.specific_surface_area(
             arr, phase_a=phase_a, phase_b=phase_b, voxel_size=vz, boundary_padding=boundary_padding
         )
@@ -786,7 +971,7 @@ def specific_surface_area(
 
 
 def connected_components(
-    data: np.ndarray,
+    data: DataInputArg,
     phase: int = 1,
     *,
     return_labels: bool = False,
@@ -799,7 +984,7 @@ def connected_components(
     if _is_pure_python():
         from . import _solver
 
-        arr = np.ascontiguousarray(data, dtype=np.int32)
+        arr, _ = _resolve_pure_input(data)
         n_comp, vols, labels = _solver.connected_components(
             arr, phase=phase, return_labels=return_labels
         )
@@ -822,7 +1007,7 @@ def connected_components(
 
 
 def particle_size_distribution(
-    data: np.ndarray,
+    data: DataInputArg,
     phase: int = 1,
     *,
     voxel_size: Optional[VoxelSizeArg] = None,
@@ -835,8 +1020,7 @@ def particle_size_distribution(
     if _is_pure_python():
         from . import _solver
 
-        arr = np.ascontiguousarray(data, dtype=np.int32)
-        vz = _normalize_voxel_size(voxel_size)
+        arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
         raw = _solver.particle_size_distribution(arr, phase=phase, voxel_size=vz)
         return ParticleSizeDistributionResult(
             num_particles=raw["num_particles"],
@@ -871,7 +1055,7 @@ def particle_size_distribution(
 
 
 def through_thickness_profile(
-    data: np.ndarray,
+    data: DataInputArg,
     phase: int = 1,
     direction: Union[str, "Direction"] = "x",
     *,
@@ -886,8 +1070,7 @@ def through_thickness_profile(
     if _is_pure_python():
         from . import _solver
 
-        arr = np.ascontiguousarray(data, dtype=np.int32)
-        vz = _normalize_voxel_size(voxel_size)
+        arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
         prof, pos = _solver.through_thickness_profile(
             arr, phase=phase, direction_xyz=d_int, voxel_size=vz
         )
@@ -945,7 +1128,7 @@ def _summarize_rev_records(
 
 
 def rev_study(
-    data: np.ndarray,
+    data: DataInputArg,
     sizes: Sequence[int],
     *,
     num_samples: int = 3,
@@ -967,8 +1150,7 @@ def rev_study(
     if _is_pure_python():
         from . import _solver
 
-        arr = np.ascontiguousarray(data, dtype=np.int32)
-        vz = _normalize_voxel_size(voxel_size)
+        arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
         records = _solver.rev_study(
             arr,
             sizes=size_list,
@@ -1113,8 +1295,25 @@ def build_info() -> dict:
     return info
 
 
+def _detect_file_format(path_str: str, file_format: Optional[str]) -> str:
+    if file_format is not None:
+        return file_format.strip().lower()
+    lower = path_str.lower()
+    if lower.endswith((".tif", ".tiff")):
+        return "tiff"
+    if lower.endswith((".h5", ".hdf5", ".hdf")):
+        return "hdf5"
+    if lower.endswith(".raw"):
+        return "raw"
+    if lower.endswith(".dat"):
+        return "dat"
+    if lower.endswith(".npy"):
+        return "npy"
+    raise ValueError(f"Cannot auto-detect format for '{path_str}'. Set file_format explicitly.")
+
+
 def read_image(
-    path: str,
+    path: Union[str, os.PathLike],
     threshold: float = 0.5,
     *,
     voxel_size: Optional[VoxelSizeArg] = None,
@@ -1126,44 +1325,69 @@ def read_image(
     raw_data_type=None,
     max_grid_size: Union[int, str] = "auto",
 ) -> tuple:
-    """Read a 3-D image file and threshold it into a VoxelImage."""
-    _ensure_initialized()
+    """Read a 3-D image file and threshold it (`1` where `pixel > threshold`, else `0`).
 
-    if _is_pure_python():
-        raise NotImplementedError(
-            "read_image() requires the compiled C++ backend (_core). "
-            "In pure-Python mode, load your image with tifffile/h5py/numpy "
-            "and pass the array directly to volume_fraction() or tortuosity()."
+    Works identically across compiled C++ and pure-Python backends.
+    """
+    _ensure_initialized()
+    path_str = os.fspath(path)
+    fmt = _detect_file_format(path_str, file_format)
+
+    if _is_pure_python() or fmt == "npy":
+        from ._io import (
+            PureReader,
+            read_dat_volume,
+            read_hdf5_volume,
+            read_raw_volume,
+            read_tiff_volume,
         )
+
+        if fmt == "tiff":
+            raw_vol = read_tiff_volume(path_str)
+            reader = PureReader(raw_vol, kind="TiffReader")
+        elif fmt == "hdf5":
+            raw_vol = read_hdf5_volume(path_str, dataset=hdf5_dataset)
+            reader = PureReader(raw_vol, kind="HDF5Reader")
+        elif fmt == "raw":
+            raw_vol = read_raw_volume(
+                path_str, raw_width, raw_height, raw_depth, raw_data_type=raw_data_type
+            )
+            reader = PureReader(raw_vol, kind="RawReader")
+        elif fmt == "dat":
+            raw_vol = read_dat_volume(path_str)
+            reader = PureReader(raw_vol, kind="DatReader")
+        elif fmt == "npy":
+            raw_vol = np.load(path_str)
+            reader = PureReader(raw_vol, kind="NpyReader")
+        else:
+            raise ValueError(f"Unknown file_format '{fmt}'")
+
+        pure_img = reader.threshold(threshold)
+        if voxel_size is not None:
+            dz, dy, dx = _normalize_voxel_size(voxel_size)
+            pure_img = pure_img.with_voxel_size(dx=dx, dy=dy, dz=dz)
+
+        if not _is_pure_python():
+            # Convert .npy PureVoxelImage into native C++ VoxelImage
+            cpp_img = _numpy_to_voxelimage(pure_img, max_grid_size=max_grid_size)
+            return reader, cpp_img
+        return reader, pure_img
 
     _core = _get_core()
 
     if raw_data_type is None:
         raw_data_type = _core.RawDataType.UINT8
 
-    if file_format is None:
-        lower = path.lower()
-        if lower.endswith((".tif", ".tiff")):
-            file_format = "tiff"
-        elif lower.endswith((".h5", ".hdf5", ".hdf")):
-            file_format = "hdf5"
-        elif lower.endswith(".raw"):
-            file_format = "raw"
-        elif lower.endswith(".dat"):
-            file_format = "dat"
-        else:
-            raise ValueError(f"Cannot auto-detect format for '{path}'. Set file_format explicitly.")
-
-    if file_format == "tiff":
-        reader = _core.TiffReader(path)
-    elif file_format == "hdf5":
-        reader = _core.HDF5Reader(path, hdf5_dataset)
-    elif file_format == "raw":
-        reader = _core.RawReader(path, raw_width, raw_height, raw_depth, raw_data_type)
-    elif file_format == "dat":
-        reader = _core.DatReader(path)
+    if fmt == "tiff":
+        reader = _core.TiffReader(path_str)
+    elif fmt == "hdf5":
+        reader = _core.HDF5Reader(path_str, hdf5_dataset)
+    elif fmt == "raw":
+        reader = _core.RawReader(path_str, raw_width, raw_height, raw_depth, raw_data_type)
+    elif fmt == "dat":
+        reader = _core.DatReader(path_str)
     else:
-        raise ValueError(f"Unknown file_format '{file_format}'")
+        raise ValueError(f"Unknown file_format '{fmt}'")
 
     if isinstance(max_grid_size, str) and max_grid_size.lower() == "auto":
         max_grid_size = 256 if _core.mpi_ranks() <= 1 else 64

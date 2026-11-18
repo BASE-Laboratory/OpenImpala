@@ -1,6 +1,8 @@
 """Tests for enum bindings."""
 
-from openimpala import _core
+import pytest
+
+_core = pytest.importorskip("openimpala._core")
 
 
 def test_direction_values():

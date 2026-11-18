@@ -11,7 +11,8 @@ import numpy as np
 import pytest
 
 import openimpala as oi
-from openimpala import _core
+
+_core = pytest.importorskip("openimpala._core")
 
 
 @pytest.fixture(scope="module")
