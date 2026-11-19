@@ -1585,7 +1585,14 @@ def read_image(
     if isinstance(max_grid_size, str) and max_grid_size.lower() == "auto":
         max_grid_size = 256 if _core.mpi_ranks() <= 1 else 64
 
-    img = reader.threshold(numeric_threshold, max_grid_size)
+    if fmt == "dat":
+        import math
+
+        eff_threshold: float | int = max(0, min(255, int(math.floor(numeric_threshold))))
+    else:
+        eff_threshold = numeric_threshold
+
+    img = reader.threshold(eff_threshold, max_grid_size)
     if voxel_size is not None:
         dz, dy, dx = _normalize_voxel_size(voxel_size)
         img = img.with_voxel_size(dx=dx, dy=dy, dz=dz)

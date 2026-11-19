@@ -366,18 +366,35 @@ class TestSyntheticAndMlGenerator:
                 atol=1e-6,
             )
 
-        # Also verify HDF5 and Zarr ML archive writers + spheres generator
-        h5_out = tmp_path / "train_spheres.h5"
-        ds_h5 = oi.synthetic.generate_ml_dataset(
-            h5_out,
+        # Verify spheres generator on .npz (always available) + HDF5/Zarr when installed
+        spheres_npz = tmp_path / "train_spheres.npz"
+        ds_sph = oi.synthetic.generate_ml_dataset(
+            spheres_npz,
             n_samples=2,
             shape=(12, 12, 12),
             generator="spheres",
             porosity_range=(0.45, 0.60),
             seed=77,
         )
-        assert h5_out.is_file()
-        assert ds_h5["volumes"].shape == (2, 12, 12, 12)
+        assert spheres_npz.is_file()
+        assert ds_sph["volumes"].shape == (2, 12, 12, 12)
+
+        try:
+            import h5py as _h5py_mod  # noqa: F401
+        except ImportError:
+            pass
+        else:
+            h5_out = tmp_path / "train_spheres.h5"
+            ds_h5 = oi.synthetic.generate_ml_dataset(
+                h5_out,
+                n_samples=2,
+                shape=(10, 10, 10),
+                generator="spheres",
+                porosity_range=(0.45, 0.60),
+                seed=77,
+            )
+            assert h5_out.is_file()
+            assert ds_h5["volumes"].shape == (2, 10, 10, 10)
 
         try:
             import zarr as _zarr_mod  # noqa: F401
