@@ -124,6 +124,11 @@ class EffectiveDiffusivityResult:
     plotfile_paths: Optional[dict[str, str]] = None
 
     @property
+    def D_eff(self) -> np.ndarray:
+        """Alias for ``tensor`` (the symmetric ``(3, 3)`` effective diffusivity tensor)."""
+        return self.tensor
+
+    @property
     def diagonal(self) -> tuple[float, float, float]:
         """Principal diagonal entries ``(D_xx, D_yy, D_zz)``."""
         return (
@@ -1481,8 +1486,12 @@ def build_info() -> dict:
         core_err = Session._core_load_error
         if core_err is None:
             _, core_err = _probe_core()
+    elif not _has_core():
+        core_ok = False
+        core_err = Session._core_load_error
     else:
-        core_ok, core_err = _probe_core()
+        core_ok = True
+        core_err = None
 
     if _is_pure_python() or not core_ok:
         try:

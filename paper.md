@@ -10,7 +10,8 @@ tags:
   - tortuosity
   - effective diffusivity
 authors:
-  - name: James Le Houx
+  - given-names: James
+    surname: Le Houx
     orcid: 0000-0002-1576-0673
     corresponding: true
     email: james.le-houx@gre.ac.uk
@@ -61,3 +62,5 @@ Generative AI coding assistants (including Anthropic's Claude and Google Gemini)
 The author thanks Denis Kramer for supervision and initial conceptual direction during the early development of OpenImpala during the author's doctoral studies.
 
 This work was financially supported by the EPSRC Centre for Doctoral Training in Energy Storage and its Applications [EP/R021295/1]; the Ada Lovelace Centre (STFC) project CANVAS-NXtomo; the EPSRC prosperity partnership with Imperial College, INFUSE [EP/V038044/1]; the Rutherford Appleton Laboratory; the Faraday Institution Emerging Leader Fellowship [FIELF001]; and Research England's *Expanding Excellence in England* grant at the University of Greenwich via the M34Impact programme. The author acknowledges the use of the IRIDIS HPC facility, Diamond Light Source's Wilson cluster, STFC SCARF, and the University of Greenwich M34Impact cluster, and thanks the developers of AMReX, HYPRE, libtiff, and HDF5.
+
+# References

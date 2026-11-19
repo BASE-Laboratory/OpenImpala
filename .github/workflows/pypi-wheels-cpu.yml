@@ -388,6 +388,7 @@ jobs:
               assert res.plotfile_path and (pathlib.Path(res.plotfile_path) / "Header").is_file()
 
               deff = oi.effective_diffusivity(slab, phase=1)
+              assert np.allclose(deff.tensor, np.eye(3), atol=1e-4)
               assert np.allclose(deff.D_eff, np.eye(3), atol=1e-4)
 
           if info["mpi_rank"] == 0:
