@@ -11,7 +11,10 @@ release polish.
 - **High-level AMReX plotfiles & `yt` integration** — `write_plotfile=True` on `tortuosity()`, `tortuosity_all()`, and `effective_diffusivity()` plus `write_amrex_plotfile()` for out-of-core slicing and profiling with `yt` and ParaView
 - **Synthetic microstructures & ML surrogate generator (`openimpala.synthetic`)** — `gaussian_blobs()`, `overlapping_spheres()`, `multiphase_electrode()`, `generate_ml_dataset()`, and `openimpala generate-dataset` CLI subcommand
 - **Verified benchmark dataset registry** — `datasets.list_datasets()`, `datasets.fetch_example()`, and pinned SHA-256 integrity checks in `datasets.fetch_path()`
+- **Discrete & grayscale volume coarsening** — `downsample_volume()` and `VoxelImage.downsample()` with exact majority-vote phase pooling and automatic `(dz, dy, dx)` scaling
+- **Zero-dependency CIL & `xarray` ingestion** — pass STFC Core Imaging Library `ImageData` (with automatic `.geometry` voxel pitch extraction), `xarray.DataArray`, `zarr.Array`, or `h5py.Dataset` handles directly to any solver
 - **Multi-component periodic homogenisation** — exact per-component pinning in `EffectiveDiffusivityHypre` (CPU/MPI/CUDA) and `_solver.py` eliminating near-singular modes on isolated pore pockets
+- **Runtime & packaging hardening** — PEP 561 `py.typed` marker, `OPENIMPALA_BACKEND=auto|cpp|pure` override, `core_load_error` diagnostics in `build_info()`, and graceful pure-Python fallback when `openimpala-cuda` runs on GPU-less login/Colab nodes
 
 See the [v4.7.0 release notes](https://github.com/BASE-Laboratory/OpenImpala/releases/tag/v4.7.0).
 

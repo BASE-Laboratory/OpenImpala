@@ -45,6 +45,8 @@ I/O, Segmentation, Cloud Zarr & Plotfiles
 
 .. autofunction:: openimpala._io.binarize_otsu
 
+.. autofunction:: openimpala._io.downsample_volume
+
 .. autofunction:: openimpala._io.read_zarr_volume
 
 .. autofunction:: openimpala._io.write_zarr_volume

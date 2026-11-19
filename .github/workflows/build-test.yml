@@ -293,9 +293,13 @@ jobs:
                 mpirun -np 2 --oversubscribe /usr/bin/python3.11 -m pytest \
                   python/tests/test_mpi_smoke.py -v --tb=short -p no:cacheprovider
 
-              # Canonical sample V&V cross-verification (X/Y/Z against independent FV reference)
+              # Scientific V&V suite: canonical FV cross-verification + Wiener & Hashin-Shtrikman bounds
               PYTHONPATH=/src/python \
                 /usr/bin/python3.11 tests/validation/fetch_canonical_data.py --data-dir /tmp/vv_canonical
+              PYTHONPATH=/src/python \
+                /usr/bin/python3.11 tests/validation/analytical_bounds_vv.py --grid-size 24 --no-plot
+              PYTHONPATH=/src/python \
+                /usr/bin/python3.11 tests/validation/sphere_packing_vv.py --grid-size 24 --output /tmp/vv_spheres.png
             '
             
   coverage:

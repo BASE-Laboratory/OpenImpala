@@ -27,7 +27,7 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+            VERSION="$(python3 -c 'import pathlib, re; t = pathlib.Path("pyproject.toml").read_text(); print(re.search(r"(?m)^fallback_version\s*=\s*\"([^\"]+)\"", t).group(1))')"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved version: ${VERSION}"
@@ -275,7 +275,7 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+            VERSION="$(python3 -c 'import pathlib, re; t = pathlib.Path("pyproject.toml").read_text(); print(re.search(r"(?m)^fallback_version\s*=\s*\"([^\"]+)\"", t).group(1))')"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -424,6 +424,49 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Smoke-test CUDA wheel on GPU-less host (no-SIGABRT login-node safety)
+        run: |
+          set -euo pipefail
+          GPU_WHL="$(ls "$PWD"/wheelhouse/openimpala_cuda-*-cp312-cp312-*.whl)"
+          EXPECTED_VER="$(basename "$GPU_WHL" | sed -E 's/^openimpala_cuda-([^-]+)-.*/\1/')"
+          cat > /tmp/gpu_wheel_smoke.py << 'PYEOF'
+          import pathlib
+          import sys
+          import warnings
+          import numpy as np
+          import openimpala as oi
+
+          exp_ver = sys.argv[1]
+          assert oi.__version__ == exp_ver, f"version mismatch: {oi.__version__} != {exp_ver}"
+          assert (pathlib.Path(oi.__file__).resolve().parent / "py.typed").is_file()
+
+          with warnings.catch_warnings(record=True) as caught:
+              warnings.simplefilter("always")
+              with oi.Session():
+                  info = oi.build_info()
+                  assert info["backend"] == "pure-python", info
+                  assert info["core_load_error"] and "NVIDIA GPU" in info["core_load_error"], info
+                  res = oi.tortuosity(np.ones((12, 12, 12), dtype=np.int32), phase=1, direction="z")
+                  assert abs(res.tortuosity - 1.0) < 1e-4
+          assert any("NVIDIA GPU" in str(w.message) for w in caught), caught
+          print(f"[OK] openimpala-cuda {oi.__version__} safely caught missing GPU and fell back without SIGABRT")
+          PYEOF
+
+          docker run --rm \
+            -v "$PWD/wheelhouse:/wheels:ro" \
+            -v /tmp/gpu_wheel_smoke.py:/tmp/gpu_wheel_smoke.py:ro \
+            sameli/manylinux_2_34_x86_64_cuda_12.6 \
+            bash -c "
+              set -euo pipefail
+              dnf install -y -q epel-release
+              dnf --enablerepo=crb install -y -q openmpi-devel
+              export PATH=/usr/lib64/openmpi/bin:\$PATH
+              export LD_LIBRARY_PATH=/usr/lib64/openmpi/lib:\${LD_LIBRARY_PATH:-}
+              /opt/python/cp312-cp312/bin/pip install --quiet /wheels/$(basename "$GPU_WHL")
+              cd /tmp
+              /opt/python/cp312-cp312/bin/python /tmp/gpu_wheel_smoke.py '$EXPECTED_VER'
+            "
 
       - name: Upload unified GPU wheelhouse artifact
         uses: actions/upload-artifact@v4

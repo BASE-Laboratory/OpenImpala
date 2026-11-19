@@ -637,3 +637,154 @@ class TestRedTeamHardening:
             assert r2.plotfile_paths is not None
             assert Path(r2.plotfile_paths["x"], "Header").is_file()
 
+
+class TestPhase2HardeningAndBridges:
+    """Tests for downsample_volume (#7), CIL/xarray duck-typing (#210), and runtime hardening."""
+
+    def test_downsample_volume_majority_mean_nearest_and_voxelimage(self):
+        # 3-phase volume {0, 10, 255} with non-multiple trailing slice (9, 8, 8)
+        vol = np.zeros((9, 8, 8), dtype=np.int32)
+        vol[:4, :, :] = 10
+        vol[4:8, :, :4] = 255
+        # Tie block at [4:6, 0:2, 4:6]: four 0s and four 255s -> tie broken to smallest ID (0)
+        vol[4:6, 0:2, 4] = 255
+
+        ds, vz = oi.downsample_volume(vol, factor=2, mode="majority", voxel_size=(0.5, 1.0, 1.5))
+        assert ds.shape == (4, 4, 4)
+        assert ds.dtype == np.int32
+        assert set(np.unique(ds)).issubset({0, 10, 255})
+        assert ds[0, 0, 0] == 10
+        assert ds[2, 0, 0] == 255
+        assert ds[2, 0, 2] == 0
+        assert vz == pytest.approx((1.0, 2.0, 3.0))
+
+        # >32 unique labels exercises scipy.stats.mode path
+        many = np.repeat(np.repeat(np.repeat(np.arange(64, dtype=np.int32).reshape(4, 4, 4), 2, axis=0), 2, axis=1), 2, axis=2)
+        ds_many = oi.downsample_volume(many, factor=2, mode="majority")
+        np.testing.assert_array_equal(ds_many, np.arange(64, dtype=np.int32).reshape(4, 4, 4))
+
+        # Grayscale mean & float32 preservation + anisotropic factors
+        gray = np.arange(64, dtype=np.float32).reshape((4, 4, 4))
+        ds_mean, vz_aniso = oi.downsample_volume(gray, factor=(1, 2, 4), mode="mean", voxel_size=2.0)
+        assert ds_mean.shape == (4, 2, 1)
+        assert ds_mean.dtype == np.float32
+        assert vz_aniso == pytest.approx((2.0, 4.0, 8.0))
+        assert ds_mean[0, 0, 0] == pytest.approx(np.mean(gray[0, :2, :4]))
+
+        # Nearest / factor=1 / validation errors
+        ds_near = oi.downsample_volume(vol[:8, :8, :8], factor=2, mode="nearest")
+        np.testing.assert_array_equal(ds_near, vol[:8:2, :8:2, :8:2])
+        ds_one = oi.downsample_volume(vol[:4, :4, :4], factor=1, mode="majority")
+        np.testing.assert_array_equal(ds_one, vol[:4, :4, :4])
+
+        with pytest.raises(ValueError, match="mode='mean'"):
+            oi.downsample_volume(np.linspace(0.1, 0.9, 8).reshape(2, 2, 2), factor=2, mode="majority")
+        with pytest.raises(ValueError, match="exceeds volume shape"):
+            oi.downsample_volume(np.zeros((2, 2, 2), dtype=np.int32), factor=4)
+
+        with oi.Session():
+            vimg = oi.VoxelImage.from_numpy(
+                np.ones((8, 8, 8), dtype=np.int32), max_grid_size=8, dx=0.25, dy=0.5, dz=1.0
+            )
+            vimg_ds = vimg.downsample(factor=2)
+            assert vimg_ds.shape == (4, 4, 4)
+            assert vimg_ds.voxel_size == pytest.approx((2.0, 1.0, 0.5))
+
+    def test_cil_imagedata_xarray_and_sliceable_duck_typing(self):
+        # 1. Mock STFC CIL ImageData + ImageGeometry
+        class _MockCILGeometry:
+            voxel_size_z = 2.0
+            voxel_size_y = 3.0
+            voxel_size_x = 4.0
+
+        class _MockCILImageData:
+            def __init__(self, arr):
+                self._arr = arr
+                self.geometry = _MockCILGeometry()
+
+            def as_array(self):
+                return self._arr
+
+        slab = np.zeros((8, 8, 8), dtype=np.int32)
+        slab[:4, :, :] = 1  # planar z-interface at z = 4 * dz -> area = (8*3)*(8*4), V = 8^3 * 2*3*4
+        cil_obj = _MockCILImageData(slab)
+
+        # 2. Mock xarray.DataArray with physical coordinate vectors
+        class _MockDataArray:
+            def __init__(self, arr):
+                self.values = arr
+                self.dims = ("z", "y", "x")
+                self.coords = {
+                    "z": np.arange(arr.shape[0], dtype=float) * 0.5,
+                    "y": np.arange(arr.shape[1], dtype=float) * 0.5,
+                    "x": np.arange(arr.shape[2], dtype=float) * 0.5,
+                }
+
+        xr_obj = _MockDataArray(np.ones((8, 8, 8), dtype=np.int32))
+
+        # 3. Mock sliceable dataset (like h5py.Dataset without __array__)
+        class _MockSliceableDataset:
+            def __init__(self, arr):
+                self._arr = arr
+                self.shape = arr.shape
+                self.dtype = arr.dtype
+
+            def __getitem__(self, item):
+                return self._arr[item]
+
+        ds_obj = _MockSliceableDataset(np.ones((8, 8, 8), dtype=np.int32))
+
+        with oi.Session():
+            ssa_cil = oi.specific_surface_area(cil_obj, phase_a=1, phase_b=0)
+            # Raw 1-plane interface across z has area = Ny*Nx*dy*dx; total volume = Nz*Ny*Nx*dz*dy*dx -> 1/(Nz*dz) = 1/16
+            assert ssa_cil.ssa == pytest.approx(1.0 / (8.0 * 2.0), rel=1e-5)
+
+            tau_xr = oi.tortuosity(xr_obj, phase=1, direction="z")
+            assert tau_xr.tortuosity == pytest.approx(1.0, abs=1e-4)
+
+            vf_ds = oi.volume_fraction(ds_obj, phase=1)
+            assert vf_ds.fraction == pytest.approx(1.0)
+
+    def test_backend_env_override_py_typed_version_guard_and_estimate_memory(
+        self, tmp_path, monkeypatch
+    ):
+        from openimpala import session as sess_mod
+
+        # PEP 561 py.typed marker present
+        pkg_dir = Path(oi.__file__).resolve().parent
+        assert (pkg_dir / "py.typed").is_file()
+
+        # OPENIMPALA_BACKEND validation
+        monkeypatch.setenv("OPENIMPALA_BACKEND", "invalid_backend")
+        with pytest.raises(ValueError, match="OPENIMPALA_BACKEND"):
+            sess_mod._requested_backend()
+
+        monkeypatch.setenv("OPENIMPALA_BACKEND", "pure")
+        info_pure = oi.build_info()
+        assert info_pure["backend"] == "pure-python"
+        assert info_pure["core_available"] is False
+        assert "OPENIMPALA_BACKEND=pure" in str(info_pure["core_load_error"])
+        monkeypatch.delenv("OPENIMPALA_BACKEND", raising=False)
+
+        # Simulate pip install --target inside an unrelated host project's pyproject.toml
+        fake_root = tmp_path / "host_project"
+        fake_pkg = fake_root / "vendor" / "openimpala"
+        fake_pkg.mkdir(parents=True)
+        (fake_root / "pyproject.toml").write_text(
+            '[project]\nname = "unrelated-host-app"\nversion = "0.0.1"\n',
+            encoding="utf-8",
+        )
+        fake_init = fake_pkg / "__init__.py"
+        fake_init.write_text("# stub\n", encoding="utf-8")
+        monkeypatch.setattr(oi, "__file__", str(fake_init))
+        # Must NOT return "0.0.1" from the unrelated host project!
+        assert oi._detect_version() != "0.0.1"
+
+        # Getting-started estimate_memory signature compatibility
+        est_mlmg = oi.estimate_memory((100, 100, 100), solver="mlmg", mpi_ranks=4)
+        est_hypre = oi.estimate_memory((100, 100, 100), num_ranks=4)
+        assert est_mlmg["mpi_ranks"] == 4
+        assert est_mlmg["per_rank_gb"] == est_mlmg["gb_per_rank"]
+        assert est_mlmg["bytes_per_rank"] < est_hypre["bytes_per_rank"]
+
+

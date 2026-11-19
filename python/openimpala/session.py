@@ -2,14 +2,42 @@
 
 from __future__ import annotations
 
+import os
+import warnings
 
-def _has_core() -> bool:
-    """Return True if the compiled C++ backend is importable."""
+
+def _requested_backend() -> str:
+    """Normalise ``OPENIMPALA_BACKEND`` environment variable to ``'auto'``, ``'pure'``, or ``'cpp'``."""
+    raw = os.environ.get("OPENIMPALA_BACKEND", "auto").strip().lower()
+    if raw in ("", "auto"):
+        return "auto"
+    if raw in ("pure", "pure-python", "pure_python", "scipy"):
+        return "pure"
+    if raw in ("cpp", "c++", "core", "_core"):
+        return "cpp"
+    raise ValueError(
+        f"Invalid OPENIMPALA_BACKEND={raw!r}. Expected 'auto', 'cpp', or 'pure'."
+    )
+
+
+def _probe_core() -> tuple[bool, str | None]:
+    """Check whether ``openimpala._core`` can be imported, recording any load error."""
     try:
         import openimpala._core  # noqa: F401
-        return True
-    except ImportError:
+
+        return True, None
+    except (ImportError, OSError) as exc:
+        err = f"{type(exc).__name__}: {exc}"
+        Session._core_load_error = err
+        return False, err
+
+
+def _has_core() -> bool:
+    """Return True if the compiled C++ backend is importable and not disabled."""
+    if _requested_backend() == "pure":
         return False
+    ok, _ = _probe_core()
+    return ok
 
 
 class Session:
@@ -26,12 +54,15 @@ class Session:
     The session is re-entrant: nested ``with Session()`` blocks share the same
     underlying AMReX state; only the outermost block triggers init/finalize.
 
-    When the compiled C++ backend (``_core``) is not available, the session
-    activates the pure-Python solver backend (SciPy / CuPy) automatically.
+    When the compiled C++ backend (``_core``) is not available (or when
+    ``OPENIMPALA_BACKEND=pure`` is set, or ``openimpala-cuda`` runs on a node
+    with no visible GPU), the session activates the pure-Python solver backend
+    (SciPy / CuPy) automatically unless ``OPENIMPALA_BACKEND=cpp`` is set.
     """
 
     _depth: int = 0  # nesting counter (class-level)
-    _pure_python: bool = False  # True when _core is unavailable
+    _pure_python: bool = False  # True when _core is unavailable or bypassed
+    _core_load_error: "str | None" = None
     _auto_session: "Session | None" = None
 
     def __enter__(self) -> "Session":
@@ -66,45 +97,61 @@ class Session:
     # ------------------------------------------------------------------
     @staticmethod
     def _do_initialize() -> None:
-        if _has_core():
-            # Import mpi4py first so MPI_Init happens before AMReX touches MPI.
-            try:
-                from mpi4py import MPI  # noqa: F401
-            except ImportError:
-                pass
-
-            # Initialise AMReX natively via our C++ bindings — no pyamrex needed.
-            from openimpala._core import init_amrex
-
-            init_amrex()
-            Session._pure_python = False
-
-            # NOTE: HYPRE initialisation is handled automatically by the C++
-            # solver constructors (TortuosityHypre, EffectiveDiffusivityHypre)
-            # via std::call_once, so no Python-side HYPRE_Init() is needed.
+        req = _requested_backend()
+        if req == "pure":
+            Session._core_load_error = "Disabled via OPENIMPALA_BACKEND=pure"
         else:
-            # No compiled backend — use pure-Python solver path.
-            Session._pure_python = True
+            ok, err = _probe_core()
+            if ok:
+                try:
+                    from mpi4py import MPI  # noqa: F401
+                except ImportError:
+                    pass
 
-            # Verify we have at least scipy (required for the pure-Python solver)
-            try:
-                import scipy  # noqa: F401
-            except ImportError:
+                from openimpala._core import init_amrex
+
+                try:
+                    init_amrex()
+                except RuntimeError as exc:
+                    Session._core_load_error = f"{type(exc).__name__}: {exc}"
+                    if req == "cpp":
+                        raise
+                    warnings.warn(
+                        f"{exc} Falling back to pure-Python solver.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                else:
+                    Session._pure_python = False
+                    Session._core_load_error = None
+                    return
+            elif req == "cpp":
                 raise ImportError(
-                    "Neither the compiled C++ backend nor SciPy is available. "
-                    "Install scipy (pip install scipy) for the pure-Python solver, "
-                    "or install the full package (pip install openimpala-cuda) for "
-                    "the C++ backend."
+                    f"OPENIMPALA_BACKEND=cpp was requested, but openimpala._core "
+                    f"could not be loaded ({err})."
                 )
 
-            import logging
+        # Pure-Python solver path
+        Session._pure_python = True
 
-            from . import _solver
-
-            logging.getLogger(__name__).debug(
-                "OpenImpala: using pure-Python solver backend (%s)",
-                _solver.backend_name(),
+        try:
+            import scipy  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "Neither the compiled C++ backend nor SciPy is available. "
+                "Install scipy (pip install scipy) for the pure-Python solver, "
+                "or install the full package (pip install openimpala-cuda) for "
+                "the C++ backend."
             )
+
+        import logging
+
+        from . import _solver
+
+        logging.getLogger(__name__).debug(
+            "OpenImpala: using pure-Python solver backend (%s)",
+            _solver.backend_name(),
+        )
 
     @staticmethod
     def _do_finalize() -> None:

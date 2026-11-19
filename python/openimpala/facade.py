@@ -492,6 +492,76 @@ def _coerce_phase_array(arr: np.ndarray, *, source_desc: str = "input") -> np.nd
     return np.ascontiguousarray(arr, dtype=np.int32)
 
 
+def _unwrap_external_volume(
+    data: object,
+    voxel_size: Optional[VoxelSizeArg],
+) -> tuple[Optional[np.ndarray], Optional[VoxelSizeArg], str]:
+    """Extract ``(ndarray, inferred_voxel_size, source_desc)`` from upstream ecosystem objects.
+
+    Supports STFC Core Imaging Library (CIL) ``ImageData`` (``.as_array()`` +
+    ``.geometry.voxel_size_z/y/x``), ``xarray.DataArray`` (``.values`` +
+    uniform ``coords`` spacing), and in-memory 3-D array/dataset handles
+    (e.g. ``zarr.Array``, ``h5py.Dataset``, ``dask.array``) without requiring
+    those packages at install time.
+    """
+    from ._io import PureVoxelImage
+
+    if isinstance(data, (np.ndarray, str, os.PathLike, PureVoxelImage)):
+        return None, voxel_size, "NumPy array"
+
+    # 1. STFC Core Imaging Library (CIL) ImageData / AcquisitionData
+    as_array_fn = getattr(data, "as_array", None)
+    if callable(as_array_fn):
+        arr = np.asarray(as_array_fn())
+        eff_vz = voxel_size
+        geom = getattr(data, "geometry", None)
+        if eff_vz is None and geom is not None:
+            vz_attrs = (
+                getattr(geom, "voxel_size_z", None),
+                getattr(geom, "voxel_size_y", None),
+                getattr(geom, "voxel_size_x", None),
+            )
+            if all(v is not None for v in vz_attrs):
+                try:
+                    cand = (float(vz_attrs[0]), float(vz_attrs[1]), float(vz_attrs[2]))
+                    if all(np.isfinite(c) and c > 0.0 for c in cand):
+                        eff_vz = cand
+                except (TypeError, ValueError):
+                    pass
+        return arr, eff_vz, f"CIL {type(data).__name__}"
+
+    # 2. xarray.DataArray (dims + coords + values)
+    if hasattr(data, "dims") and hasattr(data, "coords") and hasattr(data, "values"):
+        arr = np.asarray(getattr(data, "values"))
+        eff_vz = voxel_size
+        dims = getattr(data, "dims")
+        coords = getattr(data, "coords")
+        if eff_vz is None and isinstance(dims, tuple) and len(dims) == 3:
+            spacings: list[float] = []
+            for dname in dims:
+                if dname in coords:
+                    cvals = np.asarray(coords[dname])
+                    if cvals.ndim == 1 and cvals.size >= 2 and np.issubdtype(cvals.dtype, np.number):
+                        step = abs(float(cvals[1]) - float(cvals[0]))
+                        if np.isfinite(step) and step > 0.0:
+                            spacings.append(step)
+            if len(spacings) == 3:
+                eff_vz = (spacings[0], spacings[1], spacings[2])
+        return arr, eff_vz, f"{type(data).__name__}"
+
+    # 3. Generic 3-D array-protocol or sliceable dataset (zarr.Array, h5py.Dataset, etc.)
+    if hasattr(data, "__array__") or (
+        hasattr(data, "shape") and hasattr(data, "dtype") and hasattr(data, "__getitem__")
+    ):
+        try:
+            arr = np.asarray(data[...]) if not hasattr(data, "__array__") else np.asarray(data)
+            return arr, voxel_size, f"{type(data).__name__}"
+        except Exception:
+            pass
+
+    return None, voxel_size, "input"
+
+
 def _resolve_pure_input(
     data: DataInputArg,
     voxel_size: Optional[VoxelSizeArg] = None,
@@ -524,8 +594,14 @@ def _resolve_pure_input(
         vz = data.voxel_size if voxel_size is None else _normalize_voxel_size(voxel_size)
         return np.asarray(data, dtype=np.int32), vz
 
+    ext_arr, ext_vz, ext_desc = _unwrap_external_volume(data, voxel_size)
+    if ext_arr is not None:
+        if ext_arr.ndim != 3:
+            raise ValueError(f"Expected a 3-D volume from {ext_desc}, got shape {ext_arr.shape}")
+        return _coerce_phase_array(ext_arr, source_desc=ext_desc), _normalize_voxel_size(ext_vz)
+
     if not isinstance(data, np.ndarray):
-        raise TypeError("data must be a 3-D NumPy array, VoxelImage, or file path")
+        raise TypeError("data must be a 3-D NumPy array, VoxelImage, CIL/xarray volume, or file path")
     if data.ndim != 3:
         raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
     return _coerce_phase_array(data, source_desc="NumPy array"), _normalize_voxel_size(voxel_size)
@@ -536,7 +612,7 @@ def _numpy_to_voxelimage(
     max_grid_size: Union[int, str] = "auto",
     voxel_size: Optional[VoxelSizeArg] = None,
 ):
-    """Convert a 3-D NumPy array, path, or VoxelImage into a C++ VoxelImage."""
+    """Convert a 3-D NumPy array, path, CIL/xarray volume, or VoxelImage into a C++ VoxelImage."""
     from ._io import PureVoxelImage, read_zarr_volume
 
     _core = _get_core()
@@ -568,7 +644,14 @@ def _numpy_to_voxelimage(
         voxel_size = vz
 
     if not isinstance(data, np.ndarray):
-        raise TypeError("data must be a 3-D NumPy array, VoxelImage, or file path")
+        ext_arr, ext_vz, ext_desc = _unwrap_external_volume(data, voxel_size)
+        if ext_arr is not None:
+            data = ext_arr
+            voxel_size = ext_vz
+            src_desc = ext_desc
+
+    if not isinstance(data, np.ndarray):
+        raise TypeError("data must be a 3-D NumPy array, VoxelImage, CIL/xarray volume, or file path")
 
     if data.ndim != 3:
         raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
@@ -1359,26 +1442,49 @@ def rev_study(
 def estimate_memory(
     shape: tuple[int, ...],
     num_ranks: int = 1,
+    *,
+    solver: str = "hypre",
+    mpi_ranks: Optional[int] = None,
 ) -> dict:
-    """Estimate per-rank memory usage for a tortuosity solve."""
+    """Estimate per-rank memory usage for a 3-D transport solve."""
+    ranks = max(int(mpi_ranks if mpi_ranks is not None else num_ranks), 1)
     total = int(np.prod(shape))
-    per_rank = total / max(num_ranks, 1)
-    bytes_per_rank = per_rank * 80
+    per_rank = total / ranks
+    s_norm = solver.strip().lower()
+    bytes_per_voxel = 36 if s_norm == "mlmg" else 80
+    bytes_per_rank = per_rank * bytes_per_voxel
+    gb_val = round(bytes_per_rank / 1e9, 2)
     return {
         "total_voxels": total,
         "voxels_per_rank": int(per_rank),
         "bytes_per_rank": int(bytes_per_rank),
         "mb_per_rank": round(bytes_per_rank / 1e6, 1),
-        "gb_per_rank": round(bytes_per_rank / 1e9, 2),
-        "num_ranks": num_ranks,
+        "gb_per_rank": gb_val,
+        "per_rank_gb": gb_val,
+        "num_ranks": ranks,
+        "mpi_ranks": ranks,
+        "solver": s_norm,
     }
 
 
 def build_info() -> dict:
     """Return compile-time + runtime feature flags for the installed wheel."""
     from . import __version__
+    from .session import _probe_core, _requested_backend
 
-    if _is_pure_python() or not _has_core():
+    req = _requested_backend()
+    if req == "pure":
+        core_ok = False
+        core_err = "Disabled via OPENIMPALA_BACKEND=pure"
+    elif _is_pure_python():
+        core_ok = False
+        core_err = Session._core_load_error
+        if core_err is None:
+            _, core_err = _probe_core()
+    else:
+        core_ok, core_err = _probe_core()
+
+    if _is_pure_python() or not core_ok:
         try:
             import cupy  # noqa: F401
 
@@ -1387,6 +1493,8 @@ def build_info() -> dict:
             has_cupy = False
         return {
             "backend": "pure-python",
+            "core_available": False,
+            "core_load_error": core_err,
             "cuda_enabled": has_cupy,
             "hip_enabled": False,
             "gpu_enabled": has_cupy,
@@ -1410,6 +1518,8 @@ def build_info() -> dict:
         info["backend"] = "cpp-hip"
     else:
         info["backend"] = "cpp-cpu"
+    info["core_available"] = True
+    info["core_load_error"] = None
     info["version"] = __version__
     return info
 

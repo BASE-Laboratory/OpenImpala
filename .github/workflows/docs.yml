@@ -10,6 +10,9 @@ on:
       - 'tutorials/**'
       - 'Doxyfile'
       - 'docs/**'
+      - 'paper.md'
+      - 'paper.bib'
+      - 'Overview.png'
       - '.github/workflows/docs.yml'
   pull_request:
     branches: [master]
@@ -19,6 +22,9 @@ on:
       - 'tutorials/**'
       - 'Doxyfile'
       - 'docs/**'
+      - 'paper.md'
+      - 'paper.bib'
+      - 'Overview.png'
       - '.github/workflows/docs.yml'
   workflow_dispatch:  # Allow manual triggering
 
@@ -64,6 +70,30 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/_build/html
+
+  joss-paper:
+    name: Build JOSS Paper PDF
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile paper.md via openjournals/inara
+        run: |
+          docker run --rm \
+            --volume "$PWD:/data" \
+            --user "$(id -u):$(id -g)" \
+            --env JOURNAL=joss \
+            openjournals/inara:latest \
+            -o pdf paper.md
+          test -s paper.pdf
+          ls -lh paper.pdf
+
+      - name: Upload JOSS paper.pdf artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: joss-paper-pdf
+          path: paper.pdf
 
   deploy:
     name: Deploy to GitHub Pages

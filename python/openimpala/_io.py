@@ -181,6 +181,29 @@ class PureVoxelImage:
     ) -> "PureVoxelImage":
         return PureVoxelImage(self._arr, dx=dx, dy=dy, dz=dz, periodic=periodic)
 
+    def downsample(
+        self,
+        factor: Union[int, Sequence[int]] = 2,
+        *,
+        mode: str = "majority",
+        max_grid_size: int = 32,
+    ) -> "PureVoxelImage":
+        """Return a coarsened ``VoxelImage`` with physical ``voxel_size`` scaled by *factor*."""
+        del max_grid_size
+        arr_ds, (dz_new, dy_new, dx_new) = downsample_volume(
+            self._arr,
+            factor=factor,
+            mode=mode,
+            voxel_size=self.voxel_size,
+        )
+        return PureVoxelImage(
+            np.ascontiguousarray(arr_ds, dtype=np.int32),
+            dx=dx_new,
+            dy=dy_new,
+            dz=dz_new,
+            periodic=self._periodic,
+        )
+
     @property
     def shape(self) -> tuple[int, int, int]:
         nz, ny, nx = self._arr.shape
@@ -1085,4 +1108,147 @@ def write_amrex_plotfile(
     ]
     (level_dir / "Cell_H").write_text("\n".join(cell_h_lines) + "\n", encoding="ascii")
     return out_dir
+
+
+def _parse_downsample_factors(factor: Union[int, Sequence[int]]) -> tuple[int, int, int]:
+    if isinstance(factor, bool):
+        raise ValueError(f"factor must be an int >= 1 or 3-tuple of ints, got {factor!r}")
+    if isinstance(factor, (int, np.integer)):
+        f = int(factor)
+        if f < 1:
+            raise ValueError(f"factor must be >= 1, got {factor!r}")
+        return (f, f, f)
+    try:
+        seq = tuple(factor)
+    except TypeError as exc:
+        raise TypeError("factor must be an integer >= 1 or a 3-tuple (fz, fy, fx)") from exc
+    if len(seq) != 3:
+        raise ValueError(f"factor tuple must have length 3 (fz, fy, fx), got {factor!r}")
+    out: list[int] = []
+    for item in seq:
+        if isinstance(item, bool) or not isinstance(item, (int, np.integer)):
+            raise ValueError(f"factor entries must be integers >= 1, got {factor!r}")
+        iv = int(item)
+        if iv < 1:
+            raise ValueError(f"factor entries must be >= 1, got {factor!r}")
+        out.append(iv)
+    return (out[0], out[1], out[2])
+
+
+def downsample_volume(
+    array: np.ndarray,
+    factor: Union[int, Sequence[int]] = 2,
+    *,
+    mode: str = "majority",
+    voxel_size: Optional[Union[float, Sequence[float]]] = None,
+) -> Union[np.ndarray, tuple[np.ndarray, tuple[float, float, float]]]:
+    """Coarsen a 3-D ``(Nz, Ny, Nx)`` volume by integer block factors.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        3-D segmented phase array or grayscale tomogram with shape ``(Nz, Ny, Nx)``.
+    factor : int or (int, int, int), default 2
+        Isotropic coarsening factor or per-axis ``(fz, fy, fx)`` integer factors.
+        Trailing slices that do not fill a complete ``(fz, fy, fx)`` block are trimmed.
+    mode : {"majority", "mean", "nearest"}, default "majority"
+        * ``"majority"`` (or ``"mode"``): exact per-block modal phase ID (ties broken
+          deterministically toward the smallest phase label), preserving discrete
+          segmented labels without creating phantom intermediate values.
+        * ``"mean"`` (or ``"average"``): block arithmetic mean for grayscale volumes
+          prior to thresholding.
+        * ``"nearest"`` (or ``"stride"``): strided subsampling ``array[::fz, ::fy, ::fx]``.
+    voxel_size : float or (float, float, float), optional
+        If supplied, returns ``(coarsened_array, (dz * fz, dy * fy, dx * fx))``.
+        If omitted, returns ``coarsened_array`` directly.
+    """
+    arr = np.asarray(array)
+    if arr.ndim != 3:
+        raise ValueError(f"Expected a 3-D volume (Nz, Ny, Nx), got shape {arr.shape}")
+
+    fz, fy, fx = _parse_downsample_factors(factor)
+    nz, ny, nx = arr.shape
+    if nz < fz or ny < fy or nx < fx:
+        raise ValueError(
+            f"Downsample factor {(fz, fy, fx)} exceeds volume shape {arr.shape}"
+        )
+
+    mode_norm = mode.strip().lower()
+    if mode_norm not in ("majority", "mode", "mean", "average", "nearest", "stride"):
+        raise ValueError(
+            f"Unsupported downsample mode {mode!r}. Expected 'majority', 'mean', or 'nearest'."
+        )
+
+    if mode_norm in ("majority", "mode") and np.issubdtype(arr.dtype, np.floating):
+        if not np.all(np.isfinite(arr)) or not np.array_equal(arr, np.trunc(arr)):
+            raise ValueError(
+                "mode='majority' requires discrete integer phase IDs, but got "
+                f"floating-point values (dtype={arr.dtype}). Use mode='mean' to "
+                "coarsen grayscale volumes before thresholding."
+            )
+
+    vz_scaled: Optional[tuple[float, float, float]] = None
+    if voxel_size is not None:
+        if isinstance(voxel_size, (int, float, np.floating, np.integer)):
+            v = float(voxel_size)
+            if not np.isfinite(v) or v <= 0.0:
+                raise ValueError(f"voxel_size must be positive and finite, got {voxel_size!r}")
+            dz, dy, dx = v, v, v
+        else:
+            seq_vz = tuple(float(x) for x in voxel_size)
+            if len(seq_vz) != 3 or any((not np.isfinite(v) or v <= 0.0) for v in seq_vz):
+                raise ValueError(
+                    f"voxel_size must have 3 positive finite entries (dz, dy, dx), got {voxel_size!r}"
+                )
+            dz, dy, dx = seq_vz
+        vz_scaled = (dz * fz, dy * fy, dx * fx)
+
+    nz_t = (nz // fz) * fz
+    ny_t = (ny // fy) * fy
+    nx_t = (nx // fx) * fx
+    trimmed = arr[:nz_t, :ny_t, :nx_t]
+
+    if (fz, fy, fx) == (1, 1, 1):
+        if mode_norm in ("majority", "mode"):
+            out = np.ascontiguousarray(trimmed, dtype=np.int32)
+        elif mode_norm in ("mean", "average"):
+            dt = np.float32 if arr.dtype == np.float32 else np.float64
+            out = np.ascontiguousarray(trimmed, dtype=dt)
+        else:
+            out = np.ascontiguousarray(trimmed.copy())
+        return (out, vz_scaled) if vz_scaled is not None else out
+
+    oz, oy, ox = nz_t // fz, ny_t // fy, nx_t // fx
+    if mode_norm in ("nearest", "stride"):
+        out = np.ascontiguousarray(trimmed[::fz, ::fy, ::fx])
+        return (out, vz_scaled) if vz_scaled is not None else out
+
+    blocks = trimmed.reshape(oz, fz, oy, fy, ox, fx).transpose(0, 2, 4, 1, 3, 5)
+    flat_blocks = blocks.reshape(oz, oy, ox, fz * fy * fx)
+
+    if mode_norm in ("mean", "average"):
+        dt = np.float32 if arr.dtype == np.float32 else np.float64
+        out = np.ascontiguousarray(flat_blocks.mean(axis=-1, dtype=np.float64), dtype=dt)
+        return (out, vz_scaled) if vz_scaled is not None else out
+
+    int_blocks = flat_blocks.astype(np.int32, copy=False)
+    uniq = np.unique(int_blocks)
+    if uniq.size == 1:
+        out = np.full((oz, oy, ox), int(uniq[0]), dtype=np.int32)
+    elif uniq.size <= 32:
+        out = np.empty((oz, oy, ox), dtype=np.int32)
+        best_count = np.full((oz, oy, ox), -1, dtype=np.int32)
+        for lbl in uniq:
+            cnt = np.sum(int_blocks == lbl, axis=-1, dtype=np.int32)
+            win = cnt > best_count
+            out[win] = int(lbl)
+            best_count[win] = cnt[win]
+    else:
+        from scipy import stats
+
+        mode_res = stats.mode(int_blocks, axis=-1, keepdims=False)
+        out = np.ascontiguousarray(mode_res.mode, dtype=np.int32)
+
+    return (out, vz_scaled) if vz_scaled is not None else out
+
 

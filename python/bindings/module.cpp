@@ -31,6 +31,9 @@
 #ifdef AMREX_USE_GPU
 #include <AMReX_Gpu.H>
 #endif
+#ifdef AMREX_USE_CUDA
+#include <cuda_runtime_api.h>
+#endif
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -53,6 +56,16 @@ void init_config(py::module_& m);
 // =========================================================================
 static void init_amrex() {
     if (!amrex::Initialized()) {
+#ifdef AMREX_USE_CUDA
+        int dev_count = 0;
+        cudaError_t cerr = cudaGetDeviceCount(&dev_count);
+        if (cerr != cudaSuccess || dev_count <= 0) {
+            throw std::runtime_error(
+                std::string("OpenImpala CUDA backend found no active NVIDIA GPU (") +
+                cudaGetErrorString(cerr) +
+                "). Switch to a GPU runtime/compute node or set OPENIMPALA_BACKEND=pure.");
+        }
+#endif
         // Initialise with ParmParse defaults that play nicely with smaller GPUs
         // (T4 on Colab has ~15 GB and AMReX's default arena tries to grab most
         // of it upfront). Use lazy allocation instead.

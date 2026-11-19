@@ -60,7 +60,7 @@ if(OPENIMPALA_PURE_PYTHON)
     file(GLOB _OPENIMPALA_PY_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/python/openimpala/*.py"
     )
-    install(FILES ${_OPENIMPALA_PY_FILES}
+    install(FILES ${_OPENIMPALA_PY_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/python/openimpala/py.typed"
         DESTINATION openimpala
         COMPONENT python
     )

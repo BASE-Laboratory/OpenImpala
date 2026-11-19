@@ -84,6 +84,7 @@ endif()
 install(TARGETS _core LIBRARY DESTINATION openimpala COMPONENT python)
 install(FILES
     openimpala/__init__.py
+    openimpala/py.typed
     openimpala/session.py
     openimpala/exceptions.py
     openimpala/facade.py

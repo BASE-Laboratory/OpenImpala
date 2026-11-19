@@ -32,12 +32,14 @@ def _detect_version() -> str:
     pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     if pyproject.is_file():
         try:
-            m = re.search(
-                r'(?m)^(?:fallback_)?version\s*=\s*"([^"]+)"',
-                pyproject.read_text(encoding="utf-8"),
-            )
-            if m:
-                return m.group(1)
+            text = pyproject.read_text(encoding="utf-8")
+            if re.search(r'(?m)^name\s*=\s*"openimpala(?:-cuda)?"\s*$', text):
+                m = re.search(
+                    r'(?m)^(?:fallback_)?version\s*=\s*"([^"]+)"',
+                    text,
+                )
+                if m:
+                    return m.group(1)
         except OSError:
             pass
     for dist_name in ("openimpala", "openimpala-cuda"):
@@ -107,7 +109,7 @@ def _augment_core_voxelimage(_core) -> None:
     if vcls is None or hasattr(vcls, "from_grayscale_otsu"):
         return
 
-    from ._io import binarize_otsu, read_zarr_volume, write_zarr_volume
+    from ._io import binarize_otsu, downsample_volume, read_zarr_volume, write_zarr_volume
 
     def _from_grayscale_otsu(
         cls,
@@ -207,9 +209,33 @@ def _augment_core_voxelimage(_core) -> None:
             overwrite=overwrite,
         )
 
+    def _downsample(
+        self,
+        factor=2,
+        *,
+        mode: str = "majority",
+        max_grid_size: int = 32,
+    ):
+        import numpy as np
+
+        arr_ds, (dz_new, dy_new, dx_new) = downsample_volume(
+            self.to_numpy(),
+            factor=factor,
+            mode=mode,
+            voxel_size=self.voxel_size,
+        )
+        return type(self).from_numpy(
+            np.ascontiguousarray(arr_ds, dtype=np.int32),
+            max_grid_size=max_grid_size,
+            dx=dx_new,
+            dy=dy_new,
+            dz=dz_new,
+        )
+
     setattr(vcls, "from_grayscale_otsu", classmethod(_from_grayscale_otsu))
     setattr(vcls, "from_zarr", classmethod(_from_zarr))
     setattr(vcls, "to_zarr", _to_zarr)
+    setattr(vcls, "downsample", _downsample)
 
 
 def _load_core():
@@ -261,6 +287,7 @@ def __getattr__(name):
         "calculate_otsu_threshold",
         "otsu_threshold",
         "binarize_otsu",
+        "downsample_volume",
         "read_zarr_volume",
         "write_zarr_volume",
         "write_amrex_plotfile",
@@ -276,9 +303,14 @@ def __getattr__(name):
         return getattr(_io, name)
 
     if name in _CORE_ATTRS:
+        from .session import _requested_backend
+
+        if name == "VoxelImage" and (Session._pure_python or _requested_backend() == "pure"):
+            _io = importlib.import_module("openimpala._io")
+            return _io.PureVoxelImage
         try:
             _core = _load_core()
-        except ImportError:
+        except (ImportError, OSError):
             if name == "VoxelImage":
                 _io = importlib.import_module("openimpala._io")
                 return _io.PureVoxelImage
@@ -331,6 +363,7 @@ __all__ = [
     "calculate_otsu_threshold",
     "otsu_threshold",
     "binarize_otsu",
+    "downsample_volume",
     "read_zarr_volume",
     "write_zarr_volume",
     "write_amrex_plotfile",
