@@ -20,7 +20,7 @@ cmake_minimum_required(VERSION 3.18)
 # Falls back to OPENIMPALA_FALLBACK_VERSION when building outside a Git
 # repository or when no tag is reachable (e.g. shallow clone without --tags).
 # ---------------------------------------------------------------------------
-set(OPENIMPALA_FALLBACK_VERSION "4.7.0")
+set(OPENIMPALA_FALLBACK_VERSION "5.0.0")
 
 find_package(Git QUIET)
 if(GIT_FOUND)

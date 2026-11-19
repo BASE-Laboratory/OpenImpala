@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -51,10 +52,21 @@ void init_props(py::module_& m);
 void init_solvers(py::module_& m);
 void init_config(py::module_& m);
 
+static bool g_tiny_profile_active = false;
+
+static bool env_profile_requested() {
+    const char* raw = std::getenv("OPENIMPALA_PROFILE");
+    if (raw == nullptr) {
+        return false;
+    }
+    std::string val(raw);
+    return val == "1" || val == "true" || val == "TRUE" || val == "on" || val == "ON";
+}
+
 // =========================================================================
 // AMReX lifecycle — replaces amrex.initialize() / amrex.finalize()
 // =========================================================================
-static void init_amrex() {
+static void init_amrex(bool verbose = false) {
     if (!amrex::Initialized()) {
 #ifdef AMREX_USE_CUDA
         int dev_count = 0;
@@ -66,13 +78,20 @@ static void init_amrex() {
                 "). Switch to a GPU runtime/compute node or set OPENIMPALA_BACKEND=pure.");
         }
 #endif
+        const bool enable_profile = verbose || env_profile_requested();
         // Initialise with ParmParse defaults that play nicely with smaller GPUs
         // (T4 on Colab has ~15 GB and AMReX's default arena tries to grab most
-        // of it upfront). Use lazy allocation instead.
+        // of it upfront) and stay quiet in scripts/notebooks unless verbose/profiling
+        // output is explicitly requested.
         std::vector<std::string> argv_storage = {
             "openimpala",
             "amrex.the_arena_init_size=0",
         };
+        if (!enable_profile) {
+            argv_storage.emplace_back("amrex.v=0");
+            argv_storage.emplace_back("tiny_profiler.enabled=0");
+            argv_storage.emplace_back("tiny_profiler.memprof_enabled=0");
+        }
         std::vector<char*> argv_ptrs;
         argv_ptrs.reserve(argv_storage.size() + 1);
         for (auto& s : argv_storage) {
@@ -85,12 +104,18 @@ static void init_amrex() {
         int argc = static_cast<int>(argv_storage.size());
         char** argv = argv_ptrs.data();
         amrex::Initialize(argc, argv);
+#ifdef AMREX_TINY_PROFILING
+        g_tiny_profile_active = enable_profile;
+#else
+        g_tiny_profile_active = false;
+#endif
     }
 }
 
 static void finalize_amrex() {
     if (amrex::Initialized()) {
         amrex::Finalize();
+        g_tiny_profile_active = false;
     }
 }
 
@@ -160,9 +185,11 @@ static py::dict build_info() {
     info["mpi_rank"] = mpi_rank();
 
 #ifdef AMREX_TINY_PROFILING
-    info["tiny_profile"] = true;
+    info["tiny_profile"] = g_tiny_profile_active;
+    info["tiny_profile_compiled"] = true;
 #else
     info["tiny_profile"] = false;
+    info["tiny_profile_compiled"] = false;
 #endif
 
 #ifdef HYPRE_USING_CUDA
@@ -317,8 +344,9 @@ PYBIND11_MODULE(_core, m) {
               "computation on 3-D voxel images of porous microstructures.";
 
     // --- AMReX lifecycle ---
-    m.def("init_amrex", &init_amrex,
-          "Initialise the AMReX runtime (no-op if already initialised).");
+    m.def("init_amrex", &init_amrex, py::arg("verbose") = false,
+          "Initialise the AMReX runtime (no-op if already initialised). "
+          "Pass verbose=True or set OPENIMPALA_PROFILE=1 to enable AMReX/TinyProfiler output.");
     m.def("finalize_amrex", &finalize_amrex,
           "Shut down the AMReX runtime (no-op if not initialised).");
     m.def("amrex_initialized", &amrex_initialized,

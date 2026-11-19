@@ -6,17 +6,18 @@
 
 :::{tab-item} Linux (CPU + MPI)
 ```bash
-pip install openimpala
+pip install "openimpala[openmpi]"   # installs compiled wheel + OpenMPI runtime
 ```
-On Linux `x86_64`, `openimpala` installs pre-built C++ bindings powered by AMReX and HYPRE. For multi-rank MPI execution from Python, also install an OpenMPI runtime and `mpi4py`:
+On HPC clusters that already provide OpenMPI via environment modules, load your cluster module first and install `openimpala` + `mpi4py`:
 ```bash
-pip install mpi4py
+module load openmpi
+pip install openimpala mpi4py
 ```
 :::
 
 :::{tab-item} Linux (CUDA 12 GPU)
 ```bash
-pip install openimpala-cuda
+pip install openimpala-cuda openmpi
 ```
 `openimpala-cuda` is a drop-in replacement compiled with native CUDA 12 support for AMReX and HYPRE structured solvers (`sm_75` Turing or newer; pre-installed CUDA drivers on Google Colab and GPU cluster nodes work out of the box). Do not install `openimpala` and `openimpala-cuda` in the same virtual environment; both provide the `openimpala` import namespace.
 :::
@@ -31,9 +32,9 @@ On macOS (Apple Silicon and Intel), Windows, and Linux ARM64, `openimpala` insta
 :::{tab-item} HPC Container (Apptainer)
 Pre-built Apptainer (`.sif`) images are attached to each [GitHub Release](https://github.com/BASE-Laboratory/OpenImpala/releases):
 ```bash
-wget https://github.com/BASE-Laboratory/OpenImpala/releases/download/v4.7.0/openimpala-v4.7.0.sif
+wget https://github.com/BASE-Laboratory/OpenImpala/releases/download/v5.0.0/openimpala-v5.0.0.sif
 
-apptainer exec -B "$(pwd):/data" openimpala-v4.7.0.sif \
+apptainer exec -B "$(pwd):/data" openimpala-v5.0.0.sif \
     /usr/bin/Diffusion /data/inputs
 ```
 :::
@@ -68,8 +69,8 @@ print(f"eps = {vf.fraction:.4f}, tau_z = {res.tortuosity:.4f}, D_eff/D0 = {res.e
 ```
 
 :::{note}
-**Session Lifecycle (`oi.Session`)**
-In interactive Python sessions and Jupyter notebooks, OpenImpala automatically starts a process-level session on the first API call and cleans up at interpreter exit. In multi-rank `mpirun` batch scripts, wrap your workflow in `with oi.Session():` so `AMReX::Finalize()` executes deterministically before `MPI_Finalize()`.
+**Session Lifecycle & Profiling (`oi.Session`)**
+In interactive Python sessions and Jupyter notebooks, OpenImpala automatically starts a quiet process-level session on the first API call and cleans up at interpreter exit. In multi-rank `mpirun` batch scripts, wrap your workflow in `with oi.Session():` so `AMReX::Finalize()` executes deterministically before `MPI_Finalize()`. Pass `with oi.Session(verbose=True):` (or set `OPENIMPALA_PROFILE=1`) to print AMReX `TinyProfiler` timing and Arena memory tables on exit.
 :::
 
 ## Reading 3D Image Files

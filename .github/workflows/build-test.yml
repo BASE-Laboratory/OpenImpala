@@ -300,6 +300,9 @@ jobs:
                 /usr/bin/python3.11 tests/validation/analytical_bounds_vv.py --grid-size 24 --no-plot
               PYTHONPATH=/src/python \
                 /usr/bin/python3.11 tests/validation/sphere_packing_vv.py --grid-size 24 --output /tmp/vv_spheres.png
+              PYTHONPATH=/src/python \
+                /usr/bin/python3.11 tests/validation/wheel_analytical_vv.py \
+                  --expected-backend cpp-cpu --compare-pure --check-silent-exit
             '
             
   coverage:

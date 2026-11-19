@@ -6,9 +6,9 @@ OpenImpala provides two compiled C++ multigrid solver families—matrix-free **A
 
 By default, `oi.tortuosity(..., solver="auto")` selects AMReX's matrix-free geometric multigrid solver (`MLABecLaplacian` + V-cycle multigrid):
 
-- **Matrix-free**: evaluates the 7-point harmonic-face stencil on the fly without allocating a 7-band sparse matrix.
-- **~3x lower memory footprint**: requires roughly 24–30 bytes per voxel compared to ~70 bytes per voxel for HYPRE `StructMatrix`, enabling larger single-GPU and single-node volumes.
-- **CPU + CUDA native**: executes identical AMReX `ParallelFor` kernels across OpenMP threads and NVIDIA GPUs.
+- **Matrix-free**: evaluates the 7-point harmonic-face stencil on the fly without assembling an explicit 7-band sparse matrix or storing Krylov subspace basis vectors.
+- **3.2×–4.4× lower memory footprint than FlexGMRES+PFMG/SMG**: requires roughly **~304–319 bytes per voxel** across the full multigrid hierarchy (including 3-axis face conductances, ghost halos, and V-cycle levels), compared to **~1,016 bytes per voxel** for HYPRE `FlexGMRES + PFMG` and **~1,390 bytes per voxel** for `FlexGMRES + SMG`.
+- **CPU + CUDA native**: executes identical AMReX `ParallelFor` kernels across OpenMP threads and NVIDIA GPUs with grid-independent V-cycle counts ($11$–$18$ iterations from $32^3$ to $256^3$).
 
 ```python
 import openimpala as oi
@@ -16,6 +16,18 @@ import openimpala as oi
 vol = oi.datasets.two_phase_cubic()
 res = oi.tortuosity(vol, phase=1, direction="z", solver="mlmg", mlmg_eps=1e-9)
 ```
+
+### Measured Memory & Runtime Comparison
+
+Measured on 3D Gaussian random porous media ($\phi = 0.50$, two `x86_64` OpenMP threads; all solvers agree to $|\Delta\tau| < 4\times 10^{-8}$):
+
+| Solver Backend | $64^3$ Peak RAM | $128^3$ Time | $128^3$ Peak RAM | Footprint | $256^3$ ($16.8\text{M}$ vox) |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| **AMReX `mlmg` (default)** | **75 MB** | **4.06 s** | **638 MB** | **~304–319 B/vox** | **33.1 s / 4,856 MB** |
+| HYPRE `pcg` + `pfmg` | 95 MB | 21.91 s | 710 MB | ~355–380 B/vox | — |
+| HYPRE `flexgmres` + `pfmg` | 268 MB | 33.34 s | 2,031 MB | ~1,016–1,073 B/vox | — |
+| HYPRE `flexgmres` + `smg` | 347 MB | 66.87 s | 2,779 MB | ~1,388–1,414 B/vox | — |
+| Pure-Python (`SciPy CG`) | 82 MB | 34.89 s | 699 MB | ~328–350 B/vox | — |
 
 ## HYPRE Structured Solvers
 

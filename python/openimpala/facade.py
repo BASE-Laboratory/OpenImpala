@@ -675,7 +675,7 @@ def _numpy_to_voxelimage(
 
 def volume_fraction(
     data: DataInputArg,
-    phase: int = 0,
+    phase: int,
     *,
     max_grid_size: Union[int, str] = "auto",
 ) -> VolumeFractionResult:
@@ -699,7 +699,7 @@ def volume_fraction(
 
 def percolation_check(
     data: DataInputArg,
-    phase: int = 0,
+    phase: int,
     direction: Union[str, "Direction"] = "x",
     *,
     max_grid_size: Union[int, str] = "auto",
@@ -733,7 +733,7 @@ def percolation_check(
 
 def tortuosity(
     data: DataInputArg,
-    phase: int = 0,
+    phase: Optional[int] = None,
     direction: Union[str, "Direction"] = "x",
     solver: Union[str, "SolverType"] = "auto",
     *,
@@ -757,7 +757,7 @@ def tortuosity(
         3-D integer array of phase IDs ``(Nz, Ny, Nx)``, ``VoxelImage`` handle,
         or path to a supported 3-D volume file (TIFF, HDF5, RAW, DAT, NPY, Zarr).
     phase : int
-        Conducting phase ID when *phase_diffusivities* is ``None``.
+        Conducting phase ID (required when *phase_diffusivities* is ``None``).
     direction : str or Direction
         Flow direction (``'x'``, ``'y'``, or ``'z'``).
     solver : str or SolverType
@@ -780,8 +780,14 @@ def tortuosity(
         *results_path* (readable out-of-core via ``yt.load()`` and ParaView)
         and populate ``result.plotfile_path``.
     """
-    _ensure_initialized()
     phase_map = _normalize_phase_diffusivities(phase_diffusivities)
+    if phase is None and not phase_map:
+        raise TypeError(
+            "tortuosity() missing required argument: 'phase' "
+            "(pass e.g. phase=0 or phase=1, or specify phase_diffusivities={...})"
+        )
+    eff_phase = int(phase) if phase is not None else int(next(iter(phase_map)))
+    _ensure_initialized()
 
     if _is_pure_python():
         from . import _solver
@@ -792,7 +798,7 @@ def tortuosity(
         need_field = bool(return_field or write_plotfile)
         result = _solver.solve_tortuosity(
             arr,
-            phase=phase,
+            phase=eff_phase,
             direction=2 - d,
             voxel_size=vz,
             phase_diffusivities=phase_map if phase_map else None,
@@ -806,7 +812,7 @@ def tortuosity(
         plt_path: Optional[str] = None
         if write_plotfile:
             _, _, active_mask = _solver.percolation_check(
-                arr, phase, 2 - d, phase_diffusivities=phase_map if phase_map else None
+                arr, eff_phase, 2 - d, phase_diffusivities=phase_map if phase_map else None
             )
             is_mlmg = isinstance(solver, str) and solver.strip().lower() in ("auto", "mlmg")
             subdir = f"tortuosity_mlmg_{d}" if is_mlmg else f"tortuosity_solution_{d}"
@@ -848,12 +854,12 @@ def tortuosity(
             if coeff > 0.0
         )
     else:
-        vf_val = _core.VolumeFraction(img, phase, 0).value_vf()
+        vf_val = _core.VolumeFraction(img, eff_phase, 0).value_vf()
 
     if vf_val <= 0.0:
         dir_name = _core.PercolationCheck.direction_string(d)
         raise PercolationError(
-            f"Phase {phase} does not percolate in the {dir_name} direction. "
+            f"Phase {eff_phase} does not percolate in the {dir_name} direction. "
             f"The Krylov solver cannot converge when the conducting phase is "
             f"disconnected between the inlet and outlet faces."
         )
@@ -877,7 +883,7 @@ def tortuosity(
         solver_obj = _core.TortuosityMLMG(
             img,
             vf_val,
-            phase,
+            eff_phase,
             d,
             results_path,
             0.0,
@@ -892,7 +898,7 @@ def tortuosity(
         solver_obj = _core.TortuosityHypre(
             img,
             vf_val,
-            phase,
+            eff_phase,
             d,
             st,
             results_path,
@@ -908,7 +914,7 @@ def tortuosity(
     if solver_obj.active_volume_fraction <= 0.0:
         dir_name = _core.PercolationCheck.direction_string(d)
         raise PercolationError(
-            f"Phase {phase} does not percolate in the {dir_name} direction. "
+            f"Phase {eff_phase} does not percolate in the {dir_name} direction. "
             f"The Krylov solver cannot converge when the conducting phase is "
             f"disconnected between the inlet and outlet faces."
         )
@@ -944,7 +950,7 @@ def tortuosity(
 
 def tortuosity_all(
     data: DataInputArg,
-    phase: int = 0,
+    phase: Optional[int] = None,
     solver: Union[str, "SolverType"] = "auto",
     *,
     directions: Sequence[Union[str, "Direction"]] = ("x", "y", "z"),
@@ -967,6 +973,12 @@ def tortuosity_all(
     When ``strict=False`` (default), directions that do not percolate map to
     ``None`` instead of raising :class:`~openimpala.PercolationError`.
     """
+    phase_map = _normalize_phase_diffusivities(phase_diffusivities)
+    if phase is None and not phase_map:
+        raise TypeError(
+            "tortuosity_all() missing required argument: 'phase' "
+            "(pass e.g. phase=0 or phase=1, or specify phase_diffusivities={...})"
+        )
     _ensure_initialized()
 
     if _is_pure_python():
@@ -1008,7 +1020,7 @@ def tortuosity_all(
 
 def effective_diffusivity(
     data: DataInputArg,
-    phase: int = 1,
+    phase: Optional[int] = None,
     *,
     voxel_size: Optional[VoxelSizeArg] = None,
     phase_diffusivities: Optional[Mapping[int, float]] = None,
@@ -1024,8 +1036,14 @@ def effective_diffusivity(
     Solves the three periodic homogenisation cell problems in ``x``, ``y``, ``z``
     and returns ``EffectiveDiffusivityResult`` with ``tensor`` ordered ``(x, y, z)``.
     """
-    _ensure_initialized()
     phase_map = _normalize_phase_diffusivities(phase_diffusivities)
+    if phase is None and not phase_map:
+        raise TypeError(
+            "effective_diffusivity() missing required argument: 'phase' "
+            "(pass e.g. phase=0 or phase=1, or specify phase_diffusivities={...})"
+        )
+    eff_phase = int(phase) if phase is not None else int(next(iter(phase_map)))
+    _ensure_initialized()
 
     if _is_pure_python():
         from . import _solver
@@ -1035,7 +1053,7 @@ def effective_diffusivity(
         need_chi = bool(return_fields or write_plotfile)
         raw = _solver.solve_effective_diffusivity(
             arr,
-            phase=phase,
+            phase=eff_phase,
             voxel_size=vz,
             phase_diffusivities=phase_map if phase_map else None,
             return_chi=need_chi,
@@ -1052,7 +1070,7 @@ def effective_diffusivity(
                     arr, [pid for pid, coeff in phase_map.items() if coeff > 0.0]
                 ).astype(np.float64)
             else:
-                active_mask = (arr == phase).astype(np.float64)
+                active_mask = (arr == eff_phase).astype(np.float64)
             chi_map = raw["chi"]
             plt_paths = {}
             for d_idx, axis_name in enumerate(("x", "y", "z")):
@@ -1086,7 +1104,7 @@ def effective_diffusivity(
             _core.mpi_bcast_double(0.0)
     raw = _core.compute_effective_diffusivity_tensor(
         img,
-        phase_id=phase,
+        phase_id=eff_phase,
         solver_type=st,
         results_path=results_path,
         verbose=verbose,
@@ -1178,7 +1196,7 @@ def specific_surface_area(
 
 def connected_components(
     data: DataInputArg,
-    phase: int = 1,
+    phase: int,
     *,
     return_labels: bool = False,
     max_grid_size: Union[int, str] = "auto",
@@ -1214,7 +1232,7 @@ def connected_components(
 
 def particle_size_distribution(
     data: DataInputArg,
-    phase: int = 1,
+    phase: int,
     *,
     voxel_size: Optional[VoxelSizeArg] = None,
     max_grid_size: Union[int, str] = "auto",
@@ -1262,7 +1280,7 @@ def particle_size_distribution(
 
 def through_thickness_profile(
     data: DataInputArg,
-    phase: int = 1,
+    phase: int,
     direction: Union[str, "Direction"] = "x",
     *,
     voxel_size: Optional[VoxelSizeArg] = None,
@@ -1336,9 +1354,9 @@ def _summarize_rev_records(
 def rev_study(
     data: DataInputArg,
     sizes: Sequence[int],
+    phase: Optional[int] = None,
     *,
     num_samples: int = 3,
-    phase: int = 1,
     voxel_size: Optional[VoxelSizeArg] = None,
     solver: Union[str, "SolverType"] = "flexgmres",
     csv_path: Optional[str] = None,
@@ -1346,6 +1364,11 @@ def rev_study(
     verbose: int = 0,
 ) -> REVStudyResult:
     """Run a Representative Elementary Volume (REV) convergence study."""
+    if phase is None:
+        raise TypeError(
+            "rev_study() missing required argument: 'phase' (pass e.g. phase=0 or phase=1)"
+        )
+    eff_phase = int(phase)
     _ensure_initialized()
     size_list = [int(s) for s in sizes if int(s) > 0]
     if not size_list:
@@ -1361,7 +1384,7 @@ def rev_study(
             arr,
             sizes=size_list,
             num_samples=num_samples,
-            phase=phase,
+            phase=eff_phase,
             voxel_size=vz,
             csv_path=csv_path,
         )
@@ -1416,7 +1439,7 @@ def rev_study(
             img,
             sizes=size_list,
             num_samples=num_samples,
-            phase_id=phase,
+            phase_id=eff_phase,
             box_size=box_sz,
             solver_type=st,
             results_path=str(target_p.parent),
@@ -1432,7 +1455,7 @@ def rev_study(
             img,
             sizes=size_list,
             num_samples=num_samples,
-            phase_id=phase,
+            phase_id=eff_phase,
             box_size=box_sz,
             solver_type=st,
             results_path=tmpdir,
@@ -1449,19 +1472,37 @@ def estimate_memory(
     num_ranks: int = 1,
     *,
     solver: str = "hypre",
+    preconditioner: str = "pfmg",
     mpi_ranks: Optional[int] = None,
 ) -> dict:
-    """Estimate per-rank memory usage for a 3-D transport solve."""
+    """Estimate peak per-rank memory usage (in bytes/MB/GB) for a 3-D transport solve.
+
+    Uses empirically calibrated bytes-per-voxel footprints measured on the C++
+    AMReX/HYPRE multigrid hierarchies across :math:`64^3`–:math:`256^3` grids:
+    ``~310 B/voxel`` for matrix-free ``mlmg``, ``~365 B/voxel`` for ``pcg+pfmg``,
+    ``~1030 B/voxel`` for ``flexgmres+pfmg``, and ``~1400 B/voxel`` with ``smg``.
+    """
     ranks = max(int(mpi_ranks if mpi_ranks is not None else num_ranks), 1)
     total = int(np.prod(shape))
     per_rank = total / ranks
     s_norm = solver.strip().lower()
-    bytes_per_voxel = 36 if s_norm == "mlmg" else 80
+    p_norm = preconditioner.strip().lower()
+    if s_norm in ("mlmg", "auto"):
+        bytes_per_voxel = 310
+    elif s_norm == "pure":
+        bytes_per_voxel = 340
+    elif s_norm == "smg" or p_norm == "smg":
+        bytes_per_voxel = 1400 if s_norm in ("flexgmres", "gmres", "hypre") else 780
+    elif s_norm in ("pcg", "pfmg", "bicgstab", "jacobi"):
+        bytes_per_voxel = 365
+    else:
+        bytes_per_voxel = 1030
     bytes_per_rank = per_rank * bytes_per_voxel
     gb_val = round(bytes_per_rank / 1e9, 2)
     return {
         "total_voxels": total,
         "voxels_per_rank": int(per_rank),
+        "bytes_per_voxel": bytes_per_voxel,
         "bytes_per_rank": int(bytes_per_rank),
         "mb_per_rank": round(bytes_per_rank / 1e6, 1),
         "gb_per_rank": gb_val,

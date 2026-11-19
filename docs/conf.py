@@ -26,9 +26,9 @@ author = "James Le Houx"
 try:
     from openimpala import __version__ as _oi_version
 
-    release = _oi_version if _oi_version != "unknown" else "4.7.0"
+    release = _oi_version if _oi_version != "unknown" else "5.0.0"
 except Exception:
-    release = "4.7.0"
+    release = "5.0.0"
 version = ".".join(release.split(".")[:2])
 
 _DOXYGEN_XML_DIR = (_DOCS_DIR / "doxygen" / "xml").resolve()
