@@ -31,6 +31,9 @@
 #ifdef AMREX_USE_GPU
 #include <AMReX_Gpu.H>
 #endif
+#ifdef AMREX_USE_CUDA
+#include <cuda_runtime_api.h>
+#endif
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -53,6 +56,16 @@ void init_config(py::module_& m);
 // =========================================================================
 static void init_amrex() {
     if (!amrex::Initialized()) {
+#ifdef AMREX_USE_CUDA
+        int dev_count = 0;
+        cudaError_t cerr = cudaGetDeviceCount(&dev_count);
+        if (cerr != cudaSuccess || dev_count <= 0) {
+            throw std::runtime_error(
+                std::string("OpenImpala CUDA backend found no active NVIDIA GPU (") +
+                cudaGetErrorString(cerr) +
+                "). Switch to a GPU runtime/compute node or set OPENIMPALA_BACKEND=pure.");
+        }
+#endif
         // Initialise with ParmParse defaults that play nicely with smaller GPUs
         // (T4 on Colab has ~15 GB and AMReX's default arena tries to grab most
         // of it upfront). Use lazy allocation instead.
@@ -87,6 +100,21 @@ static bool amrex_initialized() {
 
 static int mpi_ranks() {
     return amrex::Initialized() ? amrex::ParallelDescriptor::NProcs() : 1;
+}
+
+static int mpi_rank() {
+    return amrex::Initialized() ? amrex::ParallelDescriptor::MyProc() : 0;
+}
+
+static bool is_io_rank() {
+    return amrex::Initialized() ? amrex::ParallelDescriptor::IOProcessor() : true;
+}
+
+static double mpi_bcast_double(double val) {
+    if (amrex::Initialized() && amrex::ParallelDescriptor::NProcs() > 1) {
+        amrex::ParallelDescriptor::Bcast(&val, 1, amrex::ParallelDescriptor::IOProcessorNumber());
+    }
+    return val;
 }
 
 // =========================================================================
@@ -129,6 +157,7 @@ static py::dict build_info() {
     info["mpi_enabled"] = false;
 #endif
     info["mpi_ranks"] = mpi_ranks();
+    info["mpi_rank"] = mpi_rank();
 
 #ifdef AMREX_TINY_PROFILING
     info["tiny_profile"] = true;
@@ -295,6 +324,11 @@ PYBIND11_MODULE(_core, m) {
     m.def("amrex_initialized", &amrex_initialized,
           "Return True if the AMReX runtime is currently active.");
     m.def("mpi_ranks", &mpi_ranks, "Return the number of active MPI ranks (1 if not initialised).");
+    m.def("mpi_rank", &mpi_rank, "Return the current MPI rank index (0 if not initialised).");
+    m.def("is_io_rank", &is_io_rank,
+          "Return True on the AMReX I/O processor (or when AMReX is not initialised).");
+    m.def("mpi_bcast_double", &mpi_bcast_double, py::arg("val"),
+          "Broadcast a scalar double from the AMReX I/O processor to all MPI ranks.");
     m.def("build_info", &build_info,
           "Return a dict of compile-time feature flags (cuda, openmp, mpi, tiny_profile, "
           "hypre_cuda) plus runtime GPU device count.  Use this to verify which wheel "

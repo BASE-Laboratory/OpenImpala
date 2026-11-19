@@ -35,7 +35,7 @@ Prefer `oi.read_image("volume.tif", ...)` over loading a full NumPy array on eve
 
 ## Running the C++ Executable via Apptainer & SLURM
 
-Each GitHub Release provides a self-contained Apptainer image (`openimpala-v4.6.0.sif`) containing `/usr/bin/Diffusion` built with OpenMPI, OpenMP, AMReX, HYPRE, HDF5, and `libtiff`:
+Each GitHub Release provides a self-contained Apptainer image (`openimpala-v4.7.0.sif`) containing `/usr/bin/Diffusion` built with OpenMPI, OpenMP, AMReX, HYPRE, HDF5, and `libtiff`:
 
 ```bash
 #!/bin/bash
@@ -49,7 +49,7 @@ Each GitHub Release provides a self-contained Apptainer image (`openimpala-v4.6.
 module load openmpi apptainer
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
 
-srun --mpi=pmix apptainer exec -B "${PWD}:/data" openimpala-v4.6.0.sif \
+srun --mpi=pmix apptainer exec -B "${PWD}:/data" openimpala-v4.7.0.sif \
     /usr/bin/Diffusion /data/inputs
 ```
 

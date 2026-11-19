@@ -24,11 +24,11 @@ copyright = "2024-2026, BASE Laboratory, University of Greenwich"
 author = "James Le Houx"
 
 try:
-    from importlib.metadata import version as _pkg_version
+    from openimpala import __version__ as _oi_version
 
-    release = _pkg_version("openimpala")
+    release = _oi_version if _oi_version != "unknown" else "4.7.0"
 except Exception:
-    release = "4.6.0"
+    release = "4.7.0"
 version = ".".join(release.split(".")[:2])
 
 _DOXYGEN_XML_DIR = (_DOCS_DIR / "doxygen" / "xml").resolve()

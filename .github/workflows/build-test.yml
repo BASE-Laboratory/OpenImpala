@@ -70,7 +70,7 @@ jobs:
       - name: Install Python test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest pytest-cov numpy "scipy>=1.7" tifffile h5py
+          python -m pip install pytest pytest-cov numpy "scipy>=1.7" tifffile h5py "zarr>=2.16" "yt>=4.3"
 
       - name: Run pure-Python test suite
         env:
@@ -293,9 +293,13 @@ jobs:
                 mpirun -np 2 --oversubscribe /usr/bin/python3.11 -m pytest \
                   python/tests/test_mpi_smoke.py -v --tb=short -p no:cacheprovider
 
-              # Canonical sample V&V cross-verification (X/Y/Z against independent FV reference)
+              # Scientific V&V suite: canonical FV cross-verification + Wiener & Hashin-Shtrikman bounds
               PYTHONPATH=/src/python \
                 /usr/bin/python3.11 tests/validation/fetch_canonical_data.py --data-dir /tmp/vv_canonical
+              PYTHONPATH=/src/python \
+                /usr/bin/python3.11 tests/validation/analytical_bounds_vv.py --grid-size 24 --no-plot
+              PYTHONPATH=/src/python \
+                /usr/bin/python3.11 tests/validation/sphere_packing_vv.py --grid-size 24 --output /tmp/vv_spheres.png
             '
             
   coverage:
@@ -341,7 +345,7 @@ jobs:
               export OMPI_ALLOW_RUN_AS_ROOT=1
               export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
 
-              python3.11 -m pip install pytest-cov tifffile h5py
+              python3.11 -m pip install pytest-cov tifffile h5py "zarr>=2.16"
 
               cd /src
               rm -rf cmake_build_cov /src/python/openimpala/_core*.so

@@ -18,7 +18,7 @@ Built on `AMReX <https://amrex-codes.github.io/amrex/>`_ and `HYPRE <https://com
       :link: tutorials/index
       :link-type: doc
 
-      Five executed notebooks with full derivations, plots, and Google Colab launchers—from basic diffusion to :math:`3\times 3` homogenisation and REV convergence.
+      Six executed notebooks with full derivations, plots, and Google Colab launchers—from basic diffusion to :math:`3\times 3` homogenisation, REV convergence, and OME-Zarr / ``yt`` plotfiles.
 
    .. grid-item-card:: User Guide
       :link: user-guide/index
@@ -30,7 +30,7 @@ Built on `AMReX <https://amrex-codes.github.io/amrex/>`_ and `HYPRE <https://com
       :link: api/index
       :link-type: doc
 
-      Complete documentation for the ``openimpala`` Python facade, ``openimpala.datasets``, result dataclasses, and the underlying C++ classes.
+      Complete documentation for the ``openimpala`` Python facade, ``openimpala.datasets``, ``openimpala.synthetic``, result dataclasses, and the underlying C++ classes.
 
 Quick Install & Example
 -----------------------
@@ -57,7 +57,7 @@ Quick Install & Example
 
       .. code-block:: bash
 
-         apptainer exec -B "$(pwd):/data" openimpala-v4.6.0.sif \
+         apptainer exec -B "$(pwd):/data" openimpala-v4.7.0.sif \
              /usr/bin/Diffusion /data/inputs
 
 .. code-block:: python

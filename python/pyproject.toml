@@ -17,7 +17,7 @@ dynamic = ["version"]
 description = "Transport-property computation on 3-D voxel images — tortuosity, diffusivity, and more"
 readme = {text = "Transport-property computation on 3-D voxel images — tortuosity, diffusivity, and more.", content-type = "text/plain"}
 license = "BSD-3-Clause"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "numpy",
     "scipy>=1.7",
@@ -30,7 +30,10 @@ openimpala = "openimpala.cli:main"
 where = ["."]
 include = ["openimpala*"]
 
+[tool.setuptools.package-data]
+openimpala = ["py.typed"]
+
 [tool.setuptools_scm]
 root = ".."
 local_scheme = "no-local-version"
-fallback_version = "4.0.2"
+fallback_version = "4.7.0"

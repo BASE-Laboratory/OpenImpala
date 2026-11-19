@@ -16,11 +16,11 @@
 cmake_minimum_required(VERSION 3.18)
 
 # ---------------------------------------------------------------------------
-# Derive project version from the latest Git tag (e.g. v4.6.0 → 4.6.0).
+# Derive project version from the latest Git tag (e.g. v4.7.0 → 4.7.0).
 # Falls back to OPENIMPALA_FALLBACK_VERSION when building outside a Git
 # repository or when no tag is reachable (e.g. shallow clone without --tags).
 # ---------------------------------------------------------------------------
-set(OPENIMPALA_FALLBACK_VERSION "4.6.0")
+set(OPENIMPALA_FALLBACK_VERSION "4.7.0")
 
 find_package(Git QUIET)
 if(GIT_FOUND)
@@ -60,7 +60,7 @@ if(OPENIMPALA_PURE_PYTHON)
     file(GLOB _OPENIMPALA_PY_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/python/openimpala/*.py"
     )
-    install(FILES ${_OPENIMPALA_PY_FILES}
+    install(FILES ${_OPENIMPALA_PY_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/python/openimpala/py.typed"
         DESTINATION openimpala
         COMPONENT python
     )

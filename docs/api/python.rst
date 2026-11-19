@@ -36,10 +36,22 @@ Microstructural Characterisation
 .. autofunction:: openimpala.facade.rev_study
 
 
-I/O, Diagnostics & Datasets
----------------------------
+I/O, Segmentation, Cloud Zarr & Plotfiles
+-----------------------------------------
 
 .. autofunction:: openimpala.facade.read_image
+
+.. autofunction:: openimpala._io.calculate_otsu_threshold
+
+.. autofunction:: openimpala._io.binarize_otsu
+
+.. autofunction:: openimpala._io.downsample_volume
+
+.. autofunction:: openimpala._io.read_zarr_volume
+
+.. autofunction:: openimpala._io.write_zarr_volume
+
+.. autofunction:: openimpala._io.write_amrex_plotfile
 
 .. autofunction:: openimpala.facade.estimate_memory
 
@@ -49,7 +61,13 @@ Sample Datasets (``openimpala.datasets``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. automodule:: openimpala.datasets
-   :members: two_phase_stack, two_phase_cubic, sphere_pack, fetch_path
+   :members: list_datasets, fetch_example, two_phase_stack, two_phase_cubic, sphere_pack, fetch_path
+
+Synthetic Microstructures & ML Datasets (``openimpala.synthetic``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: openimpala.synthetic
+   :members: gaussian_blobs, overlapping_spheres, multiphase_electrode, generate_ml_dataset
 
 
 Result Dataclasses

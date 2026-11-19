@@ -31,9 +31,9 @@ On macOS (Apple Silicon and Intel), Windows, and Linux ARM64, `openimpala` insta
 :::{tab-item} HPC Container (Apptainer)
 Pre-built Apptainer (`.sif`) images are attached to each [GitHub Release](https://github.com/BASE-Laboratory/OpenImpala/releases):
 ```bash
-wget https://github.com/BASE-Laboratory/OpenImpala/releases/download/v4.6.0/openimpala-v4.6.0.sif
+wget https://github.com/BASE-Laboratory/OpenImpala/releases/download/v4.7.0/openimpala-v4.7.0.sif
 
-apptainer exec -B "$(pwd):/data" openimpala-v4.6.0.sif \
+apptainer exec -B "$(pwd):/data" openimpala-v4.7.0.sif \
     /usr/bin/Diffusion /data/inputs
 ```
 :::
@@ -74,7 +74,7 @@ In interactive Python sessions and Jupyter notebooks, OpenImpala automatically s
 
 ## Reading 3D Image Files
 
-`oi.read_image()` reads 3D `.tif`/`.tiff` stacks, `.h5`/`.hdf5` datasets, `.raw` binary volumes, `.npy` arrays, and `.dat` grids—or you can pass a file path directly to any analysis function:
+`oi.read_image()` reads 3D `.tif`/`.tiff` stacks, `.h5`/`.hdf5` datasets, `.zarr` OME-NGFF stores, `.raw` binary volumes, `.npy` arrays, and `.dat` grids—or you can pass a file path, CIL `ImageData`, or `xarray.DataArray` directly to any analysis function:
 
 ```python
 import openimpala as oi
@@ -89,7 +89,7 @@ taus = oi.tortuosity_all(img, phase=1)
 ssa = oi.specific_surface_area(tiff_path, phase_a=0, phase_b=1, voxel_size=0.5e-6)
 ```
 
-For grayscale reconstructions, pass `threshold=128` to binarise (`pixel > threshold` maps to `1`, otherwise `0`).
+For unsegmented grayscale reconstructions, pass `threshold="otsu"` for automatic Otsu segmentation or a numeric threshold such as `threshold=128` (`dark_is_pore=True` maps dark pores to `0` and bright solid to `1` when using Otsu).
 
 ## Estimating Memory Before Large Runs
 
@@ -102,6 +102,6 @@ print(f"Estimated per-rank peak: {est['per_rank_gb']:.2f} GB")
 
 ## Next Steps
 
-- {doc}`tutorials/index` — Work through the five executed tutorial notebooks
+- {doc}`tutorials/index` — Work through the six executed tutorial notebooks
 - {doc}`user-guide/concepts` — Finite-volume discretisation, boundary conditions, and homogenisation theory
 - {doc}`user-guide/solvers` — Choosing between AMReX MLMG and HYPRE Krylov/multigrid solvers

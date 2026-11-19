@@ -27,7 +27,7 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+            VERSION="$(python3 -c 'import pathlib, re; t = pathlib.Path("pyproject.toml").read_text(); print(re.search(r"(?m)^fallback_version\s*=\s*\"([^\"]+)\"", t).group(1))')"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved version: ${VERSION}"
@@ -220,7 +220,7 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+            VERSION="$(python3 -c 'import pathlib, re; t = pathlib.Path("pyproject.toml").read_text(); print(re.search(r"(?m)^fallback_version\s*=\s*\"([^\"]+)\"", t).group(1))')"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -333,6 +333,97 @@ jobs:
             echo "::error::Expected 6 wheels (cp39..cp313 + py3-none-any), found $COUNT"
             exit 1
           fi
+
+      - name: Set up Python 3.12 for wheel smoke tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Smoke-test installed wheels (pure-Python, no-MPI fallback & 2-rank OpenMPI C++)
+        run: |
+          set -euo pipefail
+          PURE_WHL="$(ls "$PWD"/wheelhouse/openimpala-*-py3-none-any.whl)"
+          CPU_WHL="$(ls "$PWD"/wheelhouse/openimpala-*-cp312-cp312-manylinux_2_28_x86_64.whl)"
+          EXPECTED_VER="$(basename "$PURE_WHL" | sed -E 's/^openimpala-([^-]+)-.*/\1/')"
+          echo "Smoke-testing wheels for expected version: ${EXPECTED_VER}"
+
+          cat > /tmp/wheel_smoke.py << 'PYEOF'
+          import pathlib
+          import subprocess
+          import sys
+          import numpy as np
+          import openimpala as oi
+
+          exp_ver, exp_backend = sys.argv[1], sys.argv[2]
+          exp_ranks = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3].isdigit() else 1
+          expect_err = "--expect-load-error" in sys.argv
+
+          assert oi.__version__ == exp_ver, f"version mismatch: {oi.__version__} != {exp_ver}"
+          pkg_dir = pathlib.Path(oi.__file__).resolve().parent
+          assert (pkg_dir / "py.typed").is_file(), f"missing py.typed in {pkg_dir}"
+
+          if exp_ranks == 1:
+              out = subprocess.check_output([sys.executable, "-m", "openimpala.cli", "--version"], text=True)
+              assert exp_ver in out, f"CLI --version mismatch: {out!r}"
+
+          with oi.Session():
+              info = oi.build_info()
+              assert info["backend"] == exp_backend, f"backend mismatch: {info}"
+              assert info["mpi_ranks"] == exp_ranks, f"mpi_ranks mismatch: {info}"
+              if expect_err:
+                  assert info["core_load_error"], f"expected core_load_error: {info}"
+
+              vol = oi.synthetic.gaussian_blobs((16, 16, 16), porosity=0.65, blobiness=1.5, seed=7)
+              ds, vz = oi.downsample_volume(vol, factor=2, mode="majority", voxel_size=1.0)
+              assert ds.shape == (8, 8, 8) and vz == (2.0, 2.0, 2.0)
+
+              gray = np.where(vol == 1, 40, 210).astype(np.uint8)
+              th = oi.otsu_threshold(gray)
+              assert 40.0 <= th < 210.0
+
+              slab = np.ones((16, 16, 16), dtype=np.int32)
+              pf_root = pathlib.Path(f"/tmp/oi_smoke_pf_{exp_backend}_{exp_ranks}")
+              res = oi.tortuosity(slab, phase=1, direction="z", write_plotfile=True, results_path=str(pf_root))
+              assert abs(res.tortuosity - 1.0) < 1e-4, f"unexpected slab tau: {res.tortuosity}"
+              assert res.plotfile_path and (pathlib.Path(res.plotfile_path) / "Header").is_file()
+
+              deff = oi.effective_diffusivity(slab, phase=1)
+              assert np.allclose(deff.tensor, np.eye(3), atol=1e-4)
+              assert np.allclose(deff.D_eff, np.eye(3), atol=1e-4)
+
+          if info["mpi_rank"] == 0:
+              print(f"[OK] {exp_backend} (ranks={exp_ranks}, ver={oi.__version__}) passed all smoke checks")
+          PYEOF
+
+          # 1. Universal pure-Python wheel in clean host venv
+          python -m venv /tmp/venv-pure
+          /tmp/venv-pure/bin/pip install --quiet "$PURE_WHL"
+          (cd /tmp && /tmp/venv-pure/bin/python /tmp/wheel_smoke.py "$EXPECTED_VER" pure-python)
+
+          # 2. Compiled manylinux wheel on bare Linux WITHOUT OpenMPI (Colab default safety)
+          docker run --rm \
+            -v "$PWD/wheelhouse:/wheels:ro" \
+            -v /tmp/wheel_smoke.py:/tmp/wheel_smoke.py:ro \
+            python:3.12-slim \
+            bash -c "set -euo pipefail && pip install --quiet /wheels/$(basename "$CPU_WHL") && cd /tmp && python /tmp/wheel_smoke.py '$EXPECTED_VER' pure-python --expect-load-error"
+
+          # 3. Compiled manylinux wheel WITH OpenMPI (1-rank & 2-rank C++ AMReX/HYPRE solves)
+          docker run --rm \
+            -v "$PWD/wheelhouse:/wheels:ro" \
+            -v /tmp/wheel_smoke.py:/tmp/wheel_smoke.py:ro \
+            quay.io/pypa/manylinux_2_28_x86_64 \
+            bash -c "
+              set -euo pipefail
+              dnf install -y -q epel-release
+              dnf --enablerepo=powertools install -y -q openmpi-devel
+              export PATH=/usr/lib64/openmpi/bin:\$PATH
+              export LD_LIBRARY_PATH=/usr/lib64/openmpi/lib:\${LD_LIBRARY_PATH:-}
+              /opt/python/cp312-cp312/bin/pip install --quiet /wheels/$(basename "$CPU_WHL")
+              cd /tmp
+              /opt/python/cp312-cp312/bin/python /tmp/wheel_smoke.py '$EXPECTED_VER' cpp-cpu 1
+              OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 OMP_NUM_THREADS=1 \
+                mpirun -np 2 --oversubscribe /opt/python/cp312-cp312/bin/python /tmp/wheel_smoke.py '$EXPECTED_VER' cpp-cpu 2
+            "
 
       - name: Upload unified wheelhouse artifact
         uses: actions/upload-artifact@v4

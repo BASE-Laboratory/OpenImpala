@@ -53,6 +53,7 @@ All tutorials are pre-rendered in the [online documentation](https://base-labora
 | 03 | [Periodic Homogenisation & the 3×3 Effective Diffusivity Tensor](https://base-laboratory.github.io/OpenImpala/tutorials/03_homogenisation_tensor.html) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/03_homogenisation_tensor.ipynb) |
 | 04 | [Multi-Phase Transport in Composite Media](https://base-laboratory.github.io/OpenImpala/tutorials/04_multiphase_transport.html) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/04_multiphase_transport.ipynb) |
 | 05 | [Representative Elementary Volume (REV) & Subvolume Uncertainty](https://base-laboratory.github.io/OpenImpala/tutorials/05_rev_and_uncertainty.html) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/05_rev_and_uncertainty.ipynb) |
+| 06 | [Cloud-Native OME-Zarr & Out-of-Core `yt` Plotfiles](https://base-laboratory.github.io/OpenImpala/tutorials/06_visualization_yt_and_zarr.html) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/06_visualization_yt_and_zarr.ipynb) |
 
 ## Install
 
@@ -92,10 +93,11 @@ developer build, code style, and test workflow.
 
 ## Features
 
-- Steady-state diffusion / conduction on segmented 3D voxel images
+- Steady-state diffusion / conduction on raw or segmented 3D voxel images (built-in Otsu thresholding)
 - Tortuosity factor, full 3×3 effective diffusivity tensor, multi-phase transport
-- Microstructural metrics: volume fraction, percolation, particle size, specific surface area
-- TIFF / HDF5 / RAW / DAT image input; JSON output compatible with BPX / BattINFO
+- Microstructural metrics: volume fraction, percolation, particle size, specific surface area, REV studies
+- Synthetic 3D microstructure & ML surrogate dataset generators (`openimpala.synthetic`)
+- TIFF / HDF5 / OME-Zarr / RAW / DAT image input; AMReX `yt`/ParaView plotfiles and BPX / BattINFO JSON output
 - Solvers: HYPRE (PCG, FlexGMRES, BiCGSTAB; SMG / PFMG preconditioners) and AMReX MLMG (matrix-free, GPU-native)
 - MPI + OpenMP + CUDA parallelism — scales from a laptop to multi-node HPC
 
