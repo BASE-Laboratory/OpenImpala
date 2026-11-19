@@ -49,17 +49,17 @@ Several open-source packages address image-based transport modelling at differen
 
 A central design choice is pairing dual linear solver families over the same seven-point finite-volume discretisation ($\nabla \cdot (D \nabla \phi) = 0$ with exact exterior-face harmonic Dirichlet boundary conditions): **AMReX MLMG**, a matrix-free geometric multigrid V-cycle solver that avoids assembling explicit sparse matrices, and **HYPRE** [@falgout2002hypre] (`PCG`, `FlexGMRES`, `BiCGSTAB` with `PFMG`/`SMG` preconditioning) for extreme-contrast composites and periodic homogenisation cell problems with per-component nullspace pinning. As measured across isotropic Gaussian random porous media ($\phi = 0.50$, \autoref{fig:scaling} and \autoref{tab:memory}), matrix-free `MLMG` exhibits grid-independent iteration counts ($11$–$18$ V-cycles from $32^3$ to $256^3$), near-linear $\mathcal{O}(N_{\text{vox}})$ runtime scaling, and $3.2\times$–$4.4\times$ lower peak memory than HYPRE `FlexGMRES` with `PFMG`/`SMG` (`~304`–`319` B/voxel vs `1,016`–`1,390` B/voxel), solving $256^3$ ($1.68\times 10^7$ voxels) inside $4.86\text{ GB}$ RAM where explicit Krylov–multigrid solvers exceed $16\text{ GB}$. Distributed MPI strong scaling across multi-node clusters up to $600^3$ ($2.16\times 10^8$ voxels) is preserved via AMReX domain decomposition [@LeHoux2021OpenImpala], while pre-compiled Linux CPU and CUDA 12 wheels automatically discover system or `pip`-installed OpenMPI and warn explicitly if falling back to the pure-Python SciPy solver.
 
-| Solver Backend | $128^3$ Time (s) | $128^3$ Peak RAM (MB) | Footprint (B/voxel) | $256^3$ Peak RAM (MB) |
-| :--- | ---: | ---: | ---: | ---: |
-| **AMReX MLMG (matrix-free)** | **4.06** | **638** | **319** | **4,856 (304 B/vox)** |
-| HYPRE `PCG + PFMG` | 21.91 | 710 | 355 | >6,000 |
-| HYPRE `FlexGMRES + PFMG` | 33.34 | 2,031 | 1,016 | >16,000 |
-| HYPRE `FlexGMRES + SMG` | 66.87 | 2,779 | 1,390 | >22,000 |
-| Pure-Python (`SciPy CG`) | 34.89 | 699 | 350 | — |
-
-: Measured wall-clock solve time and peak solver memory ($\Delta\text{VmHWM}$) on 3D Gaussian random porous media ($\phi = 0.50$, two x86\_64 OpenMP threads; solutions agree to $|\Delta\tau| < 4\times 10^{-8}$).\label{tab:memory}
-
 ![Empirical algorithmic scaling and memory footprint across $32^3$ ($3.3\times 10^4$ voxels) to $256^3$ ($1.68\times 10^7$ voxels) porous media ($\phi = 0.50$). **(a)** Matrix-free `AMReX MLMG` scales linearly ($\mathcal{O}(N_{\mathrm{vox}})$), outperforming `SciPy CG` by $8.6\times$ and `HYPRE FlexGMRES+SMG` by $16.5\times$ at $128^3$. **(b)** Measured peak solver memory ($\Delta\mathrm{VmHWM}$) confirms a $3.2\times$–$4.4\times$ reduction relative to `FlexGMRES+PFMG`/`SMG`, enabling $256^3$ solves within $4.86\text{ GB}$.\label{fig:scaling}](scaling_and_memory.png)
+
+| Solver Backend | $128^3$ Time | $128^3$ RAM | B / voxel | $256^3$ RAM |
+| :--- | ---: | ---: | ---: | ---: |
+| **AMReX MLMG (matrix-free)** | **4.06 s** | **638 MB** | **319** | **4,856 MB** |
+| HYPRE `PCG + PFMG` | 21.91 s | 710 MB | 355 | >6,000 MB |
+| HYPRE `FlexGMRES + PFMG` | 33.34 s | 2,031 MB | 1,016 | >16,000 MB |
+| HYPRE `FlexGMRES + SMG` | 66.87 s | 2,779 MB | 1,390 | >22,000 MB |
+| Pure-Python (`SciPy CG`) | 34.89 s | 699 MB | 350 | — |
+
+: Measured wall-clock solve time and peak solver memory ($\Delta\text{VmHWM}$) on 3D Gaussian random porous media ($\phi = 0.50$, two x86\_64 OpenMP threads; solutions agree to $|\Delta\tau| < 4\times 10^{-8}$; at $256^3$, `MLMG` uses $304$ B/voxel).\label{tab:memory}
 
 # Research impact statement
 

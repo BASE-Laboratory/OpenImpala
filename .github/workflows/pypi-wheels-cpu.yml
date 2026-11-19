@@ -369,12 +369,14 @@ jobs:
               import openimpala as oi
 
           if expect_err:
-              assert any("pip install openmpi" in str(w.message) for w in import_warnings), (
-                  f"Expected loud import warning mentioning OpenMPI remedy, got {import_warnings}"
+              msgs = [str(w.message) for w in import_warnings]
+              assert any("pip install openmpi" in m for m in msgs), (
+                  f"Expected loud import warning mentioning OpenMPI remedy, got {msgs}"
               )
           else:
-              assert not any("_core" in str(w.message) for w in import_warnings), (
-                  f"Unexpected _core fallback warning: {import_warnings}"
+              msgs = [str(w.message) for w in import_warnings]
+              assert not any("_core" in m for m in msgs), (
+                  f"Unexpected _core fallback warning: {msgs}"
               )
 
           assert oi.__version__ == exp_ver, f"version mismatch: {oi.__version__} != {exp_ver}"
@@ -422,7 +424,7 @@ jobs:
 
           # 2. Compiled manylinux wheel on bare Linux:
           #    (a) WITHOUT OpenMPI -> loud import warning + safe pure-Python fallback
-          #    (b) WITH `pip install openmpi` & ZERO LD_LIBRARY_PATH -> automatic C++ loading + cross-backend V&V!
+          #    (b) WITH `libgomp1` + `pip install openmpi` & ZERO LD_LIBRARY_PATH -> automatic C++ loading + cross-backend V&V!
           docker run --rm \
             -v "$PWD/wheelhouse:/wheels:ro" \
             -v /tmp/wheel_smoke.py:/tmp/wheel_smoke.py:ro \
@@ -430,10 +432,11 @@ jobs:
             python:3.12-slim \
             bash -c "
               set -euo pipefail
-              pip install --quiet /wheels/$(basename "$CPU_WHL")
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends libgomp1 >/dev/null
+              pip install --root-user-action=ignore --quiet /wheels/$(basename "$CPU_WHL")
               cd /tmp
               python /tmp/wheel_smoke.py '$EXPECTED_VER' pure-python --expect-load-error
-              pip install --quiet openmpi
+              pip install --root-user-action=ignore --quiet openmpi
               unset LD_LIBRARY_PATH
               python /tmp/wheel_smoke.py '$EXPECTED_VER' cpp-cpu 1
               python /tmp/wheel_analytical_vv.py --expected-backend cpp-cpu --expected-version '$EXPECTED_VER' --compare-pure --check-silent-exit
