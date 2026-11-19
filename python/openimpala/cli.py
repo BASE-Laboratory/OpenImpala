@@ -32,6 +32,23 @@ def _parse_max_grid_size(val: str) -> Union[int, str]:
     return parsed
 
 
+def _parse_threshold(val: str) -> Union[float, str]:
+    """Accept ``'otsu'`` or a finite floating-point number for ``--threshold``."""
+    import math
+
+    if val.strip().lower() == "otsu":
+        return "otsu"
+    try:
+        parsed = float(val)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Expected a number or 'otsu', got {val!r}"
+        ) from exc
+    if not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError(f"threshold must be finite, got {val!r}")
+    return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="openimpala",
@@ -46,7 +63,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_analyze = sub.add_parser("analyze", help="Full analysis pipeline")
     p_analyze.add_argument("image", help="Path to the 3-D image file")
     p_analyze.add_argument("--phase", type=int, default=0, help="Phase ID (default: 0)")
-    p_analyze.add_argument("--threshold", type=float, default=0.5, help="Binarisation threshold")
+    p_analyze.add_argument(
+        "--threshold",
+        type=_parse_threshold,
+        default=0.5,
+        help="Binarisation threshold: float or 'otsu' (default: 0.5)",
+    )
     p_analyze.add_argument("--direction", default="x", help="Flow direction (x/y/z, default: x)")
     p_analyze.add_argument(
         "--solver",
@@ -73,17 +95,56 @@ def _build_parser() -> argparse.ArgumentParser:
     p_vf = sub.add_parser("vf", help="Compute volume fraction")
     p_vf.add_argument("image", help="Path to the 3-D image file")
     p_vf.add_argument("--phase", type=int, default=0)
-    p_vf.add_argument("--threshold", type=float, default=0.5)
+    p_vf.add_argument("--threshold", type=_parse_threshold, default=0.5)
     p_vf.add_argument("--max-grid-size", type=_parse_max_grid_size, default="auto")
 
     # --- percolation ---
     p_perc = sub.add_parser("percolation", help="Percolation connectivity check")
     p_perc.add_argument("image", help="Path to the 3-D image file")
     p_perc.add_argument("--phase", type=int, default=0)
-    p_perc.add_argument("--threshold", type=float, default=0.5)
+    p_perc.add_argument("--threshold", type=_parse_threshold, default=0.5)
     p_perc.add_argument("--direction", default="x")
     p_perc.add_argument("--max-grid-size", type=_parse_max_grid_size, default="auto")
     p_perc.add_argument("--verbose", type=int, default=0)
+
+    # --- generate-dataset ---
+    p_gen = sub.add_parser(
+        "generate-dataset",
+        help="Generate synthetic 3-D porous-media ML surrogate dataset (.npz/.h5/.zarr)",
+    )
+    p_gen.add_argument("output", help="Output dataset path (.npz, .h5/.hdf5, or .zarr)")
+    p_gen.add_argument(
+        "-n", "--samples", type=int, default=16, help="Number of 3-D samples (default: 16)"
+    )
+    p_gen.add_argument(
+        "--shape",
+        nargs="+",
+        type=int,
+        default=[32],
+        help="Grid shape: 1 int (cubic L) or 3 ints NZ NY NX (default: 32)",
+    )
+    p_gen.add_argument(
+        "--generator",
+        choices=("blobs", "spheres"),
+        default="blobs",
+        help="Microstructure generator (default: blobs)",
+    )
+    p_gen.add_argument(
+        "--porosity-range",
+        nargs=2,
+        type=float,
+        default=[0.30, 0.70],
+        metavar=("LOW", "HIGH"),
+        help="Uniform porosity range (default: 0.30 0.70)",
+    )
+    p_gen.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
+    p_gen.add_argument("--solver", default="auto", help="Solver backend (default: auto)")
+    p_gen.add_argument(
+        "--no-deff", action="store_true", help="Skip 3x3 periodic homogenisation solve"
+    )
+    p_gen.add_argument(
+        "--no-tortuosity", action="store_true", help="Skip directional tortuosity solves"
+    )
 
     return parser
 
@@ -107,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_percolation(args)
         elif args.command == "analyze":
             return _cmd_analyze(args)
+        elif args.command == "generate-dataset":
+            return _cmd_generate_dataset(args)
 
     return 0
 
@@ -223,6 +286,45 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     else:
         print(output)
 
+    return 0
+
+
+def _cmd_generate_dataset(args: argparse.Namespace) -> int:
+    import numpy as np
+    import openimpala as oi
+
+    if len(args.shape) == 1:
+        shape_arg: Union[int, tuple[int, int, int]] = int(args.shape[0])
+    elif len(args.shape) == 3:
+        shape_arg = (int(args.shape[0]), int(args.shape[1]), int(args.shape[2]))
+    else:
+        raise SystemExit(
+            f"Error: --shape expects 1 value (cubic) or 3 values (NZ NY NX), got {len(args.shape)}"
+        )
+
+    ds = oi.synthetic.generate_ml_dataset(
+        args.output,
+        n_samples=args.samples,
+        shape=shape_arg,
+        generator=args.generator,
+        porosity_range=(float(args.porosity_range[0]), float(args.porosity_range[1])),
+        seed=args.seed,
+        compute_deff=not args.no_deff,
+        compute_tortuosity=not args.no_tortuosity,
+        solver=args.solver,
+    )
+    summary = {
+        "output_path": ds["output_path"],
+        "n_samples": ds["n_samples"],
+        "shape": list(ds["shape"]),
+        "generator": ds["generator"],
+        "mean_porosity": float(np.mean(ds["porosity"])),
+    }
+    if not args.no_deff:
+        summary["mean_deff_iso"] = float(
+            np.mean(np.trace(ds["deff_tensor"], axis1=1, axis2=2) / 3.0)
+        )
+    print(json.dumps(summary, indent=2))
     return 0
 
 

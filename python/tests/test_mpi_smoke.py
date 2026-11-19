@@ -104,3 +104,16 @@ def test_mpi_v460_fields_and_metrics():
         np.ones((12, 12, 12), dtype=np.int32), phase=1, max_grid_size=6
     )
     np.testing.assert_allclose(deff.tensor, np.eye(3), atol=1e-5)
+
+    # Multi-component periodic homogenisation across MPI boxes (exercises
+    # distributed min-label propagation in EffectiveDiffusivityHypre::buildCellTypeMask)
+    base_chan = np.zeros((12, 12, 12), dtype=np.int32)
+    base_chan[:, 2:6, 2:6] = 1  # percolating Z channel (area fraction 16/144 = 1/9)
+    with_pockets = base_chan.copy()
+    with_pockets[1:4, 8:11, 8:11] = 1  # isolated pocket in octant
+    with_pockets[9, 9, 0] = 1  # 2-voxel pocket straddling periodic X seam
+    with_pockets[9, 9, 11] = 1
+    deff_base = oi.effective_diffusivity(base_chan, phase=1, max_grid_size=6)
+    deff_pockets = oi.effective_diffusivity(with_pockets, phase=1, max_grid_size=6)
+    assert deff_base.solver_converged and deff_pockets.solver_converged
+    np.testing.assert_allclose(deff_pockets.tensor, deff_base.tensor, rtol=1e-7, atol=1e-8)

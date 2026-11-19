@@ -70,7 +70,7 @@ jobs:
       - name: Install Python test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest pytest-cov numpy "scipy>=1.7" tifffile h5py
+          python -m pip install pytest pytest-cov numpy "scipy>=1.7" tifffile h5py "zarr>=2.16" "yt>=4.3"
 
       - name: Run pure-Python test suite
         env:
@@ -341,7 +341,7 @@ jobs:
               export OMPI_ALLOW_RUN_AS_ROOT=1
               export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
 
-              python3.11 -m pip install pytest-cov tifffile h5py
+              python3.11 -m pip install pytest-cov tifffile h5py "zarr>=2.16"
 
               cd /src
               rm -rf cmake_build_cov /src/python/openimpala/_core*.so

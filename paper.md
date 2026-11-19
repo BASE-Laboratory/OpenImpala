@@ -22,7 +22,7 @@ affiliations:
    index: 2
  - name: The Faraday Institution, Harwell Science and Innovation Campus, Didcot, OX11 0RA, United Kingdom
    index: 3
-date: 18 November 2026
+date: 19 November 2026
 bibliography: paper.bib
 ---
 
@@ -30,7 +30,7 @@ bibliography: paper.bib
 
 `OpenImpala` is a high-performance computing framework for evaluating effective transport properties — tortuosity, effective diffusivity tensors, and effective conductivity — directly from three-dimensional microstructural imaging data such as X-ray CT reconstructions [@withers2021xray]. Built upon the AMReX adaptive mesh refinement library [@amrex2019], `OpenImpala` formulates the governing partial differential equations on the Cartesian voxel grid, eliminating the mesh-generation step that limits conventional finite element approaches. The framework couples a scalable, distributed-memory C++ backend with the HYPRE linear solver library [@falgout2002hypre] and a Python interface via pybind11 [@jakob2017pybind11], enabling automated microstructural parameterisation for downstream continuum modelling.
 
-An earlier version of the software was described in @LeHoux2021OpenImpala. Since that publication the codebase has been redesigned with the following major additions: GPU acceleration via CUDA, a matrix-free geometric multigrid solver (AMReX MLMG), full effective diffusivity tensor computation via homogenisation, multi-phase transport, microstructural characterisation modules, and a high-level Python API distributed through PyPI.
+An earlier version of the software was described in @LeHoux2021OpenImpala. Since that publication the codebase has been redesigned with the following major additions: GPU acceleration via CUDA, a matrix-free geometric multigrid solver (AMReX MLMG), full effective diffusivity tensor computation via homogenisation, multi-phase transport, microstructural characterisation modules, synthetic porous-media and ML surrogate dataset generators, and a high-level Python API distributed through PyPI.
 
 # Statement of Need
 
@@ -42,7 +42,7 @@ Several open-source tools address this problem. TauFactor [@cooper2016taufactor]
 
 # Software Architecture and Capabilities
 
-`OpenImpala` is organised into three layers (\autoref{fig:architecture}): an I/O layer that reads TIFF, HDF5, and raw binary volumetric images into AMReX distributed data structures; a physics solver layer; and an output layer that exports results in structured JSON formats compatible with battery parameterisation standards such as BPX and BattINFO.
+`OpenImpala` is organised into three layers (\autoref{fig:architecture}): an I/O and segmentation layer that reads TIFF, HDF5, OME-Zarr, and raw binary volumetric images (with built-in Otsu thresholding) into AMReX distributed data structures; a physics solver layer; and an output layer that exports AMReX plotfiles for out-of-core visualisation (`yt`, ParaView) alongside structured JSON formats compatible with battery parameterisation standards such as BPX and BattINFO.
 
 ![Three-stage architecture of `OpenImpala`. **Input** (left): 3D voxel images are ingested through TIFF, HDF5, RAW binary, or DAT readers and partitioned across MPI ranks as an AMReX `iMultiFab` distributed grid. **Compute** (centre): four physics modules — tortuosity, effective diffusivity tensor via $3\times3$ homogenisation, multi-phase transport for composite electrodes, and microstructural metrics — are solved on the voxel grid using either HYPRE Krylov methods with algebraic multigrid preconditioning, or the AMReX MLMG matrix-free geometric multigrid solver, with MPI, OpenMP, and CUDA backends. **Output** (right): the tortuosity factor $\tau$, the symmetric $3\times3$ effective diffusivity tensor $\mathbf{D}_{\text{eff}}$, and microstructural descriptors (volume fraction, percolation, specific surface area) are exported as BPX / BattINFO-compatible JSON and as NumPy arrays through the `import openimpala` Python interface, providing direct parameterisation for downstream continuum-scale simulators such as PyBaMM.\label{fig:architecture}](Overview.png)
 

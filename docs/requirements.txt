@@ -8,3 +8,5 @@ breathe>=4.35
 numpy>=1.22
 scipy>=1.9
 matplotlib>=3.7
+zarr>=2.16
+yt>=4.3

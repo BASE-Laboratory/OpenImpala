@@ -91,6 +91,7 @@ install(FILES
     openimpala/_solver.py
     openimpala/_io.py
     openimpala/datasets.py
+    openimpala/synthetic.py
     DESTINATION openimpala
     COMPONENT python
 )
@@ -134,6 +135,8 @@ if(BUILD_TESTING)
             "${PYTHON_TEST_DIR}/test_cli.py")
         openimpala_add_pytest(pytest_datasets_and_io
             "${PYTHON_TEST_DIR}/test_datasets_and_io.py")
+        openimpala_add_pytest(pytest_v470_ecosystem
+            "${PYTHON_TEST_DIR}/test_v470_ecosystem.py")
 
         # --- Tests requiring _core module ---
         openimpala_add_pytest(pytest_enums

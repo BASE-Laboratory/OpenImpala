@@ -25,11 +25,6 @@
 #include "HypreStructSolver.H"
 #include "Tortuosity.H" // For OpenImpala::Direction, SolverType
 
-/** @file EffectiveDiffusivityHypre.H
- * @brief Defines a class to solve the cell problem for effective diffusivity calculation using
- * HYPRE.
- */
-
 namespace OpenImpala {
 
 /** @brief Solves the cell problem ∇_ξ ⋅ (D ∇_ξ χ_k) = -∇_ξ ⋅ (D ê_k) for a corrector function χ_k.

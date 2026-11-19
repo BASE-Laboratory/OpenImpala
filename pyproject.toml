@@ -41,10 +41,12 @@ mpi = ["mpi4py"]
 progress = ["tqdm"]
 jupyter = ["matplotlib", "ipywidgets"]
 viz = ["yt", "matplotlib"]
+zarr = ["zarr>=2.16"]
 test = [
     "pytest>=7",
     "numpy",
     "scipy>=1.7",
+    "zarr>=2.16",
 ]
 docs = [
     "sphinx>=7.0",
@@ -55,6 +57,8 @@ docs = [
     "sphinx-autodoc-typehints>=2.0",
     "breathe>=4.35",
     "matplotlib>=3.7",
+    "zarr>=2.16",
+    "yt>=4.3",
 ]
 all = [
     "mpi4py",
@@ -62,6 +66,7 @@ all = [
     "matplotlib",
     "ipywidgets",
     "yt",
+    "zarr>=2.16",
     "pytest>=7",
 ]
 
@@ -81,7 +86,7 @@ provider = "scikit_build_core.metadata.setuptools_scm"
 # Without this, setuptools_scm appends "+gXXXX" local identifiers
 # that PyPI rejects with HTTP 400.
 local_scheme = "no-local-version"
-fallback_version = "4.6.0"
+fallback_version = "4.7.0"
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]

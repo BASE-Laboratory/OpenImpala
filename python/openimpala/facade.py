@@ -82,6 +82,7 @@ class TortuosityResult:
     active_volume_fraction: float
     solution_field: "np.ndarray | None" = None
     effective_diffusivity: Optional[float] = None
+    plotfile_path: Optional[str] = None
 
     def _repr_html_(self) -> str:
         status = "converged" if self.solver_converged else "NOT converged"
@@ -120,6 +121,7 @@ class EffectiveDiffusivityResult:
     iterations: tuple[int, int, int]
     residuals: tuple[float, float, float]
     corrector_fields: Optional[dict[str, np.ndarray]] = None
+    plotfile_paths: Optional[dict[str, str]] = None
 
     @property
     def diagonal(self) -> tuple[float, float, float]:
@@ -286,9 +288,9 @@ def _is_pure_python() -> bool:
 
 def _get_core():
     """Import and return the _core C extension (lazy, cached by Python)."""
-    import importlib
+    from . import _load_core
 
-    return importlib.import_module("openimpala._core")
+    return _load_core()
 
 
 _DIR_MAP = {"x": 0, "y": 1, "z": 2}
@@ -469,12 +471,21 @@ def _auto_grid_size(shape: tuple[int, ...]) -> int:
     return mgs
 
 
+def _is_zarr_path(p: Path) -> bool:
+    """Return True if *p* looks like a Zarr directory store."""
+    if p.suffix.lower() == ".zarr":
+        return True
+    if p.is_dir():
+        return any((p / marker).exists() for marker in (".zgroup", ".zarray", "zarr.json"))
+    return False
+
+
 def _resolve_pure_input(
     data: DataInputArg,
     voxel_size: Optional[VoxelSizeArg] = None,
 ) -> tuple[np.ndarray, tuple[float, float, float]]:
     """Resolve *data* into ``(arr_int32, (dz, dy, dx))`` for the pure-Python backend."""
-    from ._io import PureVoxelImage
+    from ._io import PureVoxelImage, read_zarr_volume
 
     if isinstance(data, (str, os.PathLike)):
         p = Path(data)
@@ -483,6 +494,14 @@ def _resolve_pure_input(
             if raw_arr.ndim != 3:
                 raise ValueError(f"Expected a 3-D array in '{p}', got shape {raw_arr.shape}")
             return np.ascontiguousarray(raw_arr, dtype=np.int32), _normalize_voxel_size(voxel_size)
+        if _is_zarr_path(p):
+            zarr_arr, meta_vz = read_zarr_volume(p, threshold=None)
+            vz = (
+                _normalize_voxel_size(voxel_size)
+                if voxel_size is not None
+                else (meta_vz if meta_vz is not None else (1.0, 1.0, 1.0))
+            )
+            return np.ascontiguousarray(zarr_arr, dtype=np.int32), vz
         _, img = read_image(p, voxel_size=voxel_size)
         return np.asarray(img, dtype=np.int32), img.voxel_size
 
@@ -503,7 +522,7 @@ def _numpy_to_voxelimage(
     voxel_size: Optional[VoxelSizeArg] = None,
 ):
     """Convert a 3-D NumPy array, path, or VoxelImage into a C++ VoxelImage."""
-    from ._io import PureVoxelImage
+    from ._io import PureVoxelImage, read_zarr_volume
 
     _core = _get_core()
 
@@ -517,6 +536,11 @@ def _numpy_to_voxelimage(
         p = Path(data)
         if p.suffix.lower() == ".npy":
             data = np.load(p)
+        elif _is_zarr_path(p):
+            zarr_arr, meta_vz = read_zarr_volume(p, threshold=None)
+            data = zarr_arr
+            if voxel_size is None and meta_vz is not None:
+                voxel_size = meta_vz
         else:
             _, img = read_image(p, voxel_size=voxel_size, max_grid_size=max_grid_size)
             return img
@@ -611,6 +635,7 @@ def tortuosity(
     voxel_size: Optional[VoxelSizeArg] = None,
     phase_diffusivities: Optional[Mapping[int, float]] = None,
     return_field: bool = False,
+    write_plotfile: bool = False,
     preconditioner: Union[str, "PrecondType"] = "smg",
     max_grid_size: Union[int, str] = "auto",
     results_path: str = ".",
@@ -625,7 +650,7 @@ def tortuosity(
     ----------
     data : np.ndarray, VoxelImage, or path-like
         3-D integer array of phase IDs ``(Nz, Ny, Nx)``, ``VoxelImage`` handle,
-        or path to a supported 3-D volume file.
+        or path to a supported 3-D volume file (TIFF, HDF5, RAW, DAT, NPY, Zarr).
     phase : int
         Conducting phase ID when *phase_diffusivities* is ``None``.
     direction : str or Direction
@@ -645,28 +670,52 @@ def tortuosity(
         If ``True``, populate ``result.solution_field`` with the solved 3-D
         potential field ``(Nz, Ny, Nx)`` (``float64``).  Defaults to ``False``
         to avoid host memory copies on large grids.
+    write_plotfile : bool
+        If ``True``, write an AMReX ``HyperCLaw-V1.1`` plotfile directory under
+        *results_path* (readable out-of-core via ``yt.load()`` and ParaView)
+        and populate ``result.plotfile_path``.
     """
     _ensure_initialized()
     phase_map = _normalize_phase_diffusivities(phase_diffusivities)
 
     if _is_pure_python():
         from . import _solver
+        from ._io import write_amrex_plotfile
 
         arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
         d = _parse_direction_int(direction)
+        need_field = bool(return_field or write_plotfile)
         result = _solver.solve_tortuosity(
             arr,
             phase=phase,
             direction=2 - d,
             voxel_size=vz,
             phase_diffusivities=phase_map if phase_map else None,
-            return_field=return_field,
+            return_field=need_field,
         )
         if not result["solver_converged"]:
             raise ConvergenceError(
                 f"Solver did not converge after {result['iterations']} "
                 f"iterations (residual={result['residual_norm']:.2e})"
             )
+        plt_path: Optional[str] = None
+        if write_plotfile:
+            _, _, active_mask = _solver.percolation_check(
+                arr, phase, 2 - d, phase_diffusivities=phase_map if phase_map else None
+            )
+            is_mlmg = isinstance(solver, str) and solver.strip().lower() in ("auto", "mlmg")
+            subdir = f"tortuosity_mlmg_{d}" if is_mlmg else f"tortuosity_solution_{d}"
+            out_dir = write_amrex_plotfile(
+                Path(results_path) / subdir,
+                {
+                    "solution_potential": result["solution_field"],
+                    "phase_id": arr.astype(np.float64),
+                    "active_mask": active_mask.astype(np.float64),
+                },
+                voxel_size=vz,
+            )
+            plt_path = str(out_dir)
+
         return TortuosityResult(
             tortuosity=result["tortuosity"],
             solver_converged=result["solver_converged"],
@@ -677,11 +726,13 @@ def tortuosity(
             active_volume_fraction=result["active_volume_fraction"],
             solution_field=result["solution_field"] if return_field else None,
             effective_diffusivity=result["effective_diffusivity"],
+            plotfile_path=plt_path,
         )
 
     # --- C++ backend path ---
     _core = _get_core()
     d = _parse_direction(direction)
+    d_int = _parse_direction_int(direction)
     st = _parse_solver(solver)
     img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
 
@@ -702,6 +753,9 @@ def tortuosity(
             f"disconnected between the inlet and outlet faces."
         )
 
+    if write_plotfile:
+        Path(results_path).mkdir(parents=True, exist_ok=True)
+
     if st == "mlmg":
         mlmg_kwargs = {}
         if mlmg_eps is not None:
@@ -721,9 +775,10 @@ def tortuosity(
             0.0,
             1.0,
             verbose,
-            False,
+            bool(write_plotfile),
             **mlmg_kwargs,
         )
+        plt_subdir = f"tortuosity_mlmg_{d_int}"
     else:
         pc = _parse_preconditioner(preconditioner)
         solver_obj = _core.TortuosityHypre(
@@ -736,10 +791,11 @@ def tortuosity(
             0.0,
             1.0,
             verbose,
-            False,
+            bool(write_plotfile),
             pc,
             phase_map,
         )
+        plt_subdir = f"tortuosity_solution_{d_int}"
 
     if solver_obj.active_volume_fraction <= 0.0:
         dir_name = _core.PercolationCheck.direction_string(d)
@@ -762,6 +818,7 @@ def tortuosity(
         )
 
     field = solver_obj.solution_field() if return_field else None
+    plt_path_cpp = str(Path(results_path) / plt_subdir) if write_plotfile else None
 
     return TortuosityResult(
         tortuosity=tau,
@@ -773,6 +830,7 @@ def tortuosity(
         active_volume_fraction=solver_obj.active_volume_fraction,
         solution_field=field,
         effective_diffusivity=float(solver_obj.effective_diffusivity),
+        plotfile_path=plt_path_cpp,
     )
 
 
@@ -786,6 +844,7 @@ def tortuosity_all(
     voxel_size: Optional[VoxelSizeArg] = None,
     phase_diffusivities: Optional[Mapping[int, float]] = None,
     return_field: bool = False,
+    write_plotfile: bool = False,
     preconditioner: Union[str, "PrecondType"] = "smg",
     max_grid_size: Union[int, str] = "auto",
     results_path: str = ".",
@@ -823,6 +882,7 @@ def tortuosity_all(
                 voxel_size=effective_vz,
                 phase_diffusivities=phase_diffusivities,
                 return_field=return_field,
+                write_plotfile=write_plotfile,
                 preconditioner=preconditioner,
                 max_grid_size=max_grid_size,
                 results_path=results_path,
@@ -846,6 +906,7 @@ def effective_diffusivity(
     phase_diffusivities: Optional[Mapping[int, float]] = None,
     solver: Union[str, "SolverType"] = "flexgmres",
     return_fields: bool = False,
+    write_plotfile: bool = False,
     max_grid_size: Union[int, str] = "auto",
     results_path: str = ".",
     verbose: int = 0,
@@ -860,20 +921,43 @@ def effective_diffusivity(
 
     if _is_pure_python():
         from . import _solver
+        from ._io import write_amrex_plotfile
 
         arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
+        need_chi = bool(return_fields or write_plotfile)
         raw = _solver.solve_effective_diffusivity(
             arr,
             phase=phase,
             voxel_size=vz,
             phase_diffusivities=phase_map if phase_map else None,
-            return_chi=return_fields,
+            return_chi=need_chi,
         )
         if not raw["converged"]:
             raise ConvergenceError(
                 f"Effective diffusivity cell-problem solver failed to converge "
                 f"(residuals={raw['residuals']})"
             )
+        plt_paths: Optional[dict[str, str]] = None
+        if write_plotfile:
+            if phase_map:
+                active_mask = np.isin(
+                    arr, [pid for pid, coeff in phase_map.items() if coeff > 0.0]
+                ).astype(np.float64)
+            else:
+                active_mask = (arr == phase).astype(np.float64)
+            chi_map = raw["chi"]
+            plt_paths = {}
+            for d_idx, axis_name in enumerate(("x", "y", "z")):
+                out_dir = write_amrex_plotfile(
+                    Path(results_path) / f"effdiff_chi_dir{d_idx}",
+                    {
+                        "chi_k": chi_map[axis_name],
+                        "active_mask_from_solver": active_mask,
+                    },
+                    voxel_size=vz,
+                )
+                plt_paths[axis_name] = str(out_dir)
+
         return EffectiveDiffusivityResult(
             tensor=np.asarray(raw["tensor"], dtype=np.float64),
             active_volume_fraction=float(raw["active_volume_fraction"]),
@@ -881,18 +965,21 @@ def effective_diffusivity(
             iterations=tuple(int(i) for i in raw["iterations"]),
             residuals=tuple(float(r) for r in raw["residuals"]),
             corrector_fields=raw.get("chi") if return_fields else None,
+            plotfile_paths=plt_paths,
         )
 
     _core = _get_core()
     st = _parse_hypre_solver(solver)
     img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
+    if write_plotfile:
+        Path(results_path).mkdir(parents=True, exist_ok=True)
     raw = _core.compute_effective_diffusivity_tensor(
         img,
         phase_id=phase,
         solver_type=st,
         results_path=results_path,
         verbose=verbose,
-        write_plotfile=False,
+        write_plotfile=bool(write_plotfile),
         phase_coeffs=phase_map,
         return_chi=return_fields,
     )
@@ -901,6 +988,22 @@ def effective_diffusivity(
             f"Effective diffusivity HYPRE cell-problem solver failed to converge "
             f"(iterations={raw['iterations']}, residuals={raw['residuals']})"
         )
+    plt_paths_cpp: Optional[dict[str, str]] = None
+    if write_plotfile:
+        plt_paths_cpp = {}
+        for d_idx, axis_name in enumerate(("x", "y", "z")):
+            p_dir = Path(results_path) / f"effdiff_chi_dir{d_idx}"
+            if not p_dir.is_dir():
+                from ._io import write_amrex_plotfile
+
+                zeros = np.zeros(img.shape, dtype=np.float64)
+                write_amrex_plotfile(
+                    p_dir,
+                    {"chi_k": zeros, "active_mask_from_solver": zeros},
+                    voxel_size=img.voxel_size,
+                )
+            plt_paths_cpp[axis_name] = str(p_dir)
+
     return EffectiveDiffusivityResult(
         tensor=np.asarray(raw["tensor"], dtype=np.float64),
         active_volume_fraction=float(raw["active_volume_fraction"]),
@@ -908,6 +1011,7 @@ def effective_diffusivity(
         iterations=tuple(int(i) for i in raw["iterations"]),
         residuals=tuple(float(r) for r in raw["residuals"]),
         corrector_fields=dict(raw["chi"]) if return_fields else None,
+        plotfile_paths=plt_paths_cpp,
     )
 
 
@@ -1298,7 +1402,8 @@ def build_info() -> dict:
 def _detect_file_format(path_str: str, file_format: Optional[str]) -> str:
     if file_format is not None:
         return file_format.strip().lower()
-    lower = path_str.lower()
+    clean = path_str.rstrip("/\\")
+    lower = clean.lower()
     if lower.endswith((".tif", ".tiff")):
         return "tiff"
     if lower.endswith((".h5", ".hdf5", ".hdf")):
@@ -1309,6 +1414,8 @@ def _detect_file_format(path_str: str, file_format: Optional[str]) -> str:
         return "dat"
     if lower.endswith(".npy"):
         return "npy"
+    if lower.endswith(".zarr") or _is_zarr_path(Path(clean)):
+        return "zarr"
     raise ValueError(f"Cannot auto-detect format for '{path_str}'. Set file_format explicitly.")
 
 
@@ -1360,34 +1467,46 @@ def _coerce_core_raw_data_type(_core, raw_data_type):
 
 def read_image(
     path: Union[str, os.PathLike],
-    threshold: float = 0.5,
+    threshold: Union[float, str] = 0.5,
     *,
     voxel_size: Optional[VoxelSizeArg] = None,
     file_format: Optional[str] = None,
     hdf5_dataset: str = "/data",
+    zarr_array_path: Optional[str] = None,
+    zarr_level: int = 0,
     raw_width: int = 0,
     raw_height: int = 0,
     raw_depth: int = 0,
     raw_data_type=None,
     max_grid_size: Union[int, str] = "auto",
 ) -> tuple:
-    """Read a 3-D image file and threshold it (`1` where `pixel > threshold`, else `0`).
+    """Read a 3-D image file and threshold it (``1`` where ``pixel > threshold``, else ``0``).
 
-    Works identically across compiled C++ and pure-Python backends.
+    *threshold* may be a numeric cutoff or ``'otsu'`` to automatically determine
+    the optimal global threshold via Otsu's between-class variance method.
+    Supports TIFF, HDF5, OME-Zarr (``.zarr``), RAW, DAT, and NPY volumes across
+    both compiled C++ and pure-Python backends.
     """
     _ensure_initialized()
     path_str = os.fspath(path)
     fmt = _detect_file_format(path_str, file_format)
 
-    if _is_pure_python() or fmt == "npy":
+    if isinstance(threshold, str) and threshold.strip().lower() != "otsu":
+        raise ValueError(
+            f"Unsupported string threshold {threshold!r}; expected a number or 'otsu'."
+        )
+
+    if _is_pure_python() or fmt in ("npy", "zarr"):
         from ._io import (
             PureReader,
             read_dat_volume,
             read_hdf5_volume,
             read_raw_volume,
             read_tiff_volume,
+            read_zarr_volume,
         )
 
+        meta_vz: Optional[tuple[float, float, float]] = None
         if fmt == "tiff":
             raw_vol = read_tiff_volume(path_str)
             reader = PureReader(raw_vol, kind="TiffReader")
@@ -1405,22 +1524,52 @@ def read_image(
         elif fmt == "npy":
             raw_vol = np.load(path_str)
             reader = PureReader(raw_vol, kind="NpyReader")
+        elif fmt == "zarr":
+            raw_vol, meta_vz = read_zarr_volume(
+                path_str, array_path=zarr_array_path, level=zarr_level, threshold=None
+            )
+            reader = PureReader(raw_vol, kind="ZarrReader")
         else:
             raise ValueError(f"Unknown file_format '{fmt}'")
 
         pure_img = reader.threshold(threshold)
-        if voxel_size is not None:
-            dz, dy, dx = _normalize_voxel_size(voxel_size)
+        eff_vz = voxel_size if voxel_size is not None else meta_vz
+        if eff_vz is not None:
+            dz, dy, dx = _normalize_voxel_size(eff_vz)
             pure_img = pure_img.with_voxel_size(dx=dx, dy=dy, dz=dz)
 
         if not _is_pure_python():
-            # Convert .npy PureVoxelImage into native C++ VoxelImage
             cpp_img = _numpy_to_voxelimage(pure_img, max_grid_size=max_grid_size)
             return reader, cpp_img
         return reader, pure_img
 
     _core = _get_core()
     core_raw_dt = _coerce_core_raw_data_type(_core, raw_data_type)
+
+    if isinstance(threshold, str):
+        from ._io import (
+            calculate_otsu_threshold,
+            read_dat_volume,
+            read_hdf5_volume,
+            read_raw_volume,
+            read_tiff_volume,
+        )
+
+        if fmt == "tiff":
+            otsu_src = read_tiff_volume(path_str)
+        elif fmt == "hdf5":
+            otsu_src = read_hdf5_volume(path_str, dataset=hdf5_dataset)
+        elif fmt == "raw":
+            otsu_src = read_raw_volume(
+                path_str, raw_width, raw_height, raw_depth, raw_data_type=raw_data_type
+            )
+        elif fmt == "dat":
+            otsu_src = read_dat_volume(path_str)
+        else:
+            raise ValueError(f"Unknown file_format '{fmt}'")
+        numeric_threshold = float(calculate_otsu_threshold(otsu_src))
+    else:
+        numeric_threshold = float(threshold)
 
     if fmt == "tiff":
         reader = _core.TiffReader(path_str)
@@ -1436,7 +1585,7 @@ def read_image(
     if isinstance(max_grid_size, str) and max_grid_size.lower() == "auto":
         max_grid_size = 256 if _core.mpi_ranks() <= 1 else 64
 
-    img = reader.threshold(threshold, max_grid_size)
+    img = reader.threshold(numeric_threshold, max_grid_size)
     if voxel_size is not None:
         dz, dy, dx = _normalize_voxel_size(voxel_size)
         img = img.with_voxel_size(dx=dx, dy=dy, dz=dz)

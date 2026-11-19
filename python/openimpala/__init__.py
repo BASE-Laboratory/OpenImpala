@@ -83,13 +83,126 @@ from .exceptions import (
 )
 
 
+def _augment_core_voxelimage(_core) -> None:
+    """Attach pure-Python Otsu and OME-Zarr convenience methods onto ``_core.VoxelImage``."""
+    vcls = getattr(_core, "VoxelImage", None)
+    if vcls is None or hasattr(vcls, "from_grayscale_otsu"):
+        return
+
+    from ._io import binarize_otsu, read_zarr_volume, write_zarr_volume
+
+    def _from_grayscale_otsu(
+        cls,
+        arr,
+        *,
+        pore_value: int = 0,
+        solid_value: int = 1,
+        dark_is_pore: bool = True,
+        nbins: int = 256,
+        max_grid_size: int = 32,
+        dx: float = 1.0,
+        dy: float = 1.0,
+        dz: float = 1.0,
+        periodic=(False, False, False),
+    ):
+        Session.ensure_active()
+        seg, _ = binarize_otsu(
+            arr,
+            pore_value=pore_value,
+            solid_value=solid_value,
+            dark_is_pore=dark_is_pore,
+            nbins=nbins,
+        )
+        return cls.from_numpy(
+            seg,
+            max_grid_size=max_grid_size,
+            dx=dx,
+            dy=dy,
+            dz=dz,
+            periodic=tuple(bool(b) for b in periodic),
+        )
+
+    def _from_zarr(
+        cls,
+        path,
+        *,
+        array_path=None,
+        level: int = 0,
+        threshold=None,
+        pore_value: int = 0,
+        solid_value: int = 1,
+        dark_is_pore: bool = True,
+        max_grid_size: int = 32,
+        voxel_size=None,
+        periodic=(False, False, False),
+    ):
+        import numpy as np
+
+        Session.ensure_active()
+        arr, meta_vz = read_zarr_volume(
+            path,
+            array_path=array_path,
+            level=level,
+            threshold=threshold,
+            pore_value=pore_value,
+            solid_value=solid_value,
+            dark_is_pore=dark_is_pore,
+        )
+        if voxel_size is not None:
+            if isinstance(voxel_size, (int, float, np.floating, np.integer)):
+                dz = dy = dx = float(voxel_size)
+            else:
+                dz, dy, dx = (
+                    float(voxel_size[0]),
+                    float(voxel_size[1]),
+                    float(voxel_size[2]),
+                )
+        elif meta_vz is not None:
+            dz, dy, dx = meta_vz
+        else:
+            dz = dy = dx = 1.0
+        return cls.from_numpy(
+            np.ascontiguousarray(arr, dtype=np.int32),
+            max_grid_size=max_grid_size,
+            dx=dx,
+            dy=dy,
+            dz=dz,
+            periodic=tuple(bool(b) for b in periodic),
+        )
+
+    def _to_zarr(
+        self,
+        path,
+        *,
+        chunks=(64, 64, 64),
+        name: str = "volume",
+        unit: str = "micrometer",
+        overwrite: bool = True,
+    ):
+        return write_zarr_volume(
+            path,
+            self.to_numpy(),
+            voxel_size=self.voxel_size,
+            chunks=chunks,
+            name=name,
+            unit=unit,
+            overwrite=overwrite,
+        )
+
+    setattr(vcls, "from_grayscale_otsu", classmethod(_from_grayscale_otsu))
+    setattr(vcls, "from_zarr", classmethod(_from_zarr))
+    setattr(vcls, "to_zarr", _to_zarr)
+
+
 def _load_core():
-    """Load the _core C extension."""
-    return importlib.import_module("openimpala._core")
+    """Load the _core C extension and attach Python convenience helpers."""
+    _core = importlib.import_module("openimpala._core")
+    _augment_core_voxelimage(_core)
+    return _core
 
 
 def __getattr__(name):
-    """Lazy-load C extension and facade symbols on first access."""
+    """Lazy-load C extension, facade, I/O, and synthetic symbols on first access."""
     _CORE_ATTRS = {
         "core",
         "_core",
@@ -126,11 +239,31 @@ def __getattr__(name):
         "ThroughThicknessResult",
         "REVStudyResult",
     }
+    _IO_ATTRS = {
+        "calculate_otsu_threshold",
+        "otsu_threshold",
+        "binarize_otsu",
+        "read_zarr_volume",
+        "write_zarr_volume",
+        "write_amrex_plotfile",
+    }
+
+    if name == "synthetic":
+        mod = importlib.import_module("openimpala.synthetic")
+        globals()["synthetic"] = mod
+        return mod
+
+    if name in _IO_ATTRS:
+        _io = importlib.import_module("openimpala._io")
+        return getattr(_io, name)
 
     if name in _CORE_ATTRS:
         try:
             _core = _load_core()
         except ImportError:
+            if name == "VoxelImage":
+                _io = importlib.import_module("openimpala._io")
+                return _io.PureVoxelImage
             raise AttributeError(
                 f"'openimpala.{name}' requires the compiled C++ backend (_core). "
                 f"In pure-Python mode, use the high-level API: "
@@ -141,8 +274,7 @@ def __getattr__(name):
         return getattr(_core, name)
 
     if name in _FACADE_ATTRS:
-        from . import facade
-
+        facade = importlib.import_module("openimpala.facade")
         return getattr(facade, name)
 
     raise AttributeError(f"module 'openimpala' has no attribute {name!r}")
@@ -151,6 +283,7 @@ def __getattr__(name):
 __all__ = [
     "__version__",
     "datasets",
+    "synthetic",
     "core",
     "VoxelImage",
     "Direction",
@@ -177,6 +310,12 @@ __all__ = [
     "estimate_memory",
     "read_image",
     "build_info",
+    "calculate_otsu_threshold",
+    "otsu_threshold",
+    "binarize_otsu",
+    "read_zarr_volume",
+    "write_zarr_volume",
+    "write_amrex_plotfile",
     "VolumeFractionResult",
     "PercolationResult",
     "TortuosityResult",

@@ -28,7 +28,7 @@ try:
 
     release = _pkg_version("openimpala")
 except Exception:
-    release = "4.6.0"
+    release = "4.7.0"
 version = ".".join(release.split(".")[:2])
 
 _DOXYGEN_XML_DIR = (_DOCS_DIR / "doxygen" / "xml").resolve()

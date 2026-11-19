@@ -537,9 +537,10 @@ int EffectiveDiffusivityHypre::buildCellTypeMask(amrex::iMultiFab& mf_cell_type)
     int iter = 0;
     bool changed_globally = true;
 
-    int h_changed = 0;
 #ifdef AMREX_USE_GPU
     amrex::Gpu::DeviceScalar<int> d_changed(0);
+#else
+    int h_changed = 0;
 #endif
 
     while (changed_globally && iter < max_label_iter) {

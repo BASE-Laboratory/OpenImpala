@@ -60,6 +60,17 @@ Quantify scale convergence and spatial uncertainty across cubic subvolume window
 :::
 ::::
 
+::::{grid-item-card} 06 — Cloud-Native OME-Zarr & Out-of-Core `yt` Plotfiles
+:link: 06_visualization_yt_and_zarr
+:link-type: doc
+
+Export chunked OME-NGFF v0.4 Zarr tomograms with physical scale metadata, write AMReX `HyperCLaw-V1.1` plotfiles directly from `tortuosity` and `effective_diffusivity`, and slice fields lazily with `yt`.
+
+:::{card-footer}
+`write_zarr_volume` · `VoxelImage.from_zarr` · `write_plotfile=True` · `yt.load`
+:::
+::::
+
 :::::
 
 ## Running Locally or on Google Colab
@@ -71,11 +82,12 @@ Quantify scale convergence and spatial uncertainty across cubic subvolume window
 | 03 | {doc}`03_homogenisation_tensor` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/03_homogenisation_tensor.ipynb) | [`03_homogenisation_tensor.ipynb`](https://github.com/BASE-Laboratory/OpenImpala/blob/master/tutorials/03_homogenisation_tensor.ipynb) |
 | 04 | {doc}`04_multiphase_transport` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/04_multiphase_transport.ipynb) | [`04_multiphase_transport.ipynb`](https://github.com/BASE-Laboratory/OpenImpala/blob/master/tutorials/04_multiphase_transport.ipynb) |
 | 05 | {doc}`05_rev_and_uncertainty` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/05_rev_and_uncertainty.ipynb) | [`05_rev_and_uncertainty.ipynb`](https://github.com/BASE-Laboratory/OpenImpala/blob/master/tutorials/05_rev_and_uncertainty.ipynb) |
+| 06 | {doc}`06_visualization_yt_and_zarr` | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/BASE-Laboratory/OpenImpala/blob/master/tutorials/06_visualization_yt_and_zarr.ipynb) | [`06_visualization_yt_and_zarr.ipynb`](https://github.com/BASE-Laboratory/OpenImpala/blob/master/tutorials/06_visualization_yt_and_zarr.ipynb) |
 
 To run the notebooks locally:
 
 ```bash
-pip install openimpala jupyter matplotlib
+pip install "openimpala[zarr,viz]" jupyter
 jupyter lab tutorials/
 ```
 
@@ -88,4 +100,5 @@ jupyter lab tutorials/
 03_homogenisation_tensor
 04_multiphase_transport
 05_rev_and_uncertainty
+06_visualization_yt_and_zarr
 ```

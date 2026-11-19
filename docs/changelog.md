@@ -1,5 +1,20 @@
 # Changelog
 
+## v4.7.0 (2026-11-19)
+
+Cloud-native OME-Zarr I/O, zero-dependency Otsu segmentation, out-of-core `yt`
+plotfile integration, synthetic porous-media ML dataset generators, and JOSS
+release polish.
+
+- **Cloud-native OME-NGFF v0.4 Zarr I/O** — `read_zarr_volume()`, `write_zarr_volume()`, `VoxelImage.from_zarr()` / `.to_zarr()`, and transparent `.zarr` store support in `read_image()` and all high-level solvers (`pip install 'openimpala[zarr]'`)
+- **Zero-dependency Otsu thresholding** — `calculate_otsu_threshold()` / `binarize_otsu()`, `VoxelImage.from_grayscale_otsu()`, `read_image(..., threshold="otsu")`, and `--threshold otsu` in the `openimpala` CLI
+- **High-level AMReX plotfiles & `yt` integration** — `write_plotfile=True` on `tortuosity()`, `tortuosity_all()`, and `effective_diffusivity()` plus `write_amrex_plotfile()` for out-of-core slicing and profiling with `yt` and ParaView
+- **Synthetic microstructures & ML surrogate generator (`openimpala.synthetic`)** — `gaussian_blobs()`, `overlapping_spheres()`, `multiphase_electrode()`, `generate_ml_dataset()`, and `openimpala generate-dataset` CLI subcommand
+- **Verified benchmark dataset registry** — `datasets.list_datasets()`, `datasets.fetch_example()`, and pinned SHA-256 integrity checks in `datasets.fetch_path()`
+- **Multi-component periodic homogenisation** — exact per-component pinning in `EffectiveDiffusivityHypre` (CPU/MPI/CUDA) and `_solver.py` eliminating near-singular modes on isolated pore pockets
+
+See the [v4.7.0 release notes](https://github.com/BASE-Laboratory/OpenImpala/releases/tag/v4.7.0).
+
 ## v4.6.0 (2026-04-17)
 
 Feature parity across the Python facade and C++ backends, full 3D field export,
