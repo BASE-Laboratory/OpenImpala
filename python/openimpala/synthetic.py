@@ -258,7 +258,20 @@ def multiphase_electrode(
         n_non_active = int(np.count_nonzero(non_active))
         if n_non_active > 0:
             # Bias binder toward active-material interfaces + spatial heterogeneity
-            dist = ndimage.distance_transform_edt(non_active) if np.any(active_mask) else np.ones(shape_t)
+            if np.any(active_mask):
+                if periodic:
+                    pad = min(max(shape_t) // 2, 24)
+                    if pad > 0:
+                        padded_na = np.pad(non_active, pad_width=pad, mode="wrap")
+                        dist = ndimage.distance_transform_edt(padded_na)[
+                            pad:-pad, pad:-pad, pad:-pad
+                        ]
+                    else:
+                        dist = ndimage.distance_transform_edt(non_active)
+                else:
+                    dist = ndimage.distance_transform_edt(non_active)
+            else:
+                dist = np.ones(shape_t, dtype=np.float64)
             sig_cbd = tuple(max(0.6, s * 0.5) for s in sig_primary)
             cbd_noise = ndimage.gaussian_filter(
                 rng.standard_normal(shape_t), sigma=sig_cbd, mode=mode
@@ -284,12 +297,41 @@ def _is_io_rank() -> bool:
         if _has_core():
             import openimpala._core as _core
 
-            if _core.amrex_initialized() and _core.mpi_ranks() > 1:
-                from mpi4py import MPI  # type: ignore[import-not-found]
-
-                return MPI.COMM_WORLD.Get_rank() == 0
+            if _core.amrex_initialized():
+                if hasattr(_core, "is_io_rank"):
+                    return bool(_core.is_io_rank())
+                if _core.mpi_ranks() <= 1:
+                    return True
     except Exception:
         pass
+
+    try:
+        from mpi4py import MPI  # type: ignore[import-not-found]
+
+        if MPI.Is_initialized():
+            return int(MPI.COMM_WORLD.Get_rank()) == 0
+    except Exception:
+        pass
+
+    for env_var in (
+        "OMPI_COMM_WORLD_RANK",
+        "PMI_RANK",
+        "PMIX_RANK",
+        "MV2_COMM_WORLD_RANK",
+    ):
+        raw = os.environ.get(env_var)
+        if raw is not None:
+            try:
+                return int(raw) == 0
+            except ValueError:
+                pass
+
+    if "SLURM_PROCID" in os.environ and int(os.environ.get("SLURM_NTASKS", "1")) > 1:
+        try:
+            return int(os.environ["SLURM_PROCID"]) == 0
+        except ValueError:
+            pass
+
     return True
 
 
@@ -306,6 +348,7 @@ def generate_ml_dataset(
     compute_deff: bool = True,
     compute_tortuosity: bool = True,
     solver: str = "auto",
+    return_volumes: bool = True,
 ) -> dict[str, Any]:
     """Generate a labelled 3-D porous-media ML surrogate dataset on disk.
 
@@ -317,10 +360,16 @@ def generate_ml_dataset(
 
     Supported output formats (auto-detected from *output_path* suffix):
       * ``.npz`` — compressed NumPy archive (zero optional dependencies)
-      * ``.h5`` / ``.hdf5`` — HDF5 dataset archive (requires ``h5py``)
-      * ``.zarr`` — chunked Zarr group archive (requires ``zarr``)
+      * ``.h5`` / ``.hdf5`` — chunked HDF5 archive streamed sample-by-sample (requires ``h5py``)
+      * ``.zarr`` — chunked Zarr group archive streamed sample-by-sample (requires ``zarr``)
+
+    Set ``return_volumes=False`` when generating large ``.h5`` or ``.zarr``
+    datasets (e.g. ``10_000+`` 3-D volumes) to stream directly to disk in
+    constant ``O(Nz * Ny * Nx)`` host memory.
     """
     import openimpala as oi
+
+    from ._io import _safe_rmtree_store
 
     if int(n_samples) < 1:
         raise ValueError(f"n_samples must be >= 1, got {n_samples}")
@@ -343,6 +392,21 @@ def generate_ml_dataset(
             f"Use .npz, .h5/.hdf5, or .zarr."
         )
 
+    # Fail fast before expensive solver loop if optional writer backend is missing
+    h5py_mod = None
+    zarr_mod = None
+    if suffix in (".h5", ".hdf5"):
+        try:
+            import h5py as h5py_mod  # type: ignore[no-redef]
+        except ImportError as exc:
+            raise ImportError(
+                "Writing .h5/.hdf5 datasets requires 'h5py' (pip install h5py)."
+            ) from exc
+    elif suffix == ".zarr":
+        from ._io import _import_zarr
+
+        zarr_mod = _import_zarr()
+
     param_rng = np.random.default_rng(int(seed))
     target_porosities = param_rng.uniform(p_lo, p_hi, size=n_s)
     sample_seeds = param_rng.integers(0, 2**31 - 1, size=n_s, dtype=np.int64)
@@ -352,107 +416,158 @@ def generate_ml_dataset(
         else param_rng.uniform(float(radius_range[0]), float(radius_range[1]), size=n_s)
     )
 
-    volumes = np.empty((n_s, *shape_t), dtype=np.uint8)
+    keep_mem_vols = bool(return_volumes or suffix == ".npz")
+    volumes: Optional[np.ndarray] = (
+        np.empty((n_s, *shape_t), dtype=np.uint8) if keep_mem_vols else None
+    )
     porosity_arr = np.zeros(n_s, dtype=np.float64)
     ssa_arr = np.zeros(n_s, dtype=np.float64)
     tau_xyz = np.full((n_s, 3), np.inf, dtype=np.float64)
     deff_tensors = np.zeros((n_s, 3, 3), dtype=np.float64)
 
     with oi.Session():
-        for idx in range(n_s):
-            s_seed = int(sample_seeds[idx])
-            p_target = float(target_porosities[idx])
-            f_scale = float(feature_scales[idx])
+        io_rank = _is_io_rank()
+        hf_handle = None
+        h5_vol_ds = None
+        zarr_grp = None
+        zarr_vol_ds = None
 
-            if gen_key == "blobs":
-                vol = gaussian_blobs(
-                    shape_t,
-                    porosity=p_target,
-                    blobiness=f_scale,
-                    pore_value=0,
-                    solid_value=1,
-                    periodic=True,
-                    seed=s_seed,
-                )
-            else:
-                vol = overlapping_spheres(
-                    shape_t,
-                    porosity=p_target,
-                    radius=f_scale,
-                    pore_value=0,
-                    solid_value=1,
-                    periodic=True,
-                    seed=s_seed,
-                )
-
-            volumes[idx] = vol.astype(np.uint8)
-            vf_res = oi.volume_fraction(vol, phase=0)
-            porosity_arr[idx] = vf_res.fraction
-            ssa_res = oi.specific_surface_area(vol, phase_a=0, phase_b=1)
-            ssa_arr[idx] = ssa_res.ssa_corrected
-
-            if compute_tortuosity:
-                tau_map = oi.tortuosity_all(vol, phase=0, solver=solver, strict=False)
-                for d_i, d_key in enumerate(("x", "y", "z")):
-                    t_res = tau_map.get(d_key)
-                    tau_xyz[idx, d_i] = t_res.tortuosity if t_res is not None else np.inf
-
-            if compute_deff:
-                hypre_solver = "flexgmres" if solver in ("auto", "mlmg") else solver
-                deff_res = oi.effective_diffusivity(vol, phase=0, solver=hypre_solver)
-                deff_tensors[idx] = deff_res.tensor
-
-    payload: dict[str, np.ndarray] = {
-        "volumes": volumes,
-        "porosity": porosity_arr,
-        "specific_surface_area": ssa_arr,
-        "tortuosity_xyz": tau_xyz,
-        "deff_tensor": deff_tensors,
-        "seeds": sample_seeds,
-        "feature_scale": feature_scales,
-    }
-
-    if _is_io_rank():
-        out_p.parent.mkdir(parents=True, exist_ok=True)
-        if suffix == ".npz":
-            np.savez_compressed(out_p, **payload)
-        elif suffix in (".h5", ".hdf5"):
-            try:
-                import h5py
-            except ImportError as exc:
-                raise ImportError(
-                    "Writing .h5/.hdf5 datasets requires 'h5py' (pip install h5py)."
-                ) from exc
-            with h5py.File(out_p, "w") as hf:
-                hf.attrs["generator"] = gen_key
-                hf.attrs["conducting_phase"] = 0
-                for k, v in payload.items():
-                    hf.create_dataset(k, data=v, compression="gzip")
-        elif suffix == ".zarr":
-            import shutil
-
-            from ._io import _import_zarr
-
-            zarr = _import_zarr()
-            if out_p.exists():
-                shutil.rmtree(out_p)
-            grp = zarr.open_group(str(out_p), mode="w")
-            grp.attrs["generator"] = gen_key
-            grp.attrs["conducting_phase"] = 0
-            for k, v in payload.items():
-                if hasattr(grp, "create_array"):
+        try:
+            if io_rank:
+                out_p.parent.mkdir(parents=True, exist_ok=True)
+                if suffix in (".h5", ".hdf5"):
+                    assert h5py_mod is not None
+                    hf_handle = h5py_mod.File(out_p, "w")
+                    hf_handle.attrs["generator"] = gen_key
+                    hf_handle.attrs["conducting_phase"] = 0
+                    h5_vol_ds = hf_handle.create_dataset(
+                        "volumes",
+                        shape=(n_s, *shape_t),
+                        chunks=(1, *shape_t),
+                        dtype=np.uint8,
+                        compression="gzip",
+                    )
+                elif suffix == ".zarr":
+                    assert zarr_mod is not None
+                    _safe_rmtree_store(
+                        out_p,
+                        kind="Zarr store",
+                        marker_names=(".zgroup", ".zarray", ".zattrs", "zarr.json"),
+                    )
                     try:
-                        grp.create_array(k, data=v, overwrite=True)
+                        zarr_grp = zarr_mod.open_group(str(out_p), mode="w", zarr_format=2)
                     except TypeError:
-                        ds = grp.create_array(k, shape=v.shape, dtype=v.dtype, overwrite=True)
-                        ds[:] = v
-                else:
-                    grp.create_dataset(k, data=v, overwrite=True)
+                        zarr_grp = zarr_mod.open_group(str(out_p), mode="w")
+                    zarr_grp.attrs["generator"] = gen_key
+                    zarr_grp.attrs["conducting_phase"] = 0
+                    vol_chunks = (1, *shape_t)
+                    if hasattr(zarr_grp, "create_array"):
+                        zarr_vol_ds = zarr_grp.create_array(
+                            "volumes",
+                            shape=(n_s, *shape_t),
+                            chunks=vol_chunks,
+                            dtype=np.uint8,
+                            overwrite=True,
+                        )
+                    else:
+                        zarr_vol_ds = zarr_grp.create_dataset(
+                            "volumes",
+                            shape=(n_s, *shape_t),
+                            chunks=vol_chunks,
+                            dtype=np.uint8,
+                            overwrite=True,
+                        )
 
-    return {
+            for idx in range(n_s):
+                s_seed = int(sample_seeds[idx])
+                p_target = float(target_porosities[idx])
+                f_scale = float(feature_scales[idx])
+
+                if gen_key == "blobs":
+                    vol = gaussian_blobs(
+                        shape_t,
+                        porosity=p_target,
+                        blobiness=f_scale,
+                        pore_value=0,
+                        solid_value=1,
+                        periodic=True,
+                        seed=s_seed,
+                    )
+                else:
+                    vol = overlapping_spheres(
+                        shape_t,
+                        porosity=p_target,
+                        radius=f_scale,
+                        pore_value=0,
+                        solid_value=1,
+                        periodic=True,
+                        seed=s_seed,
+                    )
+
+                vol_u8 = vol.astype(np.uint8)
+                if volumes is not None:
+                    volumes[idx] = vol_u8
+                if io_rank:
+                    if h5_vol_ds is not None:
+                        h5_vol_ds[idx] = vol_u8
+                    elif zarr_vol_ds is not None:
+                        zarr_vol_ds[idx] = vol_u8
+
+                vf_res = oi.volume_fraction(vol, phase=0)
+                porosity_arr[idx] = vf_res.fraction
+                ssa_res = oi.specific_surface_area(vol, phase_a=0, phase_b=1)
+                ssa_arr[idx] = ssa_res.ssa_corrected
+
+                if compute_tortuosity:
+                    tau_map = oi.tortuosity_all(vol, phase=0, solver=solver, strict=False)
+                    for d_i, d_key in enumerate(("x", "y", "z")):
+                        t_res = tau_map.get(d_key)
+                        tau_xyz[idx, d_i] = t_res.tortuosity if t_res is not None else np.inf
+
+                if compute_deff:
+                    hypre_solver = "flexgmres" if solver in ("auto", "mlmg") else solver
+                    deff_res = oi.effective_diffusivity(vol, phase=0, solver=hypre_solver)
+                    deff_tensors[idx] = deff_res.tensor
+
+            scalar_labels: dict[str, np.ndarray] = {
+                "porosity": porosity_arr,
+                "specific_surface_area": ssa_arr,
+                "tortuosity_xyz": tau_xyz,
+                "deff_tensor": deff_tensors,
+                "seeds": sample_seeds,
+                "feature_scale": feature_scales,
+            }
+
+            if io_rank:
+                if suffix == ".npz":
+                    assert volumes is not None
+                    np.savez_compressed(out_p, volumes=volumes, **scalar_labels)
+                elif hf_handle is not None:
+                    for k, v in scalar_labels.items():
+                        hf_handle.create_dataset(k, data=v, compression="gzip")
+                elif zarr_grp is not None:
+                    for k, v in scalar_labels.items():
+                        if hasattr(zarr_grp, "create_array"):
+                            try:
+                                zarr_grp.create_array(k, data=v, overwrite=True)
+                            except TypeError:
+                                ds = zarr_grp.create_array(
+                                    k, shape=v.shape, dtype=v.dtype, overwrite=True
+                                )
+                                ds[:] = v
+                        else:
+                            zarr_grp.create_dataset(k, data=v, overwrite=True)
+        finally:
+            if hf_handle is not None:
+                hf_handle.close()
+
+    result: dict[str, Any] = {
         "output_path": str(out_p),
         "n_samples": n_s,
         "shape": shape_t,
         "generator": gen_key,
-        **payload,
+        **scalar_labels,
     }
+    if return_volumes and volumes is not None:
+        result["volumes"] = volumes
+    return result

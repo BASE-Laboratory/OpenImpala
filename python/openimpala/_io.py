@@ -97,7 +97,7 @@ class PureVoxelImage:
         pore_value: int = 0,
         solid_value: int = 1,
         dark_is_pore: bool = True,
-        nbins: int = 256,
+        nbins: Optional[int] = None,
         max_grid_size: int = 32,
         dx: float = 1.0,
         dy: float = 1.0,
@@ -550,7 +550,7 @@ def read_raw_volume(
 # Zero-dependency Otsu thresholding
 # ---------------------------------------------------------------------------
 
-def calculate_otsu_threshold(array: np.ndarray, *, nbins: int = 256) -> float:
+def calculate_otsu_threshold(array: np.ndarray, *, nbins: Optional[int] = None) -> float:
     """Compute Otsu's optimal global threshold maximising between-class variance.
 
     Parameters
@@ -558,8 +558,12 @@ def calculate_otsu_threshold(array: np.ndarray, *, nbins: int = 256) -> float:
     array : np.ndarray
         Grayscale intensity array of arbitrary shape (2-D or 3-D; ``uint8``,
         ``uint16``, integer, or floating-point).
-    nbins : int, default 256
-        Number of histogram bins used for non-``uint8`` inputs.
+    nbins : int, optional
+        Number of histogram bins.  When ``None`` (default), integer volumes whose
+        dynamic range ``max - min <= 65535`` (including all ``uint8``, ``int8``,
+        ``uint16``, and ``int16`` X-ray CT tomograms) use an exact integer
+        histogram with zero quantisation error, while floating-point or wide-range
+        integer arrays use ``256`` linearly spaced bins.
 
     Returns
     -------
@@ -572,7 +576,7 @@ def calculate_otsu_threshold(array: np.ndarray, *, nbins: int = 256) -> float:
     arr = np.asarray(array)
     if arr.size == 0:
         raise ValueError("Cannot compute Otsu threshold on an empty array.")
-    if nbins < 2:
+    if nbins is not None and int(nbins) < 2:
         raise ValueError(f"nbins must be >= 2, got {nbins}")
     if np.issubdtype(arr.dtype, np.bool_):
         arr = arr.astype(np.uint8)
@@ -584,12 +588,25 @@ def calculate_otsu_threshold(array: np.ndarray, *, nbins: int = 256) -> float:
     if v_min == v_max:
         return v_min
 
-    if arr.dtype == np.uint8 and nbins == 256:
-        counts = np.bincount(arr.ravel(), minlength=256).astype(np.float64)
-        bin_centers = np.arange(256, dtype=np.float64)
+    use_exact_int = False
+    if np.issubdtype(arr.dtype, np.integer):
+        i_min = int(np.min(arr))
+        i_max = int(np.max(arr))
+        span = i_max - i_min
+        if nbins is None and span <= 65535:
+            use_exact_int = True
+        elif arr.dtype == np.uint8 and nbins == 256:
+            i_min, i_max, span = 0, 255, 255
+            use_exact_int = True
+
+    if use_exact_int:
+        shifted = arr.ravel().astype(np.int64, copy=False) - i_min
+        counts = np.bincount(shifted, minlength=span + 1).astype(np.float64)
+        bin_centers = np.arange(i_min, i_max + 1, dtype=np.float64)
         split_thresholds = bin_centers[:-1] + 0.5
     else:
-        counts_int, bin_edges = np.histogram(arr, bins=nbins, range=(v_min, v_max))
+        eff_bins = 256 if nbins is None else int(nbins)
+        counts_int, bin_edges = np.histogram(arr, bins=eff_bins, range=(v_min, v_max))
         counts = counts_int.astype(np.float64)
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
         split_thresholds = bin_edges[1:-1]
@@ -623,7 +640,7 @@ def binarize_otsu(
     pore_value: int = 0,
     solid_value: int = 1,
     dark_is_pore: bool = True,
-    nbins: int = 256,
+    nbins: Optional[int] = None,
 ) -> tuple[np.ndarray, float]:
     """Segment a grayscale volume using Otsu's method and return ``(segmented, threshold)``.
 
@@ -640,8 +657,9 @@ def binarize_otsu(
         (``intensity <= threshold``) map to *pore_value* and bright voxels
         (``intensity > threshold``) map to *solid_value*.  Set ``False`` for
         inverted contrast images where pores are brighter than solid.
-    nbins : int, default 256
-        Histogram bin count passed to :func:`calculate_otsu_threshold`.
+    nbins : int, optional
+        Histogram bin count passed to :func:`calculate_otsu_threshold` (``None``
+        selects exact integer bins for ``uint8``/``uint16`` scans).
 
     Returns
     -------
@@ -659,8 +677,54 @@ def binarize_otsu(
     return np.ascontiguousarray(seg, dtype=np.int32), thresh
 
 
+def _safe_rmtree_store(
+    target: Path,
+    *,
+    kind: str,
+    marker_names: tuple[str, ...],
+) -> None:
+    """Safely remove an existing directory store, refusing CWD, HOME, root, or non-stores."""
+    import shutil
+
+    if target.is_symlink():
+        raise ValueError(
+            f"Refusing to overwrite symlink '{target}' when writing {kind}."
+        )
+    resolved = target.resolve()
+    cwd_resolved = Path.cwd().resolve()
+    try:
+        home_resolved = Path.home().resolve()
+    except Exception:
+        home_resolved = None
+
+    if (
+        resolved == Path(resolved.anchor)
+        or resolved == cwd_resolved
+        or (home_resolved is not None and resolved == home_resolved)
+        or cwd_resolved.is_relative_to(resolved)
+    ):
+        raise ValueError(
+            f"Refusing to overwrite protected directory '{target}' when writing {kind}; "
+            f"pass a dedicated output subdirectory path."
+        )
+
+    if not target.exists():
+        return
+    if not target.is_dir():
+        target.unlink()
+        return
+
+    entries = [p.name for p in target.iterdir()]
+    if entries and not any(m in entries for m in marker_names):
+        raise ValueError(
+            f"Refusing to recursively delete existing non-{kind} directory '{target}' "
+            f"(missing store markers {marker_names}). Specify a dedicated output path."
+        )
+    shutil.rmtree(target)
+
+
 # ---------------------------------------------------------------------------
-# Cloud-native OME-Zarr (NGFF v0.4) 3-D volume I/O
+# Cloud-native OME-Zarr (NGFF v0.4 / v0.5) 3-D volume I/O
 # ---------------------------------------------------------------------------
 
 def _import_zarr():
@@ -690,6 +754,33 @@ def _coerce_vz_tuple(voxel_size: Optional[Sequence[float] | float]) -> tuple[flo
     return (seq[0], seq[1], seq[2])
 
 
+def _extract_ome_zyx_scale(
+    ds_meta: Mapping[str, Any],
+    axes_meta: Sequence[Any],
+) -> Optional[tuple[float, float, float]]:
+    """Extract ``(dz, dy, dx)`` from an OME-NGFF dataset entry (supports 3-D, 4-D, 5-D)."""
+    for tr in ds_meta.get("coordinateTransformations", []):
+        if not isinstance(tr, Mapping) or tr.get("type") != "scale":
+            continue
+        raw_sc = tr.get("scale")
+        if not isinstance(raw_sc, (list, tuple)) or len(raw_sc) < 3:
+            continue
+        if isinstance(axes_meta, (list, tuple)) and len(axes_meta) == len(raw_sc):
+            idx_by_name = {
+                str(ax.get("name", "")).lower(): idx
+                for idx, ax in enumerate(axes_meta)
+                if isinstance(ax, Mapping)
+            }
+            if {"z", "y", "x"}.issubset(idx_by_name):
+                return (
+                    float(raw_sc[idx_by_name["z"]]),
+                    float(raw_sc[idx_by_name["y"]]),
+                    float(raw_sc[idx_by_name["x"]]),
+                )
+        return (float(raw_sc[-3]), float(raw_sc[-2]), float(raw_sc[-1]))
+    return None
+
+
 def write_zarr_volume(
     path: Union[str, os.PathLike],
     array: np.ndarray,
@@ -699,14 +790,18 @@ def write_zarr_volume(
     name: str = "volume",
     unit: str = "micrometer",
     overwrite: bool = True,
+    zarr_format: int = 2,
 ) -> Path:
-    """Write a 3-D volume ``(Nz, Ny, Nx)`` to an OME-NGFF v0.4 chunked Zarr store.
+    """Write a 3-D volume ``(Nz, Ny, Nx)`` to an OME-NGFF chunked Zarr store.
 
-    Compatible with both Zarr v2 and Zarr v3, Neuroglancer, Napari, and ``dask``.
+    Defaults to ``zarr_format=2`` (OME-NGFF v0.4 on Zarr v2) for out-of-the-box
+    compatibility with ``ome-zarr-py``, Napari, Fiji MoBIE, Bio-Formats,
+    Neuroglancer, and ``dask``.  Passing ``zarr_format=3`` on ``zarr>=3.0``
+    writes an OME-NGFF v0.5 store on Zarr v3.
     """
-    import shutil
-
     zarr = _import_zarr()
+    if zarr_format not in (2, 3):
+        raise ValueError(f"zarr_format must be 2 or 3, got {zarr_format!r}")
     arr_c = np.ascontiguousarray(array)
     if arr_c.ndim != 3:
         raise ValueError(f"Expected a 3-D array (Nz, Ny, Nx), got shape {arr_c.shape}")
@@ -716,16 +811,24 @@ def write_zarr_volume(
     eff_chunks = tuple(min(int(c), int(s)) for c, s in zip(chunks, arr_c.shape))
 
     target = Path(path)
-    if target.exists():
-        if not overwrite:
-            raise FileExistsError(f"Zarr store '{target}' already exists and overwrite=False.")
-        if target.is_dir():
-            shutil.rmtree(target)
-        else:
-            target.unlink()
+    if target.exists() and not overwrite:
+        raise FileExistsError(f"Zarr store '{target}' already exists and overwrite=False.")
+    _safe_rmtree_store(
+        target,
+        kind="Zarr store",
+        marker_names=(".zgroup", ".zarray", ".zattrs", "zarr.json"),
+    )
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    grp = zarr.open_group(str(target), mode="w")
+    try:
+        grp = zarr.open_group(str(target), mode="w", zarr_format=zarr_format)
+    except TypeError:
+        if zarr_format == 3:
+            raise ValueError(
+                "zarr_format=3 requires zarr>=3.0; installed zarr only supports v2."
+            ) from None
+        grp = zarr.open_group(str(target), mode="w")
+
     if hasattr(grp, "create_array"):
         try:
             grp.create_array("0", data=arr_c, chunks=eff_chunks, overwrite=True)
@@ -737,25 +840,29 @@ def write_zarr_volume(
     else:
         grp.create_dataset("0", data=arr_c, chunks=eff_chunks, overwrite=True)
 
-    grp.attrs["multiscales"] = [
-        {
-            "version": "0.4",
-            "name": str(name),
-            "axes": [
-                {"name": "z", "type": "space", "unit": str(unit)},
-                {"name": "y", "type": "space", "unit": str(unit)},
-                {"name": "x", "type": "space", "unit": str(unit)},
-            ],
-            "datasets": [
-                {
-                    "path": "0",
-                    "coordinateTransformations": [
-                        {"type": "scale", "scale": [float(dz), float(dy), float(dx)]}
-                    ],
-                }
-            ],
+    ms_entry: dict[str, Any] = {
+        "name": str(name),
+        "axes": [
+            {"name": "z", "type": "space", "unit": str(unit)},
+            {"name": "y", "type": "space", "unit": str(unit)},
+            {"name": "x", "type": "space", "unit": str(unit)},
+        ],
+        "datasets": [
+            {
+                "path": "0",
+                "coordinateTransformations": [
+                    {"type": "scale", "scale": [float(dz), float(dy), float(dx)]}
+                ],
+            }
+        ],
+    }
+    if zarr_format == 3:
+        grp.attrs["ome"] = {
+            "version": "0.5",
+            "multiscales": [ms_entry],
         }
-    ]
+    else:
+        grp.attrs["multiscales"] = [{"version": "0.4", **ms_entry}]
     return target
 
 
@@ -769,7 +876,7 @@ def read_zarr_volume(
     solid_value: int = 1,
     dark_is_pore: bool = True,
 ) -> tuple[np.ndarray, Optional[tuple[float, float, float]]]:
-    """Read a 3-D Zarr array or OME-NGFF multiscale Zarr group.
+    """Read a 3-D Zarr array or OME-NGFF (v0.4 / v0.5) multiscale Zarr group.
 
     Returns ``(volume, voxel_size_zyx)`` where ``voxel_size_zyx`` is extracted
     from OME-NGFF ``coordinateTransformations`` (or ``None`` if absent).
@@ -781,6 +888,7 @@ def read_zarr_volume(
 
     node = zarr.open(str(target), mode="r")
     meta_vz: Optional[tuple[float, float, float]] = None
+    axes_meta: Sequence[Any] = ()
 
     if hasattr(node, "shape") and hasattr(node, "dtype"):
         zarr_arr = node
@@ -789,15 +897,21 @@ def read_zarr_volume(
             meta_vz = (float(raw_vz[0]), float(raw_vz[1]), float(raw_vz[2]))
     else:
         multiscales = node.attrs.get("multiscales")
+        if multiscales is None:
+            ome_block = node.attrs.get("ome")
+            if isinstance(ome_block, Mapping):
+                multiscales = ome_block.get("multiscales")
+
+        if isinstance(multiscales, list) and multiscales and isinstance(multiscales[0], Mapping):
+            axes_meta = multiscales[0].get("axes", ())
+
         if array_path is not None:
             zarr_arr = node[array_path]
             if isinstance(multiscales, list) and multiscales:
                 for ds_meta in multiscales[0].get("datasets", []):
                     if ds_meta.get("path") == array_path:
-                        for tr in ds_meta.get("coordinateTransformations", []):
-                            if tr.get("type") == "scale" and len(tr.get("scale", ())) == 3:
-                                sc = tr["scale"]
-                                meta_vz = (float(sc[0]), float(sc[1]), float(sc[2]))
+                        meta_vz = _extract_ome_zyx_scale(ds_meta, axes_meta)
+                        break
         elif isinstance(multiscales, list) and multiscales:
             datasets = multiscales[0].get("datasets", [])
             if not datasets:
@@ -808,10 +922,7 @@ def read_zarr_volume(
                 )
             ds_meta = datasets[level]
             zarr_arr = node[ds_meta["path"]]
-            for tr in ds_meta.get("coordinateTransformations", []):
-                if tr.get("type") == "scale" and len(tr.get("scale", ())) == 3:
-                    sc = tr["scale"]
-                    meta_vz = (float(sc[0]), float(sc[1]), float(sc[2]))
+            meta_vz = _extract_ome_zyx_scale(ds_meta, axes_meta)
         elif "0" in node:
             zarr_arr = node["0"]
         elif "data" in node:
@@ -823,11 +934,27 @@ def read_zarr_volume(
             )
 
     arr = np.asarray(zarr_arr)
-    if arr.ndim == 4 and arr.shape[0] == 1:
-        # Handle (1, Nz, Ny, Nx) single-channel OME-Zarr volumes gracefully
+    # Squeeze leading singleton non-spatial dimensions (e.g. 4-D (1, Z, Y, X) or 5-D (1, 1, Z, Y, X))
+    n_squeezed = 0
+    while arr.ndim > 3 and arr.shape[0] == 1:
         arr = arr[0]
+        n_squeezed += 1
     if arr.ndim != 3:
         raise ValueError(f"Expected 3-D Zarr volume (Nz, Ny, Nx), got shape {arr.shape}")
+
+    # Reorder spatial axes to (z, y, x) if OME-NGFF axes declare a non-zyx spatial order
+    if isinstance(axes_meta, (list, tuple)) and len(axes_meta) - n_squeezed == 3:
+        spatial_names = [
+            str(ax.get("name", "")).lower() if isinstance(ax, Mapping) else ""
+            for ax in axes_meta[n_squeezed:]
+        ]
+        if set(spatial_names) == {"x", "y", "z"} and spatial_names != ["z", "y", "x"]:
+            perm = (
+                spatial_names.index("z"),
+                spatial_names.index("y"),
+                spatial_names.index("x"),
+            )
+            arr = np.transpose(arr, perm)
 
     if threshold is not None:
         if isinstance(threshold, str):
@@ -870,8 +997,6 @@ def write_amrex_plotfile(
     ``float64`` FAB format so ``yt.load()`` and ParaView read them identically
     to native C++ ``amrex::WriteSingleLevelPlotfile`` outputs.
     """
-    import shutil
-
     if not fields:
         raise ValueError("fields mapping must contain at least one 3-D array.")
 
@@ -898,8 +1023,11 @@ def write_amrex_plotfile(
     ncomp = len(varnames)
 
     out_dir = Path(plotfile_dir)
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
+    _safe_rmtree_store(
+        out_dir,
+        kind="AMReX plotfile",
+        marker_names=("Header", "Level_0"),
+    )
     level_dir = out_dir / "Level_0"
     level_dir.mkdir(parents=True, exist_ok=True)
 

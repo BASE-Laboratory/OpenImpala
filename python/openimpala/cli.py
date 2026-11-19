@@ -59,6 +59,27 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
+    def _add_io_args(subparser: argparse.ArgumentParser) -> None:
+        grp = subparser.add_mutually_exclusive_group()
+        grp.add_argument(
+            "--dark-is-pore",
+            dest="dark_is_pore",
+            action="store_true",
+            default=True,
+            help="Dark voxels (<= threshold) map to pore phase 0 (default)",
+        )
+        grp.add_argument(
+            "--bright-is-pore",
+            dest="dark_is_pore",
+            action="store_false",
+            help="Inverted contrast: bright voxels (> threshold) map to pore phase 0",
+        )
+        subparser.add_argument(
+            "--hdf5-dataset",
+            default="/data",
+            help="HDF5 dataset path when reading .h5/.hdf5 files (default: /data)",
+        )
+
     # --- analyze ---
     p_analyze = sub.add_parser("analyze", help="Full analysis pipeline")
     p_analyze.add_argument("image", help="Path to the 3-D image file")
@@ -69,6 +90,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.5,
         help="Binarisation threshold: float or 'otsu' (default: 0.5)",
     )
+    _add_io_args(p_analyze)
     p_analyze.add_argument("--direction", default="x", help="Flow direction (x/y/z, default: x)")
     p_analyze.add_argument(
         "--solver",
@@ -96,6 +118,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_vf.add_argument("image", help="Path to the 3-D image file")
     p_vf.add_argument("--phase", type=int, default=0)
     p_vf.add_argument("--threshold", type=_parse_threshold, default=0.5)
+    _add_io_args(p_vf)
     p_vf.add_argument("--max-grid-size", type=_parse_max_grid_size, default="auto")
 
     # --- percolation ---
@@ -103,6 +126,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_perc.add_argument("image", help="Path to the 3-D image file")
     p_perc.add_argument("--phase", type=int, default=0)
     p_perc.add_argument("--threshold", type=_parse_threshold, default=0.5)
+    _add_io_args(p_perc)
     p_perc.add_argument("--direction", default="x")
     p_perc.add_argument("--max-grid-size", type=_parse_max_grid_size, default="auto")
     p_perc.add_argument("--verbose", type=int, default=0)
@@ -180,6 +204,8 @@ def _cmd_vf(args: argparse.Namespace) -> int:
     _, img = oi.read_image(
         args.image,
         threshold=args.threshold,
+        dark_is_pore=args.dark_is_pore,
+        hdf5_dataset=args.hdf5_dataset,
         max_grid_size=args.max_grid_size,
     )
     vf_res = oi.volume_fraction(img, phase=args.phase)
@@ -199,6 +225,8 @@ def _cmd_percolation(args: argparse.Namespace) -> int:
     _, img = oi.read_image(
         args.image,
         threshold=args.threshold,
+        dark_is_pore=args.dark_is_pore,
+        hdf5_dataset=args.hdf5_dataset,
         max_grid_size=args.max_grid_size,
     )
     pc_res = oi.percolation_check(
@@ -231,6 +259,8 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     _, img = oi.read_image(
         args.image,
         threshold=args.threshold,
+        dark_is_pore=args.dark_is_pore,
+        hdf5_dataset=args.hdf5_dataset,
         voxel_size=vz,
         max_grid_size=args.max_grid_size,
     )
@@ -312,6 +342,7 @@ def _cmd_generate_dataset(args: argparse.Namespace) -> int:
         compute_deff=not args.no_deff,
         compute_tortuosity=not args.no_tortuosity,
         solver=args.solver,
+        return_volumes=False,
     )
     summary = {
         "output_path": ds["output_path"],

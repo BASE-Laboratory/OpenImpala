@@ -480,6 +480,18 @@ def _is_zarr_path(p: Path) -> bool:
     return False
 
 
+def _coerce_phase_array(arr: np.ndarray, *, source_desc: str = "input") -> np.ndarray:
+    """Convert *arr* to C-contiguous ``int32`` phase IDs, rejecting unsegmented floats."""
+    if np.issubdtype(arr.dtype, np.floating):
+        if not np.all(np.isfinite(arr)) or not np.array_equal(arr, np.trunc(arr)):
+            raise ValueError(
+                f"Expected integer phase IDs in {source_desc}, but got floating-point "
+                f"grayscale values (dtype={arr.dtype}). Segment the volume first with "
+                f"oi.read_image(..., threshold='otsu') or oi.binarize_otsu(...)."
+            )
+    return np.ascontiguousarray(arr, dtype=np.int32)
+
+
 def _resolve_pure_input(
     data: DataInputArg,
     voxel_size: Optional[VoxelSizeArg] = None,
@@ -493,7 +505,10 @@ def _resolve_pure_input(
             raw_arr = np.load(p)
             if raw_arr.ndim != 3:
                 raise ValueError(f"Expected a 3-D array in '{p}', got shape {raw_arr.shape}")
-            return np.ascontiguousarray(raw_arr, dtype=np.int32), _normalize_voxel_size(voxel_size)
+            return (
+                _coerce_phase_array(raw_arr, source_desc=f"'{p}'"),
+                _normalize_voxel_size(voxel_size),
+            )
         if _is_zarr_path(p):
             zarr_arr, meta_vz = read_zarr_volume(p, threshold=None)
             vz = (
@@ -501,7 +516,7 @@ def _resolve_pure_input(
                 if voxel_size is not None
                 else (meta_vz if meta_vz is not None else (1.0, 1.0, 1.0))
             )
-            return np.ascontiguousarray(zarr_arr, dtype=np.int32), vz
+            return _coerce_phase_array(zarr_arr, source_desc=f"'{p}'"), vz
         _, img = read_image(p, voxel_size=voxel_size)
         return np.asarray(img, dtype=np.int32), img.voxel_size
 
@@ -513,7 +528,7 @@ def _resolve_pure_input(
         raise TypeError("data must be a 3-D NumPy array, VoxelImage, or file path")
     if data.ndim != 3:
         raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
-    return np.ascontiguousarray(data, dtype=np.int32), _normalize_voxel_size(voxel_size)
+    return _coerce_phase_array(data, source_desc="NumPy array"), _normalize_voxel_size(voxel_size)
 
 
 def _numpy_to_voxelimage(
@@ -532,8 +547,10 @@ def _numpy_to_voxelimage(
         dz, dy, dx = _normalize_voxel_size(voxel_size)
         return data.with_voxel_size(dx=dx, dy=dy, dz=dz)
 
+    src_desc = "NumPy array"
     if isinstance(data, (str, os.PathLike)):
         p = Path(data)
+        src_desc = f"'{p}'"
         if p.suffix.lower() == ".npy":
             data = np.load(p)
         elif _is_zarr_path(p):
@@ -560,7 +577,7 @@ def _numpy_to_voxelimage(
         max_grid_size = _auto_grid_size(data.shape)
 
     dz, dy, dx = _normalize_voxel_size(voxel_size)
-    arr = np.ascontiguousarray(data, dtype=np.int32)
+    arr = _coerce_phase_array(data, source_desc=src_desc)
     return _core.VoxelImage.from_numpy(arr, max_grid_size, dx=dx, dy=dy, dz=dz)
 
 
@@ -754,7 +771,10 @@ def tortuosity(
         )
 
     if write_plotfile:
-        Path(results_path).mkdir(parents=True, exist_ok=True)
+        if _core.is_io_rank():
+            Path(results_path).mkdir(parents=True, exist_ok=True)
+        if _core.mpi_ranks() > 1:
+            _core.mpi_bcast_double(0.0)
 
     if st == "mlmg":
         mlmg_kwargs = {}
@@ -972,7 +992,10 @@ def effective_diffusivity(
     st = _parse_hypre_solver(solver)
     img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
     if write_plotfile:
-        Path(results_path).mkdir(parents=True, exist_ok=True)
+        if _core.is_io_rank():
+            Path(results_path).mkdir(parents=True, exist_ok=True)
+        if _core.mpi_ranks() > 1:
+            _core.mpi_bcast_double(0.0)
     raw = _core.compute_effective_diffusivity_tensor(
         img,
         phase_id=phase,
@@ -990,19 +1013,10 @@ def effective_diffusivity(
         )
     plt_paths_cpp: Optional[dict[str, str]] = None
     if write_plotfile:
-        plt_paths_cpp = {}
-        for d_idx, axis_name in enumerate(("x", "y", "z")):
-            p_dir = Path(results_path) / f"effdiff_chi_dir{d_idx}"
-            if not p_dir.is_dir():
-                from ._io import write_amrex_plotfile
-
-                zeros = np.zeros(img.shape, dtype=np.float64)
-                write_amrex_plotfile(
-                    p_dir,
-                    {"chi_k": zeros, "active_mask_from_solver": zeros},
-                    voxel_size=img.voxel_size,
-                )
-            plt_paths_cpp[axis_name] = str(p_dir)
+        plt_paths_cpp = {
+            axis_name: str(Path(results_path) / f"effdiff_chi_dir{d_idx}")
+            for d_idx, axis_name in enumerate(("x", "y", "z"))
+        }
 
     return EffectiveDiffusivityResult(
         tensor=np.asarray(raw["tensor"], dtype=np.float64),
@@ -1380,6 +1394,7 @@ def build_info() -> dict:
             "openmp_max_threads": 1,
             "mpi_enabled": False,
             "mpi_ranks": 1,
+            "mpi_rank": 0,
             "tiny_profile": False,
             "hypre_cuda": False,
             "hypre_hip": False,
@@ -1469,6 +1484,9 @@ def read_image(
     path: Union[str, os.PathLike],
     threshold: Union[float, str] = 0.5,
     *,
+    dark_is_pore: bool = True,
+    pore_value: int = 0,
+    solid_value: int = 1,
     voxel_size: Optional[VoxelSizeArg] = None,
     file_format: Optional[str] = None,
     hdf5_dataset: str = "/data",
@@ -1480,7 +1498,12 @@ def read_image(
     raw_data_type=None,
     max_grid_size: Union[int, str] = "auto",
 ) -> tuple:
-    """Read a 3-D image file and threshold it (``1`` where ``pixel > threshold``, else ``0``).
+    """Read a 3-D image file and threshold it into pore and solid phase IDs.
+
+    When *dark_is_pore* is ``True`` (default X-ray CT contrast), voxels with
+    ``pixel > threshold`` map to *solid_value* (default ``1``) and ``<= threshold``
+    map to *pore_value* (default ``0``).  Set ``dark_is_pore=False`` for inverted
+    (bright-pore) images so ``pixel > threshold`` maps to *pore_value* (``0``).
 
     *threshold* may be a numeric cutoff or ``'otsu'`` to automatically determine
     the optimal global threshold via Otsu's between-class variance method.
@@ -1495,6 +1518,9 @@ def read_image(
         raise ValueError(
             f"Unsupported string threshold {threshold!r}; expected a number or 'otsu'."
         )
+
+    v_true = int(solid_value) if dark_is_pore else int(pore_value)
+    v_false = int(pore_value) if dark_is_pore else int(solid_value)
 
     if _is_pure_python() or fmt in ("npy", "zarr"):
         from ._io import (
@@ -1532,7 +1558,7 @@ def read_image(
         else:
             raise ValueError(f"Unknown file_format '{fmt}'")
 
-        pure_img = reader.threshold(threshold)
+        pure_img = reader.threshold(threshold, v_true, v_false)
         eff_vz = voxel_size if voxel_size is not None else meta_vz
         if eff_vz is not None:
             dz, dy, dx = _normalize_voxel_size(eff_vz)
@@ -1555,19 +1581,27 @@ def read_image(
             read_tiff_volume,
         )
 
-        if fmt == "tiff":
-            otsu_src = read_tiff_volume(path_str)
-        elif fmt == "hdf5":
-            otsu_src = read_hdf5_volume(path_str, dataset=hdf5_dataset)
-        elif fmt == "raw":
-            otsu_src = read_raw_volume(
-                path_str, raw_width, raw_height, raw_depth, raw_data_type=raw_data_type
-            )
-        elif fmt == "dat":
-            otsu_src = read_dat_volume(path_str)
+        # Compute Otsu threshold on the I/O rank only and broadcast to avoid
+        # replicating full-volume host reads across N MPI ranks per node.
+        if _core.is_io_rank():
+            if fmt == "tiff":
+                otsu_src = read_tiff_volume(path_str)
+            elif fmt == "hdf5":
+                otsu_src = read_hdf5_volume(path_str, dataset=hdf5_dataset)
+            elif fmt == "raw":
+                otsu_src = read_raw_volume(
+                    path_str, raw_width, raw_height, raw_depth, raw_data_type=raw_data_type
+                )
+            elif fmt == "dat":
+                otsu_src = read_dat_volume(path_str)
+            else:
+                raise ValueError(f"Unknown file_format '{fmt}'")
+            numeric_threshold = float(calculate_otsu_threshold(otsu_src))
+            del otsu_src
         else:
-            raise ValueError(f"Unknown file_format '{fmt}'")
-        numeric_threshold = float(calculate_otsu_threshold(otsu_src))
+            numeric_threshold = 0.0
+        if _core.mpi_ranks() > 1:
+            numeric_threshold = float(_core.mpi_bcast_double(numeric_threshold))
     else:
         numeric_threshold = float(threshold)
 
@@ -1592,7 +1626,10 @@ def read_image(
     else:
         eff_threshold = numeric_threshold
 
-    img = reader.threshold(eff_threshold, max_grid_size)
+    if (v_true, v_false) == (1, 0):
+        img = reader.threshold(eff_threshold, max_grid_size)
+    else:
+        img = reader.threshold(eff_threshold, v_true, v_false, max_grid_size)
     if voxel_size is not None:
         dz, dy, dx = _normalize_voxel_size(voxel_size)
         img = img.with_voxel_size(dx=dx, dy=dy, dz=dz)

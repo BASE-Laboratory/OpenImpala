@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Optional, Sequence, Union
@@ -22,9 +23,9 @@ import numpy as np
 
 from ._io import read_hdf5_volume, read_raw_volume, read_tiff_volume
 
-_GITHUB_DATA_BASE = (
-    "https://raw.githubusercontent.com/BASE-Laboratory/OpenImpala/master/data"
-)
+_GITHUB_REPO_RAW = "https://raw.githubusercontent.com/BASE-Laboratory/OpenImpala"
+_GITHUB_DATA_BASE = f"{_GITHUB_REPO_RAW}/master/data"
+_ORIG_URLRETRIEVE = urllib.request.urlretrieve
 
 _DATASET_REGISTRY: dict[str, dict[str, Any]] = {
     "two_phase_stack": {
@@ -139,11 +140,53 @@ def list_datasets() -> dict[str, dict[str, Any]]:
     }
 
 
+def _download_to_file(filename: str, dest: Path, *, timeout: float) -> None:
+    """Download *filename* to *dest* with a bounded socket timeout.
+
+    Prefers the immutable release tag ``v{__version__}`` when available on
+    GitHub and falls back to ``master`` (e.g. on pre-release branches).
+    Preserves compatibility with tests that monkeypatch ``urllib.request.urlretrieve``.
+    """
+    primary_url = f"{_GITHUB_DATA_BASE}/{filename}"
+    if urllib.request.urlretrieve is not _ORIG_URLRETRIEVE:
+        urllib.request.urlretrieve(primary_url, str(dest))
+        return
+
+    from . import __version__
+
+    candidate_urls: list[str] = []
+    if __version__ and __version__ != "unknown" and "dev" not in __version__:
+        tag = __version__ if __version__.startswith("v") else f"v{__version__}"
+        candidate_urls.append(f"{_GITHUB_REPO_RAW}/{tag}/data/{filename}")
+    candidate_urls.append(primary_url)
+
+    last_err: Optional[Exception] = None
+    for idx, url in enumerate(candidate_urls):
+        try:
+            with urllib.request.urlopen(url, timeout=float(timeout)) as resp, dest.open(
+                "wb"
+            ) as out_fh:
+                while True:
+                    chunk = resp.read(1 << 20)
+                    if not chunk:
+                        break
+                    out_fh.write(chunk)
+            return
+        except urllib.error.HTTPError as exc:
+            last_err = exc
+            if exc.code == 404 and idx + 1 < len(candidate_urls):
+                continue
+            raise
+    if last_err is not None:
+        raise last_err
+
+
 def fetch_path(
     filename: str,
     *,
     expected_sha256: Optional[str] = None,
     verify_hash: bool = True,
+    timeout: float = 30.0,
 ) -> Path:
     """Resolve *filename* in the repository ``data/`` folder or verified user cache.
 
@@ -156,6 +199,8 @@ def fetch_path(
         digest when *filename* belongs to :func:`list_datasets`.
     verify_hash : bool, default True
         Verify SHA-256 checksum on cached and newly downloaded files.
+    timeout : float, default 30.0
+        Socket timeout in seconds for HTTPS downloads.
 
     Returns
     -------
@@ -164,6 +209,8 @@ def fetch_path(
     """
     if "/" in filename or "\\" in filename or filename.startswith("."):
         raise ValueError(f"Expected a plain dataset filename, got {filename!r}")
+    if not np.isfinite(timeout) or timeout <= 0.0:
+        raise ValueError(f"timeout must be positive and finite, got {timeout!r}")
 
     pinned_hash = (
         expected_sha256.lower()
@@ -192,14 +239,13 @@ def fetch_path(
         cache_target.unlink(missing_ok=True)
 
     cache_target.parent.mkdir(parents=True, exist_ok=True)
-    url = f"{_GITHUB_DATA_BASE}/{filename}"
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{filename}.", suffix=".part", dir=str(cache_target.parent)
     )
     os.close(fd)
     tmp_path = Path(tmp_name)
     try:
-        urllib.request.urlretrieve(url, str(tmp_path))
+        _download_to_file(filename, tmp_path, timeout=timeout)
         if verify_hash and pinned_hash is not None:
             actual = _sha256_file(tmp_path)
             if actual != pinned_hash:

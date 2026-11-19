@@ -425,3 +425,215 @@ class TestSyntheticAndMlGenerator:
         sample_out = tmp_path / "generated_samples"
         assert mod.main(["--output-dir", str(sample_out), "--shape", "12", "--porosity", "0.4"]) == 0
         assert (sample_out / "SampleData_2Phase_stack_3d_uint8.raw").is_file()
+
+
+class TestRedTeamHardening:
+    """Adversarial regression tests for v4.7.0 Red Team hardening."""
+
+    def test_safe_store_rmtree_guards_cwd_symlinks_and_user_dirs(self, tmp_path):
+        fields = {"phi": np.ones((4, 4, 4), dtype=np.float64)}
+
+        # Refuses current working directory '.' and ancestor '..'
+        with pytest.raises(ValueError, match="protected directory"):
+            oi.write_amrex_plotfile(".", fields)
+
+        # Refuses non-empty directory missing plotfile markers
+        user_dir = tmp_path / "important_project"
+        user_dir.mkdir()
+        precious = user_dir / "notes.txt"
+        precious.write_text("do not delete", encoding="utf-8")
+        with pytest.raises(ValueError, match="non-AMReX plotfile"):
+            oi.write_amrex_plotfile(user_dir, fields)
+        assert precious.read_text(encoding="utf-8") == "do not delete"
+
+        # Refuses symlinks
+        real_dir = tmp_path / "real_target"
+        real_dir.mkdir()
+        link_dir = tmp_path / "symlink_plt"
+        link_dir.symlink_to(real_dir, target_is_directory=True)
+        with pytest.raises(ValueError, match="symlink"):
+            oi.write_amrex_plotfile(link_dir, fields)
+
+        # Allows overwriting an existing valid plotfile directory
+        valid_plt = tmp_path / "plt00000"
+        oi.write_amrex_plotfile(valid_plt, fields)
+        oi.write_amrex_plotfile(valid_plt, {"phi": np.zeros((4, 4, 4), dtype=np.float64)})
+        assert (valid_plt / "Header").is_file()
+
+    def test_exact_uint16_otsu_zero_quantisation_with_outliers(self):
+        # Symmetric bimodal uint16 peaks at 1000 and 41000 spanning [0, 65535]:
+        # a coarse 256-bin histogram shifts the threshold by ~8 ADU (bin width 256),
+        # whereas exact 65536-bin integer Otsu recovers the exact midpoint 21000.0.
+        vol = np.full((16, 16, 16), 1000, dtype=np.uint16)
+        vol[8:, :, :] = 41000
+        vol[0, 0, 0] = 0
+        vol[-1, -1, -1] = 65535
+        thresh = oi.calculate_otsu_threshold(vol)
+        assert thresh == pytest.approx(21000.0, abs=1e-9)
+
+    def test_read_image_bright_pore_polarity_and_cli_flags(self, tmp_path, capsys):
+        # Bright-pore image: pore voxels have intensity 220 (37.5%), solid has 30 (62.5%)
+        raw_vol = np.full((8, 8, 8), 30, dtype=np.uint8)
+        raw_vol[:3, :, :] = 220
+        npy_path = tmp_path / "bright_pore.npy"
+        np.save(npy_path, raw_vol)
+
+        with oi.Session():
+            _, img_default = oi.read_image(npy_path, threshold="otsu", dark_is_pore=True)
+            _, img_inverted = oi.read_image(npy_path, threshold="otsu", dark_is_pore=False)
+            assert oi.volume_fraction(img_default, phase=0).fraction == pytest.approx(5.0 / 8.0)
+            assert oi.volume_fraction(img_inverted, phase=0).fraction == pytest.approx(3.0 / 8.0)
+
+        rc = cli_main(["vf", str(npy_path), "--threshold", "otsu", "--bright-is-pore"])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["volume_fraction"] == pytest.approx(3.0 / 8.0)
+
+    def test_unsegmented_float_volume_rejected_with_clear_error(self, tmp_path):
+        gray_f32 = np.linspace(0.0, 1.0, 64, dtype=np.float32).reshape((4, 4, 4))
+        npy_f32 = tmp_path / "unsegmented.npy"
+        np.save(npy_f32, gray_f32)
+
+        with oi.Session():
+            with pytest.raises(ValueError, match="floating-point grayscale"):
+                oi.volume_fraction(gray_f32, phase=0)
+            with pytest.raises(ValueError, match="floating-point grayscale"):
+                oi.volume_fraction(npy_f32, phase=0)
+            # Integer-valued float arrays (e.g. np.zeros / np.ones) remain accepted
+            vf_ok = oi.volume_fraction(np.zeros((4, 4, 4), dtype=np.float64), phase=0)
+            assert vf_ok.fraction == pytest.approx(1.0)
+
+    def test_ome_zarr_v2_v3_and_5d_axis_handling(self, tmp_path):
+        zarr = pytest.importorskip("zarr")
+
+        vol = np.arange(24, dtype=np.int32).reshape((2, 3, 4))
+        p_v2 = tmp_path / "ome_v2.zarr"
+        oi.write_zarr_volume(p_v2, vol, voxel_size=(1.5, 2.5, 3.5), zarr_format=2)
+        assert (p_v2 / ".zgroup").is_file()
+        r_v2, vz_v2 = oi.read_zarr_volume(p_v2)
+        np.testing.assert_array_equal(r_v2, vol)
+        assert vz_v2 == pytest.approx((1.5, 2.5, 3.5))
+
+        if int(str(zarr.__version__).split(".")[0]) >= 3:
+            p_v3 = tmp_path / "ome_v3.zarr"
+            oi.write_zarr_volume(p_v3, vol, voxel_size=(0.5, 0.6, 0.7), zarr_format=3)
+            assert (p_v3 / "zarr.json").is_file()
+            r_v3, vz_v3 = oi.read_zarr_volume(p_v3)
+            np.testing.assert_array_equal(r_v3, vol)
+            assert vz_v3 == pytest.approx((0.5, 0.6, 0.7))
+
+        # 5-D (t, c, z, y, x) OME-NGFF store with 5-axis scale
+        p_5d = tmp_path / "synchrotron_5d.zarr"
+        try:
+            grp5 = zarr.open_group(str(p_5d), mode="w", zarr_format=2)
+        except TypeError:
+            grp5 = zarr.open_group(str(p_5d), mode="w")
+        data_5d = vol[np.newaxis, np.newaxis, ...]
+        if hasattr(grp5, "create_array"):
+            grp5.create_array("0", data=data_5d, overwrite=True)
+        else:
+            grp5.create_dataset("0", data=data_5d, overwrite=True)
+        grp5.attrs["multiscales"] = [
+            {
+                "version": "0.4",
+                "axes": [
+                    {"name": "t", "type": "time"},
+                    {"name": "c", "type": "channel"},
+                    {"name": "z", "type": "space"},
+                    {"name": "y", "type": "space"},
+                    {"name": "x", "type": "space"},
+                ],
+                "datasets": [
+                    {
+                        "path": "0",
+                        "coordinateTransformations": [
+                            {"type": "scale", "scale": [1.0, 1.0, 4.0, 5.0, 6.0]}
+                        ],
+                    }
+                ],
+            }
+        ]
+        r_5d, vz_5d = oi.read_zarr_volume(p_5d)
+        np.testing.assert_array_equal(r_5d, vol)
+        assert vz_5d == pytest.approx((4.0, 5.0, 6.0))
+
+    def test_mpi_env_rank_guard_and_streaming_dataset(self, tmp_path, monkeypatch):
+        # Simulate non-zero MPI rank via launcher env when AMReX / mpi4py are inactive
+        if oi.build_info()["backend"] == "pure-python":
+            monkeypatch.setenv("OMPI_COMM_WORLD_RANK", "2")
+            assert oi.synthetic._is_io_rank() is False
+            monkeypatch.setenv("OMPI_COMM_WORLD_RANK", "0")
+            assert oi.synthetic._is_io_rank() is True
+            monkeypatch.delenv("OMPI_COMM_WORLD_RANK", raising=False)
+
+        try:
+            import zarr  # noqa: F401
+        except ImportError:
+            pass
+        else:
+            stream_zarr = tmp_path / "streamed.zarr"
+            ds = oi.synthetic.generate_ml_dataset(
+                stream_zarr,
+                n_samples=2,
+                shape=10,
+                compute_deff=False,
+                compute_tortuosity=False,
+                return_volumes=False,
+            )
+            assert "volumes" not in ds
+            grp = zarr.open(str(stream_zarr), mode="r")
+            assert grp["volumes"].shape == (2, 10, 10, 10)
+
+    def test_datasets_urlopen_timeout_and_tag_fallback(self, tmp_path, monkeypatch):
+        import hashlib
+        import io
+        import urllib.error
+        import urllib.request
+
+        payload = b"verified-payload-bytes"
+        digest = hashlib.sha256(payload).hexdigest()
+        monkeypatch.setenv("OPENIMPALA_DATA_DIR", str(tmp_path / "cache"))
+        monkeypatch.setattr(oi.datasets, "_repo_data_dir", lambda: tmp_path / "no_repo")
+
+        seen_calls: list[tuple[str, float]] = []
+
+        class _FakeResp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        def _fake_urlopen(url, timeout=None):
+            seen_calls.append((url, float(timeout)))
+            if "/master/" not in url:
+                raise urllib.error.HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+            return _FakeResp(payload)
+
+        monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+        out = oi.datasets.fetch_path("tag_fallback.bin", expected_sha256=digest, timeout=12.5)
+        assert out.read_bytes() == payload
+        assert len(seen_calls) == 2
+        assert seen_calls[0][1] == pytest.approx(12.5)
+        assert "/master/data/tag_fallback.bin" in seen_calls[1][0]
+
+        with pytest.raises(ValueError, match="timeout"):
+            oi.datasets.fetch_path("tag_fallback.bin", timeout=0.0)
+
+    def test_empty_phase_deff_plotfile_overwrites_stale_dir(self, tmp_path):
+        with oi.Session():
+            vol_full = np.zeros((8, 8, 8), dtype=np.int32)
+            r1 = oi.effective_diffusivity(
+                vol_full, phase=0, write_plotfile=True, results_path=str(tmp_path)
+            )
+            assert r1.plotfile_paths is not None
+
+            # Second run into same results_path with an empty phase (phase=9) must
+            # overwrite stale plotfiles with zero fields rather than leaving r1's data.
+            r2 = oi.effective_diffusivity(
+                vol_full, phase=9, write_plotfile=True, results_path=str(tmp_path)
+            )
+            assert np.allclose(r2.tensor, 0.0)
+            assert r2.plotfile_paths is not None
+            assert Path(r2.plotfile_paths["x"], "Header").is_file()
+

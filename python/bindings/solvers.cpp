@@ -20,6 +20,7 @@
 #include <AMReX_Geometry.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParallelDescriptor.H>
+#include <AMReX_PlotFileUtil.H>
 #include <AMReX_iMultiFab.H>
 
 #include "DeffTensor.H"
@@ -125,6 +126,17 @@ py::dict compute_effective_diffusivity_tensor(std::shared_ptr<VoxelImage> img, i
     if (empty_active_phase) {
         for (int i = 0; i < 9; ++i) {
             tensor_ptr[i] = 0.0;
+        }
+        if (write_plotfile) {
+            amrex::MultiFab mf_zero_plot(img->ba, img->dm, 2, 0);
+            mf_zero_plot.setVal(0.0);
+            const amrex::Vector<std::string> varnames = {"chi_k", "active_mask_from_solver"};
+            for (int d = 0; d < 3; ++d) {
+                const std::string full_plot_path =
+                    results_path + "/effdiff_chi_dir" + std::to_string(d);
+                amrex::WriteSingleLevelPlotfile(full_plot_path, mf_zero_plot, varnames, geom_per,
+                                                0.0, 0);
+            }
         }
     } else if (all_converged) {
         amrex::Real Deff_raw[AMREX_SPACEDIM][AMREX_SPACEDIM];

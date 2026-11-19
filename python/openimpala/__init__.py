@@ -23,14 +23,32 @@ Quick-start::
 
 import importlib
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+import re
 
-try:
-    __version__ = version("openimpala")
-except PackageNotFoundError:
-    try:
-        __version__ = version("openimpala-cuda")
-    except PackageNotFoundError:
-        __version__ = "unknown"
+
+def _detect_version() -> str:
+    """Resolve package version, preferring local ``pyproject.toml`` in source checkouts."""
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            m = re.search(
+                r'(?m)^(?:fallback_)?version\s*=\s*"([^"]+)"',
+                pyproject.read_text(encoding="utf-8"),
+            )
+            if m:
+                return m.group(1)
+        except OSError:
+            pass
+    for dist_name in ("openimpala", "openimpala-cuda"):
+        try:
+            return version(dist_name)
+        except PackageNotFoundError:
+            continue
+    return "unknown"
+
+
+__version__ = _detect_version()
 
 
 def _preload_cuda_libs():
@@ -98,7 +116,7 @@ def _augment_core_voxelimage(_core) -> None:
         pore_value: int = 0,
         solid_value: int = 1,
         dark_is_pore: bool = True,
-        nbins: int = 256,
+        nbins: int | None = None,
         max_grid_size: int = 32,
         dx: float = 1.0,
         dy: float = 1.0,
