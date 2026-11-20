@@ -1,6 +1,6 @@
 # AGENTS.md — `OpenImpala` (Layer 3: Physics Solvers)
 
-Read [`ECOSYSTEM.md`](./ECOSYSTEM.md) before modifying repository boundaries, I/O contracts, or public interfaces.
+Read [`ECOSYSTEM.md`](https://github.com/BASE-Laboratory/basecoat/blob/main/ECOSYSTEM.md) before modifying repository boundaries, I/O contracts, or public interfaces.
 
 ## Architectural Role & Hard Rules
 - **Layer:** Layer 3 — Physics solvers (`BASE-Laboratory` 4-layer software architecture).
