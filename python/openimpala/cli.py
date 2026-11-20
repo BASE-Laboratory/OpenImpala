@@ -216,6 +216,13 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _is_cli_io_rank(oi_mod) -> bool:
+    try:
+        return int(oi_mod.build_info().get("mpi_rank", 0)) == 0
+    except Exception:
+        return True
+
+
 def _cmd_vf(args: argparse.Namespace) -> int:
     import openimpala as oi
 
@@ -233,7 +240,8 @@ def _cmd_vf(args: argparse.Namespace) -> int:
         "total_count": vf_res.total_count,
         "volume_fraction": vf_res.fraction,
     }
-    print(json.dumps(result, indent=2))
+    if _is_cli_io_rank(oi):
+        print(json.dumps(result, indent=2))
     return 0
 
 
@@ -256,7 +264,8 @@ def _cmd_percolation(args: argparse.Namespace) -> int:
         "percolates": pc_res.percolates,
         "active_volume_fraction": pc_res.active_volume_fraction,
     }
-    print(json.dumps(result, indent=2))
+    if _is_cli_io_rank(oi):
+        print(json.dumps(result, indent=2))
     return 0
 
 
@@ -385,13 +394,14 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
             },
         }
 
-    output = json.dumps(result, indent=2)
-    if args.output:
-        with open(args.output, "w") as f:
-            f.write(output + "\n")
-        print(f"Results written to {args.output}")
-    else:
-        print(output)
+    if _is_cli_io_rank(oi):
+        output = json.dumps(result, indent=2)
+        if args.output:
+            with open(args.output, "w") as f:
+                f.write(output + "\n")
+            print(f"Results written to {args.output}")
+        else:
+            print(output)
 
     return 0
 
@@ -432,7 +442,8 @@ def _cmd_generate_dataset(args: argparse.Namespace) -> int:
         summary["mean_deff_iso"] = float(
             np.mean(np.trace(ds["deff_tensor"], axis1=1, axis2=2) / 3.0)
         )
-    print(json.dumps(summary, indent=2))
+    if _is_cli_io_rank(oi):
+        print(json.dumps(summary, indent=2))
     return 0
 
 

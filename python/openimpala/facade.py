@@ -1966,6 +1966,32 @@ def build_info() -> dict:
 
     _core = _get_core()
     info = dict(_core.build_info())
+    if info.get("cuda_enabled") and info.get("gpu_device_count") == 0:
+        try:
+            import cupy  # noqa: F401
+
+            has_cupy = True
+        except ImportError:
+            has_cupy = False
+        return {
+            "backend": "pure-python",
+            "core_available": False,
+            "core_load_error": Session._core_load_error
+            or "OpenImpala CUDA backend found no active NVIDIA GPU.",
+            "cuda_enabled": has_cupy,
+            "hip_enabled": False,
+            "gpu_enabled": has_cupy,
+            "openmp_enabled": False,
+            "openmp_max_threads": 1,
+            "mpi_enabled": False,
+            "mpi_ranks": 1,
+            "mpi_rank": 0,
+            "tiny_profile": False,
+            "hypre_cuda": False,
+            "hypre_hip": False,
+            "gpu_device_count": 0,
+            "version": __version__,
+        }
     if info.get("cuda_enabled"):
         info["backend"] = "cpp-cuda"
     elif info.get("hip_enabled"):

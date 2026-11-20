@@ -24,6 +24,27 @@ dependencies = [
     "scipy>=1.7",
 ]
 
+[project.urls]
+Homepage = "https://github.com/BASE-Laboratory/OpenImpala"
+Documentation = "https://base-laboratory.github.io/OpenImpala/"
+Repository = "https://github.com/BASE-Laboratory/OpenImpala"
+Issues = "https://github.com/BASE-Laboratory/OpenImpala/issues"
+Changelog = "https://base-laboratory.github.io/OpenImpala/changelog.html"
+
+[project.optional-dependencies]
+mpi = ["mpi4py"]
+openmpi = ["openmpi; platform_system == 'Linux'"]
+progress = ["tqdm"]
+jupyter = ["matplotlib", "ipywidgets"]
+viz = ["yt", "matplotlib"]
+zarr = ["zarr>=2.16"]
+test = [
+    "pytest>=7",
+    "numpy",
+    "scipy>=1.7",
+    "zarr>=2.16",
+]
+
 [project.scripts]
 openimpala = "openimpala.cli:main"
 

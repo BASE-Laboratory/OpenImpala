@@ -16,7 +16,7 @@
 transport properties — tortuosity, effective diffusivity tensors, and
 effective conductivity — directly from 3D voxel images of porous media (X-ray
 CT, FIB-SEM, synthetic microstructures). It solves the governing PDEs on the
-Cartesian voxel grid using finite differences, bypassing mesh generation, and
+Cartesian voxel grid using finite-volume discretisation, bypassing mesh generation, and
 scales across MPI ranks and CUDA GPUs via [AMReX](https://github.com/AMReX-Codes/amrex)
 and [HYPRE](https://github.com/hypre-space/hypre).
 

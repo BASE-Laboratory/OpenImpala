@@ -72,6 +72,7 @@ project(OpenImpala
     LANGUAGES C CXX
     DESCRIPTION "Image-based simulation of transport properties in porous media"
 )
+add_compile_definitions(OPENIMPALA_VERSION_STRING="${PROJECT_VERSION}")
 
 # ==============================================================================
 # GPU Acceleration

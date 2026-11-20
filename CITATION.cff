@@ -12,7 +12,7 @@ repository-code: "https://github.com/BASE-Laboratory/OpenImpala"
 url: "https://base-laboratory.github.io/OpenImpala/"
 license: BSD-3-Clause
 version: 5.0.0
-date-released: "2026-11-19"
+date-released: "2026-11-20"
 keywords:
   - porous media
   - tortuosity

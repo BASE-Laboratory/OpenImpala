@@ -200,16 +200,22 @@ def main() -> int:
                 sys.executable,
                 "-c",
                 "import numpy as np, openimpala as oi\n"
+                "vol = np.ones((8, 8, 8), dtype=np.int32)\n"
                 "with oi.Session():\n"
-                "    r = oi.tortuosity(np.ones((8,8,8), dtype=np.int32), phase=1, direction='x')\n"
-                "print('OK', round(r.tortuosity, 4))\n",
+                "    r1 = oi.tortuosity(vol, phase=1, direction='x')\n"
+                "with oi.Session():\n"
+                "    r2 = oi.tortuosity(vol, phase=1, direction='z')\n"
+                "vf = oi.volume_fraction(vol, phase=1)\n"
+                "print('OK', round(r1.tortuosity, 4), round(r2.tortuosity, 4), round(vf.fraction, 4))\n",
             ],
             stderr=subprocess.STDOUT,
             text=True,
         )
-        for noisy in ("TinyProfiler", "Initializing AMReX", "Memory Usage", "AMReX ("):
-            assert noisy not in out, f"Unexpected AMReX noise in default stdout:\n{out}"
-        assert out.strip() == "OK 1.0", f"Expected single line 'OK 1.0', got:\n{out!r}"
+        for noisy in ("TinyProfiler", "Initializing AMReX", "Memory Usage", "AMReX (", "MPI_FINALIZE"):
+            assert noisy not in out, f"Unexpected AMReX/MPI noise in default stdout:\n{out}"
+        assert out.strip() == "OK 1.0 1.0 1.0", (
+            f"Expected single line 'OK 1.0 1.0 1.0', got:\n{out!r}"
+        )
 
     if info["mpi_rank"] == 0:
         print(

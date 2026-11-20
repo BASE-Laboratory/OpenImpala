@@ -1,6 +1,6 @@
 # Changelog
 
-## v5.0.0 (2026-11-19)
+## v5.0.0 (2026-11-20)
 
 Major API consistency, runtime diagnostics, and JOSS 2026 release.
 

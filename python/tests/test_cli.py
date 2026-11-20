@@ -273,5 +273,56 @@ def test_analyze_downsample_deff_and_bpx_flags(tmp_path, capsys):
     with pytest.raises(SystemExit):
         main(["analyze", str(tif_path), "--downsample", "0"])
 
+    # Non-root MPI rank suppresses duplicate JSON stdout & file clobbering
+    monkeypatch_rank = pytest.MonkeyPatch()
+    try:
+        monkeypatch_rank.setattr(
+            oi, "build_info", lambda: {"backend": "cpp-cpu", "mpi_rank": 1, "mpi_ranks": 2}
+        )
+        out_mpi = tmp_path / "should_not_be_written_by_rank1.json"
+        assert (
+            main(
+                [
+                    "analyze",
+                    str(tif_path),
+                    "--phase",
+                    "1",
+                    "--threshold",
+                    "100",
+                    "--output",
+                    str(out_mpi),
+                ]
+            )
+            == 0
+        )
+        assert not out_mpi.exists()
+        assert capsys.readouterr().out == ""
+    finally:
+        monkeypatch_rank.undo()
+
+
+def test_build_info_cuda_gpuless_login_node_reports_pure_python(monkeypatch):
+    import openimpala.facade as facade_mod
+
+    class _FakeCudaCore:
+        @staticmethod
+        def build_info():
+            return {
+                "cuda_enabled": True,
+                "hip_enabled": False,
+                "gpu_enabled": True,
+                "gpu_device_count": 0,
+            }
+
+    monkeypatch.setattr(facade_mod, "_is_pure_python", lambda: False)
+    monkeypatch.setattr(facade_mod, "_has_core", lambda: True)
+    monkeypatch.setattr(facade_mod, "_get_core", lambda: _FakeCudaCore)
+    monkeypatch.setattr(facade_mod.Session, "_core_load_error", None)
+    info = oi.build_info()
+    assert info["backend"] == "pure-python"
+    assert info["core_available"] is False
+    assert "NVIDIA GPU" in str(info["core_load_error"])
+
+
 
 
