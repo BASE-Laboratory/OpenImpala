@@ -198,3 +198,147 @@ class TestV500RequiredPhaseAndDownsample:
 
         with pytest.raises(ValueError, match="tie_break"):
             oi.downsample_volume(tie, factor=2, tie_break="random")
+
+
+class TestV500ElectrochemAndZenodo:
+    """Verify MacMullin/Bruggeman properties, PyBaMM/BPX helpers, and .zenodo.json metadata."""
+
+    def test_tortuosity_result_macmullin_and_bruggeman_properties(self):
+        # Classical Bruggeman analytical check: D_eff / D_0 = eps ** 1.5, tau = eps ** (-0.5)
+        eps = 0.36
+        classical = oi.TortuosityResult(
+            tortuosity=eps ** (-0.5),
+            solver_converged=True,
+            iterations=8,
+            residual_norm=1e-11,
+            flux_in=1.0,
+            flux_out=1.0,
+            active_volume_fraction=eps,
+            effective_diffusivity=eps**1.5,
+        )
+        assert classical.macmullin_number == pytest.approx(eps ** (-1.5), rel=1e-12)
+        assert classical.bruggeman_exponent == pytest.approx(1.5, rel=1e-12)
+        html = classical._repr_html_()
+        assert "MacMullin number" in html
+        assert "Bruggeman exponent" in html
+
+        # Real 3-D porous solve check
+        blobs = oi.synthetic.gaussian_blobs(shape=16, porosity=0.58, blobiness=1.0, seed=11)
+        res = oi.tortuosity(blobs, phase=0, direction="x")
+        assert res.effective_diffusivity is not None
+        assert res.macmullin_number == pytest.approx(1.0 / res.effective_diffusivity, rel=1e-12)
+        assert res.bruggeman_exponent is not None
+        assert res.active_volume_fraction**res.bruggeman_exponent == pytest.approx(
+            res.effective_diffusivity, rel=1e-10
+        )
+
+        # Uniform single-phase domain (eps == 1.0): MacMullin == 1.0, Bruggeman undefined (None)
+        uniform = np.zeros((8, 8, 8), dtype=np.int32)
+        res_uni = oi.tortuosity(uniform, phase=0, direction="x")
+        assert res_uni.macmullin_number == pytest.approx(1.0, rel=1e-10)
+        assert res_uni.bruggeman_exponent is None
+
+    def test_to_pybamm_parameters_electrolyte_composite_and_separator(self):
+        vol = oi.synthetic.multiphase_electrode(
+            shape=(16, 16, 16),
+            pore_fraction=0.45,
+            active_fraction=0.40,
+            binder_fraction=0.15,
+            seed=7,
+        )
+        params = oi.to_pybamm_parameters(
+            vol,
+            electrolyte_phase=0,
+            solid_phase=1,
+            electrode="negative",
+            direction="x",
+            voxel_size=0.5e-6,
+        )
+        eps_e = params["Negative electrode porosity"]
+        b_e = params["Negative electrode Bruggeman coefficient (electrolyte)"]
+        tau_e = oi.tortuosity(vol, phase=0, direction="x")
+        assert 0.0 < eps_e < 1.0
+        assert eps_e**b_e == pytest.approx(tau_e.effective_diffusivity, rel=1e-10)
+        assert params["Negative electrode thickness [m]"] == pytest.approx(16 * 0.5e-6)
+        assert params["Negative electrode active material volume fraction"] > 0.0
+        assert params["Negative particle radius [m]"] > 0.0
+
+        # Separator role omits active-material keys
+        sep_params = oi.to_pybamm_parameters(
+            vol,
+            electrolyte_phase=0,
+            solid_phase=1,
+            electrode="separator",
+            direction="z",
+            voxel_size=0.25e-6,
+        )
+        assert "Separator porosity" in sep_params
+        assert "Separator Bruggeman coefficient (electrolyte)" in sep_params
+        assert sep_params["Separator thickness [m]"] == pytest.approx(16 * 0.25e-6)
+        assert "Separator active material volume fraction" not in sep_params
+
+        with pytest.raises(ValueError, match="electrode"):
+            oi.to_pybamm_parameters(vol, electrolyte_phase=0, electrode="anode")
+
+    def test_export_bpx_json_schema_and_file_roundtrip(self, tmp_path):
+        import json
+
+        vol = oi.synthetic.multiphase_electrode(
+            shape=(12, 12, 12),
+            pore_fraction=0.50,
+            active_fraction=0.38,
+            binder_fraction=0.12,
+            seed=5,
+        )
+        out_json = tmp_path / "bpx" / "positive_electrode.json"
+        with_tensor = oi.build_info()["backend"] != "cpp-cuda"
+
+        doc = oi.export_bpx_json(
+            vol,
+            out_json,
+            electrolyte_phase=0,
+            solid_phase=1,
+            electrode="positive",
+            directions=("x", "z"),
+            compute_deff_tensor=with_tensor,
+            voxel_size=0.5e-6,
+            sample_id="NMC811-001",
+            provenance_uri="https://example.org/samples/NMC811-001",
+        )
+
+        assert out_json.is_file()
+        assert json.loads(out_json.read_text(encoding="utf-8")) == doc
+
+        assert doc["openimpala"]["version"] == oi.__version__
+        assert doc["openimpala"]["physics_type"] == "Diffusion"
+        assert set(doc["openimpala"]["results"].keys()) == {"X", "Z"}
+        assert doc["units"] == {"volume_fraction": "1", "tortuosity": "1", "Deff_ratio": "1"}
+        assert doc["provenance"] == {
+            "sample_id": "NMC811-001",
+            "provenance_uri": "https://example.org/samples/NMC811-001",
+        }
+
+        pos = doc["bpx"]["Parameterisation"]["Positive electrode"]
+        assert pos["Porosity"] == pytest.approx(doc["openimpala"]["volume_fraction"])
+        assert pos["Electrode thickness [m]"] == pytest.approx(12 * 0.5e-6)
+        assert pos["Active material volume fraction"] > 0.0
+        assert pos["Particle radius [m]"] > 0.0
+        assert "anisotropic" in doc["bpx"]
+
+        if with_tensor:
+            assert set(doc["openimpala"]["deff_tensor"].keys()) == {
+                "XX", "XY", "XZ", "YX", "YY", "YZ", "ZX", "ZY", "ZZ"
+            }
+
+    def test_zenodo_json_metadata_valid(self):
+        import json
+
+        zenodo_path = Path(__file__).resolve().parents[2] / ".zenodo.json"
+        assert zenodo_path.is_file()
+        meta = json.loads(zenodo_path.read_text(encoding="utf-8"))
+        assert meta["upload_type"] == "software"
+        assert meta["license"] == "BSD-3-Clause"
+        assert meta["creators"][0]["orcid"] == "0000-0002-1576-0673"
+        dois = {r["identifier"]: r["relation"] for r in meta["related_identifiers"]}
+        assert dois["10.1016/j.softx.2021.100729"] == "isNewVersionOf"
+

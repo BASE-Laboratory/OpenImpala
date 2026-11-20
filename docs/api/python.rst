@@ -36,6 +36,14 @@ Microstructural Characterisation
 .. autofunction:: openimpala.facade.rev_study
 
 
+Battery Parameterisation (PyBaMM & Faraday BPX)
+-----------------------------------------------
+
+.. autofunction:: openimpala.facade.to_pybamm_parameters
+
+.. autofunction:: openimpala.facade.export_bpx_json
+
+
 I/O, Segmentation, Cloud Zarr & Plotfiles
 -----------------------------------------
 

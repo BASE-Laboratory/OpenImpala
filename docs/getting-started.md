@@ -92,6 +92,38 @@ ssa = oi.specific_surface_area(tiff_path, phase_a=0, phase_b=1, voxel_size=0.5e-
 
 For unsegmented grayscale reconstructions, pass `threshold="otsu"` for automatic Otsu segmentation or a numeric threshold such as `threshold=128` (`dark_is_pore=True` maps dark pores to `0` and bright solid to `1` when using Otsu).
 
+## Ecosystem Interoperability (CIL, PoreSpy & PyBaMM)
+
+OpenImpala accepts reconstruction volumes from [STFC CIL](https://tomographicimaging.github.io/CIL/) (`ImageData`, automatically extracting `(dz, dy, dx)` voxel pitch from `.geometry`) and [PoreSpy](https://porespy.org/) (`bool` / integer NumPy arrays or `xarray.DataArray`) without extra wrapper packages, and exports continuum battery parameters directly to [PyBaMM](https://www.pybamm.org/) and [Faraday BPX](https://bpxstandard.com/):
+
+```python
+import openimpala as oi
+
+# 1. PoreSpy boolean / integer microstructures (or CIL ImageData) work directly
+vol = oi.synthetic.multiphase_electrode(shape=(64, 64, 64), seed=7)
+
+# 2. Extract in-memory PyBaMM DFN/SPM parameters (porosity, Bruggeman, thickness, R_p)
+params = oi.to_pybamm_parameters(
+    vol,
+    electrolyte_phase=0,
+    solid_phase=1,
+    electrode="negative",
+    direction="x",
+    voxel_size=0.5e-6,  # metres
+)
+# pybamm.ParameterValues("Chen2020").update(params, check_already_exists=False)
+
+# 3. Or export a Faraday BPX & BattINFO JSON record across X, Y, Z
+bpx_doc = oi.export_bpx_json(
+    vol,
+    "negative_electrode_bpx.json",
+    electrolyte_phase=0,
+    solid_phase=1,
+    electrode="negative",
+    voxel_size=0.5e-6,
+)
+```
+
 ## Estimating Memory Before Large Runs
 
 Before solving on large tomograms ($512^3$ and above), check peak host/device memory requirements with `oi.estimate_memory()`:
@@ -106,3 +138,4 @@ print(f"Estimated per-rank peak: {est['per_rank_gb']:.2f} GB")
 - {doc}`tutorials/index` — Work through the six executed tutorial notebooks
 - {doc}`user-guide/concepts` — Finite-volume discretisation, boundary conditions, and homogenisation theory
 - {doc}`user-guide/solvers` — Choosing between AMReX MLMG and HYPRE Krylov/multigrid solvers
+- {doc}`roadmap` — Planned `v5.1`–`v6.0` solver, packaging, and multi-physics milestones

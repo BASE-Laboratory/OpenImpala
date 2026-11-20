@@ -57,7 +57,7 @@ Quick Install & Example
 
       .. code-block:: bash
 
-         apptainer exec -B "$(pwd):/data" openimpala-v4.7.0.sif \
+         apptainer exec -B "$(pwd):/data" openimpala-v5.0.0.sif \
              /usr/bin/Diffusion /data/inputs
 
 .. code-block:: python
@@ -76,5 +76,6 @@ Quick Install & Example
    tutorials/index
    user-guide/index
    api/index
+   roadmap
    contributing
    changelog

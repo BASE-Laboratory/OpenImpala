@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import csv
 import dataclasses
+import json
+import math
 import os
 import tempfile
 from pathlib import Path
-from typing import Mapping, Optional, Sequence, Union
+from typing import Any, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
@@ -84,6 +86,36 @@ class TortuosityResult:
     effective_diffusivity: Optional[float] = None
     plotfile_path: Optional[str] = None
 
+    def _deff_ratio(self) -> float:
+        if self.effective_diffusivity is not None:
+            return float(self.effective_diffusivity)
+        if self.tortuosity > 0.0 and np.isfinite(self.tortuosity):
+            return float(self.active_volume_fraction) / float(self.tortuosity)
+        return 0.0
+
+    @property
+    def macmullin_number(self) -> float:
+        """MacMullin number ``N_M = tau / eps_active = (D_eff / D_0)^(-1)``."""
+        deff = self._deff_ratio()
+        if deff > 0.0 and np.isfinite(deff):
+            return 1.0 / deff
+        return float("inf")
+
+    @property
+    def bruggeman_exponent(self) -> Optional[float]:
+        """Fitted Bruggeman exponent ``b`` defined by ``D_eff / D_0 = eps_active ** b``.
+
+        Returns ``None`` when ``active_volume_fraction`` is not strictly in ``(0, 1)``
+        or when ``D_eff <= 0``.
+        """
+        import math
+
+        deff = self._deff_ratio()
+        eps = float(self.active_volume_fraction)
+        if 0.0 < eps < 1.0 and deff > 0.0 and np.isfinite(deff):
+            return float(math.log(deff) / math.log(eps))
+        return None
+
     def _repr_html_(self) -> str:
         status = "converged" if self.solver_converged else "NOT converged"
         deff_row = (
@@ -91,11 +123,25 @@ class TortuosityResult:
             if self.effective_diffusivity is not None
             else ""
         )
+        nm_val = self.macmullin_number
+        nm_row = (
+            f"<tr><td>MacMullin number</td><td>{nm_val:.6f}</td></tr>"
+            if np.isfinite(nm_val)
+            else ""
+        )
+        b_val = self.bruggeman_exponent
+        b_row = (
+            f"<tr><td>Bruggeman exponent</td><td>{b_val:.6f}</td></tr>"
+            if b_val is not None
+            else ""
+        )
         return (
             "<table>"
             "<tr><th>Metric</th><th>Value</th></tr>"
             f"<tr><td>Tortuosity</td><td>{self.tortuosity:.6f}</td></tr>"
             f"{deff_row}"
+            f"{nm_row}"
+            f"{b_row}"
             f"<tr><td>Solver status</td><td>{status}</td></tr>"
             f"<tr><td>Iterations</td><td>{self.iterations}</td></tr>"
             f"<tr><td>Residual norm</td><td>{self.residual_norm:.2e}</td></tr>"
@@ -1465,6 +1511,364 @@ def rev_study(
         )
         records = _parse_csv_text(csv_content)
     return _summarize_rev_records(records, None)
+
+
+def _normalize_electrode_role(electrode: str) -> str:
+    elec = electrode.strip().lower()
+    if elec not in ("negative", "positive", "separator"):
+        raise ValueError(
+            f"electrode must be 'negative', 'positive', or 'separator', got {electrode!r}"
+        )
+    return elec
+
+
+def _bruggeman_from_ratio(transport_efficiency: float, volume_fraction_val: float) -> float:
+    """Compute Bruggeman exponent ``b`` from ``transport_efficiency = porosity ** b``."""
+    if (
+        0.0 < volume_fraction_val < 1.0
+        and transport_efficiency > 0.0
+        and math.isfinite(transport_efficiency)
+    ):
+        return float(math.log(transport_efficiency) / math.log(volume_fraction_val))
+    return 0.0
+
+
+def _stage_electrochem_input(
+    data: DataInputArg,
+    voxel_size: Optional[VoxelSizeArg] = None,
+    max_grid_size: Union[int, str] = "auto",
+) -> tuple[Any, tuple[int, int, int], tuple[float, float, float], bool]:
+    """Stage *data* once for multi-property electrochemistry workflows.
+
+    Returns ``(staged_img, (nz, ny, nx), (dz, dy, dx), has_physical_voxel_size)``.
+    """
+    _ensure_initialized()
+    if _is_pure_python():
+        from ._io import PureVoxelImage
+
+        arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
+        staged = PureVoxelImage(arr, dx=float(vz[2]), dy=float(vz[1]), dz=float(vz[0]))
+        nz, ny, nx = (int(arr.shape[0]), int(arr.shape[1]), int(arr.shape[2]))
+        has_phys = (voxel_size is not None) or (tuple(vz) != (1.0, 1.0, 1.0))
+        return staged, (nz, ny, nx), tuple(float(v) for v in vz), has_phys
+
+    img = _numpy_to_voxelimage(data, max_grid_size=max_grid_size, voxel_size=voxel_size)
+    nz, ny, nx = (int(img.shape[0]), int(img.shape[1]), int(img.shape[2]))
+    dx, dy, dz = img.cell_size_xyz
+    vz_zyx = (float(dz), float(dy), float(dx))
+    has_phys = (voxel_size is not None) or (vz_zyx != (1.0, 1.0, 1.0))
+    return img, (nz, ny, nx), vz_zyx, has_phys
+
+
+def to_pybamm_parameters(
+    data: DataInputArg,
+    *,
+    electrolyte_phase: int,
+    solid_phase: Optional[int] = None,
+    electrode: str = "negative",
+    direction: Union[str, "Direction"] = "x",
+    voxel_size: Optional[VoxelSizeArg] = None,
+    solver: Union[str, "SolverType"] = "auto",
+) -> dict[str, float]:
+    """Compute an in-memory PyBaMM parameter dictionary directly from a 3-D microstructure.
+
+    Keys follow standard PyBaMM DFN / SPM parameter conventions (e.g. ``Chen2020``,
+    ``Marquis2019``) so the returned dictionary can be passed straight to
+    ``pybamm.ParameterValues(...).update(params, check_already_exists=False)``.
+
+    When *voxel_size* is supplied in metres (or carried by a physical ``VoxelImage`` /
+    CIL ``ImageData`` / OME-Zarr store), dimensional ``[m]`` keys for through-plane
+    electrode/separator thickness and mean equivalent-sphere particle radius are also
+    populated.
+    """
+    elec = _normalize_electrode_role(electrode)
+    d_int = _parse_direction_int(direction)
+    dir_name = _DIR_NAMES[d_int]
+
+    staged, (nz, ny, nx), (dz, dy, dx), has_phys_vz = _stage_electrochem_input(
+        data, voxel_size=voxel_size
+    )
+
+    vf_e = volume_fraction(staged, phase=electrolyte_phase)
+    tau_e = tortuosity(staged, phase=electrolyte_phase, direction=dir_name, solver=solver)
+    te_e = tau_e._deff_ratio()
+    b_e = _bruggeman_from_ratio(te_e, vf_e.fraction)
+
+    elec_cap = elec.capitalize()
+    sec_prefix = "Separator" if elec == "separator" else f"{elec_cap} electrode"
+
+    params: dict[str, float] = {
+        f"{sec_prefix} porosity": float(vf_e.fraction),
+        f"{sec_prefix} Bruggeman coefficient (electrolyte)": float(b_e),
+    }
+
+    shape_xyz = (nx, ny, nz)
+    pitch_xyz = (dx, dy, dz)
+    if has_phys_vz:
+        params[f"{sec_prefix} thickness [m]"] = float(shape_xyz[d_int]) * float(pitch_xyz[d_int])
+
+    if solid_phase is not None and elec != "separator":
+        vf_s = volume_fraction(staged, phase=solid_phase)
+        params[f"{sec_prefix} active material volume fraction"] = float(vf_s.fraction)
+
+        try:
+            tau_s = tortuosity(staged, phase=solid_phase, direction=dir_name, solver=solver)
+        except PercolationError:
+            pass
+        else:
+            te_s = tau_s._deff_ratio()
+            if 0.0 < vf_s.fraction < 1.0 and te_s > 0.0:
+                params[f"{sec_prefix} Bruggeman coefficient (electrode)"] = _bruggeman_from_ratio(
+                    te_s, vf_s.fraction
+                )
+
+        if has_phys_vz:
+            psd = particle_size_distribution(staged, phase=solid_phase)
+            if psd.num_particles > 0:
+                params[f"{elec_cap} particle radius [m]"] = float(psd.mean_radius)
+
+    return params
+
+
+def export_bpx_json(
+    data: DataInputArg,
+    output_path: Optional[Union[str, os.PathLike]] = None,
+    *,
+    electrolyte_phase: int,
+    solid_phase: Optional[int] = None,
+    electrode: str = "negative",
+    directions: Sequence[Union[str, "Direction"]] = ("x", "y", "z"),
+    compute_deff_tensor: bool = False,
+    voxel_size: Optional[VoxelSizeArg] = None,
+    solver: Union[str, "SolverType"] = "auto",
+    sample_id: Optional[str] = None,
+    provenance_uri: Optional[str] = None,
+) -> dict[str, Any]:
+    """Export Faraday BPX & BattINFO-aligned microstructure JSON from a 3-D volume.
+
+    Matches the structured ``openimpala`` / ``units`` / ``bpx`` / ``provenance``
+    schema emitted by C++ ``ResultsJSON.H`` across both compiled and pure-Python
+    backends. If *output_path* is provided, writes pretty-printed JSON to disk
+    (on rank 0 under MPI) and returns the dictionary.
+    """
+    from . import __version__
+
+    elec = _normalize_electrode_role(electrode)
+    if isinstance(directions, (str, bytes)):
+        dir_seq: Sequence[Union[str, "Direction"]] = [directions]  # type: ignore[list-item]
+    else:
+        dir_seq = list(directions)
+    if not dir_seq:
+        raise ValueError("directions must contain at least one axis ('x', 'y', or 'z')")
+
+    norm_dirs: list[tuple[int, str, str]] = []
+    seen_dirs: set[int] = set()
+    for d in dir_seq:
+        d_idx = _parse_direction_int(d)
+        if d_idx not in seen_dirs:
+            seen_dirs.add(d_idx)
+            d_low = _DIR_NAMES[d_idx]
+            norm_dirs.append((d_idx, d_low, d_low.upper()))
+
+    staged, (nz, ny, nx), (dz, dy, dx), has_phys_vz = _stage_electrochem_input(
+        data, voxel_size=voxel_size
+    )
+    input_label = os.fspath(data) if isinstance(data, (str, os.PathLike)) else "<in-memory>"
+    box_sz = _auto_grid_size((nz, ny, nx))
+
+    vf_e = volume_fraction(staged, phase=electrolyte_phase)
+
+    deff_ratios: dict[str, float] = {}
+    per_dir_results: dict[str, dict[str, Optional[float]]] = {}
+    all_converged = True
+    any_percolated = False
+
+    for _, d_low, d_up in norm_dirs:
+        try:
+            t_res = tortuosity(staged, phase=electrolyte_phase, direction=d_low, solver=solver)
+        except PercolationError:
+            deff_ratios[d_up] = 0.0
+            per_dir_results[d_up] = {"Deff_ratio": 0.0, "tortuosity": None}
+        else:
+            any_percolated = True
+            all_converged = all_converged and bool(t_res.solver_converged)
+            ratio = t_res._deff_ratio()
+            deff_ratios[d_up] = ratio
+            tau_val = (vf_e.fraction / ratio) if ratio > 0.0 else None
+            per_dir_results[d_up] = {"Deff_ratio": ratio, "tortuosity": tau_val}
+
+    if not any_percolated:
+        raise PercolationError(
+            f"Electrolyte phase {electrolyte_phase} does not percolate along any requested "
+            f"direction ({[u for _, _, u in norm_dirs]})."
+        )
+
+    oi_block: dict[str, Any] = {
+        "version": __version__,
+        "physics_type": "Diffusion",
+        "input_file": str(input_label),
+        "phase_id": int(electrolyte_phase),
+        "solver": str(solver),
+        "converged": bool(all_converged),
+        "grid": {
+            "nx": nx,
+            "ny": ny,
+            "nz": nz,
+            "box_size": int(box_sz),
+        },
+        "volume_fraction": float(vf_e.fraction),
+        "results": per_dir_results,
+    }
+
+    if compute_deff_tensor:
+        hypre_solver = (
+            "flexgmres"
+            if isinstance(solver, str) and solver.strip().lower() in ("auto", "mlmg")
+            else solver
+        )
+        deff_res = effective_diffusivity(staged, phase=electrolyte_phase, solver=hypre_solver)
+        labels = ("X", "Y", "Z")
+        tensor_obj: dict[str, float] = {}
+        for r_i in range(3):
+            for c_i in range(3):
+                tensor_obj[f"{labels[r_i]}{labels[c_i]}"] = float(deff_res.tensor[r_i, c_i])
+        oi_block["deff_tensor"] = tensor_obj
+
+    # Microstructure & solid-phase properties
+    primary_d_idx = norm_dirs[0][0]
+    shape_xyz = (nx, ny, nz)
+    pitch_xyz = (dx, dy, dz)
+    n_thick = shape_xyz[primary_d_idx]
+    h_thick = pitch_xyz[primary_d_idx]
+    cross_vox = (nx * ny * nz) // max(n_thick, 1)
+
+    has_solid_b = False
+    solid_b = 0.0
+    vf_s_val: Optional[float] = None
+    psd_res: Optional[ParticleSizeDistributionResult] = None
+    ms_block: dict[str, Any] = {}
+
+    if solid_phase is not None:
+        vf_s = volume_fraction(staged, phase=solid_phase)
+        vf_s_val = float(vf_s.fraction)
+        ssa_res = specific_surface_area(
+            staged, phase_a=electrolyte_phase, phase_b=solid_phase
+        )
+        ms_block["specific_surface_area"] = float(ssa_res.ssa_voxel_corrected)
+        ms_block["specific_surface_area_raw"] = float(ssa_res.ssa_voxel)
+        ms_block["phase_volume_fractions"] = {
+            str(int(electrolyte_phase)): float(vf_e.fraction),
+            str(int(solid_phase)): vf_s_val,
+        }
+        ms_block["macro_geometry"] = {
+            "thickness_voxels": float(n_thick),
+            "cross_section_voxels": float(cross_vox),
+            "total_volume_voxels": float(nx * ny * nz),
+        }
+
+        if elec != "separator":
+            solid_ratios: list[float] = []
+            for _, d_low, _ in norm_dirs:
+                try:
+                    t_s = tortuosity(staged, phase=solid_phase, direction=d_low, solver=solver)
+                except PercolationError:
+                    continue
+                r_s = t_s._deff_ratio()
+                if r_s > 0.0:
+                    solid_ratios.append(r_s)
+            if solid_ratios and 0.0 < vf_s_val < 1.0:
+                mean_solid_te = float(sum(solid_ratios) / len(solid_ratios))
+                solid_b = _bruggeman_from_ratio(mean_solid_te, vf_s_val)
+                has_solid_b = True
+                ms_block["solid_phase_bruggeman"] = solid_b
+
+            psd_res = particle_size_distribution(staged, phase=solid_phase)
+            mean_r_vox = (
+                float(np.mean(psd_res.radii_voxels)) if psd_res.num_particles > 0 else 0.0
+            )
+            ms_block["particle_size"] = {
+                "mean_radius_voxels": mean_r_vox,
+                "num_particles": int(psd_res.num_particles),
+                "radii_voxels": [float(r) for r in psd_res.radii_voxels],
+            }
+
+    if has_phys_vz:
+        ms_block["voxel_size_m"] = float((dx * dy * dz) ** (1.0 / 3.0))
+
+    if ms_block:
+        oi_block["microstructure"] = ms_block
+
+    # Faraday BPX block
+    mean_te = float(sum(deff_ratios.values()) / len(deff_ratios))
+    b_elec = _bruggeman_from_ratio(mean_te, vf_e.fraction)
+    sec_name = "Separator" if elec == "separator" else f"{elec.capitalize()} electrode"
+
+    bpx_params: dict[str, Any] = {
+        "Porosity": float(vf_e.fraction),
+        "Transport efficiency": mean_te,
+        "Bruggeman coefficient (electrolyte)": b_elec,
+    }
+    if vf_s_val is not None and elec != "separator":
+        bpx_params["Active material volume fraction"] = vf_s_val
+    if has_solid_b:
+        bpx_params["Bruggeman coefficient (electrode)"] = solid_b
+    if psd_res is not None and psd_res.num_particles > 0 and has_phys_vz:
+        bpx_params["Particle radius [m]"] = float(psd_res.mean_radius)
+    if has_phys_vz:
+        thick_key = "Thickness [m]" if elec == "separator" else "Electrode thickness [m]"
+        bpx_params[thick_key] = float(n_thick) * float(h_thick)
+
+    bpx_block: dict[str, Any] = {
+        "_comment": "BPX-compatible fragment. Merge into a full BPX file for PyBaMM import.",
+        "electrode": elec,
+        "Parameterisation": {
+            sec_name: bpx_params,
+        },
+    }
+    if len(deff_ratios) > 1:
+        bpx_block["anisotropic"] = {
+            "_comment": "Per-direction values (extension, not in base BPX spec)",
+            "transport_efficiency": dict(deff_ratios),
+            "tortuosity": {
+                d: (float(vf_e.fraction / r) if r > 0.0 else None)
+                for d, r in deff_ratios.items()
+            },
+            "mean_tortuosity": float(vf_e.fraction / mean_te) if mean_te > 0.0 else None,
+        }
+
+    payload: dict[str, Any] = {
+        "openimpala": oi_block,
+        "units": {
+            "volume_fraction": "1",
+            "tortuosity": "1",
+            "Deff_ratio": "1",
+        },
+        "bpx": bpx_block,
+    }
+
+    if sample_id or provenance_uri:
+        prov: dict[str, str] = {}
+        if sample_id:
+            prov["sample_id"] = str(sample_id)
+        if provenance_uri:
+            prov["provenance_uri"] = str(provenance_uri)
+        payload["provenance"] = prov
+
+    if output_path is not None:
+        out_p = Path(output_path)
+        serialized = json.dumps(payload, indent=2) + "\n"
+        if _is_pure_python():
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+            out_p.write_text(serialized, encoding="utf-8")
+        else:
+            _core = _get_core()
+            if _core.is_io_rank():
+                out_p.parent.mkdir(parents=True, exist_ok=True)
+                out_p.write_text(serialized, encoding="utf-8")
+            if _core.mpi_ranks() > 1:
+                _core.mpi_bcast_double(0.0)
+
+    return payload
 
 
 def estimate_memory(

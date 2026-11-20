@@ -9,6 +9,7 @@ Major API consistency, runtime diagnostics, and JOSS 2026 release.
 - **Quiet default AMReX lifecycle** — `AMReX` startup banners, `TinyProfiler` timing tables, and Arena memory summaries are now silenced by default so scripts and notebooks remain clutter-free; pass `oi.Session(verbose=True)` or set `OPENIMPALA_PROFILE=1` to enable profiling output
 - **Explicit `downsample_volume()` warnings & tie-breaking** — `downsample_volume()` emits a `UserWarning` when truncating non-divisible trailing slices and adds `tie_break="lowest" | "highest"` for deterministic modal tie resolution
 - **Empirically calibrated `estimate_memory()` & wheel analytical V&V** — calibrated `estimate_memory()` against measured `MLMG` vs `HYPRE` peak RAM (`~310` vs `~1,030`–`1,400` B/voxel) and added automated 8-case analytical & cross-backend parity verification on every CI and PyPI wheel build
+- **PyBaMM & Faraday BPX parameterisation helpers** — added `.macmullin_number` and `.bruggeman_exponent` properties on `TortuosityResult`, in-memory `to_pybamm_parameters()`, BattINFO-aligned `export_bpx_json()`, and CLI parity flags (`openimpala analyze --downsample --deff --bpx-electrode`), plus root `.zenodo.json` archive metadata
 
 See the [v5.0.0 release notes](https://github.com/BASE-Laboratory/OpenImpala/releases/tag/v5.0.0).
 
