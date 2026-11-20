@@ -11,3 +11,7 @@ class ConvergenceError(OpenImpalaError):
 
 class PercolationError(OpenImpalaError):
     """Raised when the target phase does not percolate across the domain."""
+
+
+class UnitCalibrationError(OpenImpalaError):
+    """Raised when a VolumeProtocol or OME-Zarr input lacks physical length calibration."""

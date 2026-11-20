@@ -121,6 +121,8 @@ class PureVoxelImage:
         path: Union[str, os.PathLike],
         *,
         array_path: Optional[str] = None,
+        label_key: Optional[str] = None,
+        unit: Optional[str] = None,
         level: int = 0,
         threshold: Optional[Union[float, str]] = None,
         pore_value: int = 0,
@@ -135,6 +137,8 @@ class PureVoxelImage:
         arr, meta_vz = read_zarr_volume(
             path,
             array_path=array_path,
+            label_key=label_key,
+            unit=unit if voxel_size is None else None,
             level=level,
             threshold=threshold,
             pore_value=pore_value,
@@ -895,6 +899,8 @@ def read_zarr_volume(
     path: Union[str, os.PathLike],
     *,
     array_path: Optional[str] = None,
+    label_key: Optional[str] = None,
+    unit: Optional[str] = None,
     level: int = 0,
     threshold: Optional[Union[float, str]] = None,
     pore_value: int = 0,
@@ -903,15 +909,55 @@ def read_zarr_volume(
 ) -> tuple[np.ndarray, Optional[tuple[float, float, float]]]:
     """Read a 3-D Zarr array or OME-NGFF (v0.4 / v0.5) multiscale Zarr group.
 
-    Returns ``(volume, voxel_size_zyx)`` where ``voxel_size_zyx`` is extracted
-    from OME-NGFF ``coordinateTransformations`` (or ``None`` if absent).
+    Parameters
+    ----------
+    path : str or os.PathLike
+        Path to the Zarr store directory.
+    array_path : str, optional
+        Explicit sub-array path inside the store (overrides *label_key* and *level*).
+    label_key : str, optional
+        Named OME-NGFF label group under ``labels/<label_key>`` (e.g. ``'phase'``,
+        ``'phase_lower'``, ``'phase_upper'``).
+    unit : str, optional
+        Target physical length unit (e.g. ``'m'`` or ``'um'``).  When supplied,
+        converts OME-NGFF spatial axis units into *unit* and raises
+        :class:`~openimpala.UnitCalibrationError` if spatial axes lack physical
+        length units.  Defaults to ``None`` (returns raw OME-NGFF scale values).
+    level : int, default 0
+        Multiscale pyramid level index (``0`` = full resolution).
+    threshold : float or 'otsu', optional
+        Optional grayscale binarisation threshold.
+    pore_value, solid_value : int
+        Output phase IDs when *threshold* is provided.
+    dark_is_pore : bool, default True
+        Polarity convention when *threshold* is provided.
+
+    Returns
+    -------
+    tuple of (np.ndarray, tuple of float or None)
+        ``(volume, voxel_size_zyx)`` where ``voxel_size_zyx`` is extracted from
+        OME-NGFF ``coordinateTransformations`` (converted to *unit* when requested).
     """
+    from .exceptions import UnitCalibrationError
+    from .protocol import convert_ome_zyx_scale
+
     zarr = _import_zarr()
     target = Path(path)
     if not target.exists():
         raise FileNotFoundError(f"Zarr store not found: '{target}'")
 
     node = zarr.open(str(target), mode="r")
+    if label_key is not None and array_path is None:
+        if not hasattr(node, "keys") or "labels" not in node:
+            raise KeyError(f"Zarr store '{target}' does not contain a 'labels' group.")
+        labels_grp = node["labels"]
+        if label_key not in labels_grp:
+            avail = list(labels_grp.keys()) if hasattr(labels_grp, "keys") else []
+            raise KeyError(
+                f"Label '{label_key}' not found in '{target}/labels' (available: {avail})."
+            )
+        node = labels_grp[label_key]
+
     meta_vz: Optional[tuple[float, float, float]] = None
     axes_meta: Sequence[Any] = ()
 
@@ -966,6 +1012,20 @@ def read_zarr_volume(
         n_squeezed += 1
     if arr.ndim != 3:
         raise ValueError(f"Expected 3-D Zarr volume (Nz, Ny, Nx), got shape {arr.shape}")
+
+    if unit is not None:
+        if meta_vz is None:
+            raise UnitCalibrationError(
+                f"Zarr store '{target}' has no OME-NGFF scale transformation to convert "
+                f"to unit={unit!r}; calibrate the store or pass unit=None / voxel_size=..."
+            )
+        meta_vz = convert_ome_zyx_scale(
+            meta_vz,
+            axes_meta,
+            unit,
+            n_squeezed=n_squeezed,
+            context=f"Zarr store '{target}'",
+        )
 
     # Reorder spatial axes to (z, y, x) if OME-NGFF axes declare a non-zyx spatial order
     if isinstance(axes_meta, (list, tuple)) and len(axes_meta) - n_squeezed == 3:

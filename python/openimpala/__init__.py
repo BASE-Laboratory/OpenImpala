@@ -177,12 +177,14 @@ _preload_mpi_libs()
 from . import datasets
 from .session import Session, _core_binary_exists, _probe_core, _requested_backend
 
-# Custom exceptions (pure Python — always available)
+# Custom exceptions and structural protocol (pure Python — always available)
 from .exceptions import (
     ConvergenceError,
     OpenImpalaError,
     PercolationError,
+    UnitCalibrationError,
 )
+from .protocol import VolumeProtocol
 
 
 def _warn_if_compiled_core_broken() -> None:
@@ -258,6 +260,8 @@ def _augment_core_voxelimage(_core) -> None:
         path,
         *,
         array_path=None,
+        label_key=None,
+        unit=None,
         level: int = 0,
         threshold=None,
         pore_value: int = 0,
@@ -273,6 +277,8 @@ def _augment_core_voxelimage(_core) -> None:
         arr, meta_vz = read_zarr_volume(
             path,
             array_path=array_path,
+            label_key=label_key,
+            unit=unit if voxel_size is None else None,
             level=level,
             threshold=threshold,
             pore_value=pore_value,
@@ -459,9 +465,11 @@ __all__ = [
     "EffDiffSolverType",
     "PhysicsType",
     "Session",
+    "VolumeProtocol",
     "OpenImpalaError",
     "ConvergenceError",
     "PercolationError",
+    "UnitCalibrationError",
     "volume_fraction",
     "percolation_check",
     "tortuosity",
