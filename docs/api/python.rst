@@ -112,12 +112,15 @@ summary tables automatically in Jupyter notebooks and MyST-NB documentation.
    :members:
 
 
-Session Management
-------------------
+Session Management & Ecosystem Protocol
+---------------------------------------
 
 .. autoclass:: openimpala.Session
    :members:
    :special-members: __enter__, __exit__
+
+.. autoclass:: openimpala.VolumeProtocol
+   :members:
 
 
 Exceptions
@@ -130,4 +133,7 @@ Exceptions
    :members:
 
 .. autoclass:: openimpala.PercolationError
+   :members:
+
+.. autoclass:: openimpala.UnitCalibrationError
    :members:

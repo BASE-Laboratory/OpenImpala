@@ -92,3 +92,14 @@ fallback_version = "5.0.0"
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]
+
+[tool.basecoat.layers]
+layer = 3
+source_dirs = ["python/openimpala"]
+banned_imports = [
+    "multimodal_benchmark",
+    "openlsrx",
+    "x_fuse",
+    "braggtrack",
+    "basecoat",
+]

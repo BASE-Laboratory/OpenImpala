@@ -20,11 +20,12 @@ from typing import Any, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
-from .exceptions import ConvergenceError, PercolationError
+from .exceptions import ConvergenceError, PercolationError, UnitCalibrationError
+from .protocol import VolumeProtocol
 from .session import Session, _has_core
 
 VoxelSizeArg = Union[float, int, Sequence[float]]
-DataInputArg = Union[np.ndarray, str, os.PathLike, "VoxelImage"]
+DataInputArg = Union[np.ndarray, str, os.PathLike, "VoxelImage", VolumeProtocol, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -549,18 +550,60 @@ def _unwrap_external_volume(
 ) -> tuple[Optional[np.ndarray], Optional[VoxelSizeArg], str]:
     """Extract ``(ndarray, inferred_voxel_size, source_desc)`` from upstream ecosystem objects.
 
-    Supports STFC Core Imaging Library (CIL) ``ImageData`` (``.as_array()`` +
-    ``.geometry.voxel_size_z/y/x``), ``xarray.DataArray`` (``.values`` +
-    uniform ``coords`` spacing), and in-memory 3-D array/dataset handles
-    (e.g. ``zarr.Array``, ``h5py.Dataset``, ``dask.array``) without requiring
-    those packages at install time.
+    Supports:
+    - :class:`~openimpala.VolumeProtocol` and ``VolumeSet``-like containers (e.g.
+      ``basecoat.Volume`` / ``basecoat.VolumeSet``), defaulting spacing to SI metres
+      via ``spacing_in("m")`` and raising :class:`~openimpala.UnitCalibrationError`
+      when uncalibrated unless *voxel_size* is supplied explicitly.
+    - STFC Core Imaging Library (CIL) ``ImageData`` (``.as_array()`` +
+      ``.geometry.voxel_size_z/y/x``).
+    - ``xarray.DataArray`` (``.values`` + uniform ``coords`` spacing).
+    - In-memory 3-D array/dataset handles (e.g. ``zarr.Array``, ``h5py.Dataset``).
     """
     from ._io import PureVoxelImage
 
     if isinstance(data, (np.ndarray, str, os.PathLike, PureVoxelImage)):
         return None, voxel_size, "NumPy array"
 
-    # 1. STFC Core Imaging Library (CIL) ImageData / AcquisitionData
+    # 0. VolumeSet-like container (image + labels mapping, e.g. basecoat.VolumeSet)
+    target: object = data
+    desc_prefix = type(data).__name__
+    labels_attr = getattr(data, "labels", None)
+    if hasattr(data, "image") and isinstance(labels_attr, Mapping):
+        if "phase" in labels_attr:
+            target = labels_attr["phase"]
+            desc_prefix = f"{type(data).__name__}.labels['phase']"
+        elif len(labels_attr) == 1:
+            sole_k = next(iter(labels_attr.keys()))
+            target = labels_attr[sole_k]
+            desc_prefix = f"{type(data).__name__}.labels[{sole_k!r}]"
+        else:
+            target = getattr(data, "image")
+            desc_prefix = f"{type(data).__name__}.image"
+
+    # 1. Structural VolumeProtocol (e.g. basecoat.Volume — zero runtime basecoat import)
+    spacing_fn = getattr(target, "spacing_in", None)
+    if callable(spacing_fn) and hasattr(target, "data"):
+        arr = np.asarray(getattr(target, "data"))
+        if voxel_size is not None:
+            return arr, voxel_size, desc_prefix
+        try:
+            sp_m = tuple(float(v) for v in spacing_fn("m"))
+        except UnitCalibrationError:
+            raise
+        except Exception as exc:
+            raise UnitCalibrationError(
+                f"{desc_prefix} is uncalibrated ({exc}); calibrate the volume with "
+                f"physical length units or pass voxel_size=... explicitly."
+            ) from exc
+        if len(sp_m) != 3 or any((not math.isfinite(v) or v <= 0.0) for v in sp_m):
+            raise UnitCalibrationError(
+                f"{desc_prefix}.spacing_in('m') must return 3 positive finite spacings "
+                f"(dz, dy, dx), got {sp_m!r}."
+            )
+        return arr, (sp_m[0], sp_m[1], sp_m[2]), desc_prefix
+
+    # 2. STFC Core Imaging Library (CIL) ImageData / AcquisitionData
     as_array_fn = getattr(data, "as_array", None)
     if callable(as_array_fn):
         arr = np.asarray(as_array_fn())
@@ -581,7 +624,7 @@ def _unwrap_external_volume(
                     pass
         return arr, eff_vz, f"CIL {type(data).__name__}"
 
-    # 2. xarray.DataArray (dims + coords + values)
+    # 3. xarray.DataArray (dims + coords + values)
     if hasattr(data, "dims") and hasattr(data, "coords") and hasattr(data, "values"):
         arr = np.asarray(getattr(data, "values"))
         eff_vz = voxel_size
@@ -600,7 +643,7 @@ def _unwrap_external_volume(
                 eff_vz = (spacings[0], spacings[1], spacings[2])
         return arr, eff_vz, f"{type(data).__name__}"
 
-    # 3. Generic 3-D array-protocol or sliceable dataset (zarr.Array, h5py.Dataset, etc.)
+    # 4. Generic 3-D array-protocol or sliceable dataset (zarr.Array, h5py.Dataset, etc.)
     if hasattr(data, "__array__") or (
         hasattr(data, "shape") and hasattr(data, "dtype") and hasattr(data, "__getitem__")
     ):
@@ -613,12 +656,24 @@ def _unwrap_external_volume(
     return None, voxel_size, "input"
 
 
+def _read_zarr_for_phase_solver(
+    p: Path,
+) -> tuple[np.ndarray, Optional[tuple[float, float, float]]]:
+    """Read segmented phase IDs from *p*, preferring ``labels/phase`` when root ``0`` is float grayscale."""
+    from ._io import read_zarr_volume
+
+    zarr_arr, meta_vz = read_zarr_volume(p, threshold=None)
+    if np.issubdtype(zarr_arr.dtype, np.floating) and (p / "labels" / "phase").is_dir():
+        return read_zarr_volume(p, label_key="phase", threshold=None)
+    return zarr_arr, meta_vz
+
+
 def _resolve_pure_input(
     data: DataInputArg,
     voxel_size: Optional[VoxelSizeArg] = None,
 ) -> tuple[np.ndarray, tuple[float, float, float]]:
     """Resolve *data* into ``(arr_int32, (dz, dy, dx))`` for the pure-Python backend."""
-    from ._io import PureVoxelImage, read_zarr_volume
+    from ._io import PureVoxelImage
 
     if isinstance(data, (str, os.PathLike)):
         p = Path(data)
@@ -631,7 +686,7 @@ def _resolve_pure_input(
                 _normalize_voxel_size(voxel_size),
             )
         if _is_zarr_path(p):
-            zarr_arr, meta_vz = read_zarr_volume(p, threshold=None)
+            zarr_arr, meta_vz = _read_zarr_for_phase_solver(p)
             vz = (
                 _normalize_voxel_size(voxel_size)
                 if voxel_size is not None
@@ -652,7 +707,7 @@ def _resolve_pure_input(
         return _coerce_phase_array(ext_arr, source_desc=ext_desc), _normalize_voxel_size(ext_vz)
 
     if not isinstance(data, np.ndarray):
-        raise TypeError("data must be a 3-D NumPy array, VoxelImage, CIL/xarray volume, or file path")
+        raise TypeError("data must be a 3-D NumPy array, VoxelImage, VolumeProtocol/CIL/xarray volume, or file path")
     if data.ndim != 3:
         raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
     return _coerce_phase_array(data, source_desc="NumPy array"), _normalize_voxel_size(voxel_size)
@@ -663,8 +718,8 @@ def _numpy_to_voxelimage(
     max_grid_size: Union[int, str] = "auto",
     voxel_size: Optional[VoxelSizeArg] = None,
 ):
-    """Convert a 3-D NumPy array, path, CIL/xarray volume, or VoxelImage into a C++ VoxelImage."""
-    from ._io import PureVoxelImage, read_zarr_volume
+    """Convert a 3-D NumPy array, path, VolumeProtocol/CIL/xarray volume, or VoxelImage into a C++ VoxelImage."""
+    from ._io import PureVoxelImage
 
     _core = _get_core()
 
@@ -681,7 +736,7 @@ def _numpy_to_voxelimage(
         if p.suffix.lower() == ".npy":
             data = np.load(p)
         elif _is_zarr_path(p):
-            zarr_arr, meta_vz = read_zarr_volume(p, threshold=None)
+            zarr_arr, meta_vz = _read_zarr_for_phase_solver(p)
             data = zarr_arr
             if voxel_size is None and meta_vz is not None:
                 voxel_size = meta_vz
@@ -702,7 +757,7 @@ def _numpy_to_voxelimage(
             src_desc = ext_desc
 
     if not isinstance(data, np.ndarray):
-        raise TypeError("data must be a 3-D NumPy array, VoxelImage, CIL/xarray volume, or file path")
+        raise TypeError("data must be a 3-D NumPy array, VoxelImage, VolumeProtocol/CIL/xarray volume, or file path")
 
     if data.ndim != 3:
         raise ValueError(f"Expected a 3-D array, got shape {data.shape}")
