@@ -170,7 +170,8 @@ jobs:
             --exclude libopen-pal.so.40
             --exclude libmpi_mpifh.so
             --exclude libmpi_mpifh.so.40
-            --exclude libgomp.so.1
+            --exclude libgomp.so.1 &&
+            /opt/python/cp39-cp39/bin/python /project/scripts/patch_wheel_rpath.py {dest_dir}
 
       - name: Verify host caches populated
         run: |
@@ -303,7 +304,8 @@ jobs:
             --exclude libopen-pal.so.40
             --exclude libmpi_mpifh.so
             --exclude libmpi_mpifh.so.40
-            --exclude libgomp.so.1
+            --exclude libgomp.so.1 &&
+            /opt/python/${{ matrix.py }}-${{ matrix.py }}/bin/python /project/scripts/patch_wheel_rpath.py {dest_dir}
 
       - name: Upload ${{ matrix.py }} wheel
         uses: actions/upload-artifact@v4
@@ -318,6 +320,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all wheel parts
         uses: actions/download-artifact@v4
         with:
@@ -334,29 +339,45 @@ jobs:
             exit 1
           fi
 
-      - name: Set up Python 3.12 for wheel smoke tests
+      - name: Set up Python 3.12 for wheel smoke & analytical V&V tests
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Smoke-test installed wheels (pure-Python, no-MPI fallback & 2-rank OpenMPI C++)
+      - name: Smoke & analytical V&V on installed wheels (pure-Python, loud no-MPI warning, pip-openmpi auto-RPATH & 2-rank MPI)
         run: |
           set -euo pipefail
           PURE_WHL="$(ls "$PWD"/wheelhouse/openimpala-*-py3-none-any.whl)"
           CPU_WHL="$(ls "$PWD"/wheelhouse/openimpala-*-cp312-cp312-manylinux_2_28_x86_64.whl)"
           EXPECTED_VER="$(basename "$PURE_WHL" | sed -E 's/^openimpala-([^-]+)-.*/\1/')"
-          echo "Smoke-testing wheels for expected version: ${EXPECTED_VER}"
+          VV_SCRIPT="$PWD/tests/validation/wheel_analytical_vv.py"
+          echo "Verifying wheels for expected version: ${EXPECTED_VER}"
 
           cat > /tmp/wheel_smoke.py << 'PYEOF'
           import pathlib
           import subprocess
           import sys
+          import warnings
           import numpy as np
-          import openimpala as oi
 
           exp_ver, exp_backend = sys.argv[1], sys.argv[2]
           exp_ranks = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3].isdigit() else 1
           expect_err = "--expect-load-error" in sys.argv
+
+          with warnings.catch_warnings(record=True) as import_warnings:
+              warnings.simplefilter("always")
+              import openimpala as oi
+
+          if expect_err:
+              msgs = [str(w.message) for w in import_warnings]
+              assert any("pip install openmpi" in m for m in msgs), (
+                  f"Expected loud import warning mentioning OpenMPI remedy, got {msgs}"
+              )
+          else:
+              msgs = [str(w.message) for w in import_warnings]
+              assert not any("_core" in m for m in msgs), (
+                  f"Unexpected _core fallback warning: {msgs}"
+              )
 
           assert oi.__version__ == exp_ver, f"version mismatch: {oi.__version__} != {exp_ver}"
           pkg_dir = pathlib.Path(oi.__file__).resolve().parent
@@ -395,22 +416,37 @@ jobs:
               print(f"[OK] {exp_backend} (ranks={exp_ranks}, ver={oi.__version__}) passed all smoke checks")
           PYEOF
 
-          # 1. Universal pure-Python wheel in clean host venv
+          # 1. Universal pure-Python wheel in clean host venv + full analytical V&V
           python -m venv /tmp/venv-pure
           /tmp/venv-pure/bin/pip install --quiet "$PURE_WHL"
           (cd /tmp && /tmp/venv-pure/bin/python /tmp/wheel_smoke.py "$EXPECTED_VER" pure-python)
+          (cd /tmp && /tmp/venv-pure/bin/python "$VV_SCRIPT" --expected-backend pure-python --expected-version "$EXPECTED_VER" --check-silent-exit)
 
-          # 2. Compiled manylinux wheel on bare Linux WITHOUT OpenMPI (Colab default safety)
+          # 2. Compiled manylinux wheel on bare Linux:
+          #    (a) WITHOUT OpenMPI -> loud import warning + safe pure-Python fallback
+          #    (b) WITH `libgomp1` + `pip install openmpi` & ZERO LD_LIBRARY_PATH -> automatic C++ loading + cross-backend V&V!
           docker run --rm \
             -v "$PWD/wheelhouse:/wheels:ro" \
             -v /tmp/wheel_smoke.py:/tmp/wheel_smoke.py:ro \
+            -v "$VV_SCRIPT:/tmp/wheel_analytical_vv.py:ro" \
             python:3.12-slim \
-            bash -c "set -euo pipefail && pip install --quiet /wheels/$(basename "$CPU_WHL") && cd /tmp && python /tmp/wheel_smoke.py '$EXPECTED_VER' pure-python --expect-load-error"
+            bash -c "
+              set -euo pipefail
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends libgomp1 >/dev/null
+              pip install --root-user-action=ignore --quiet /wheels/$(basename "$CPU_WHL")
+              cd /tmp
+              python /tmp/wheel_smoke.py '$EXPECTED_VER' pure-python --expect-load-error
+              pip install --root-user-action=ignore --quiet openmpi
+              unset LD_LIBRARY_PATH
+              python /tmp/wheel_smoke.py '$EXPECTED_VER' cpp-cpu 1
+              python /tmp/wheel_analytical_vv.py --expected-backend cpp-cpu --expected-version '$EXPECTED_VER' --compare-pure --check-silent-exit
+            "
 
-          # 3. Compiled manylinux wheel WITH OpenMPI (1-rank & 2-rank C++ AMReX/HYPRE solves)
+          # 3. Compiled manylinux wheel WITH system OpenMPI (1-rank & 2-rank MPI C++ AMReX/HYPRE V&V)
           docker run --rm \
             -v "$PWD/wheelhouse:/wheels:ro" \
             -v /tmp/wheel_smoke.py:/tmp/wheel_smoke.py:ro \
+            -v "$VV_SCRIPT:/tmp/wheel_analytical_vv.py:ro" \
             quay.io/pypa/manylinux_2_28_x86_64 \
             bash -c "
               set -euo pipefail
@@ -423,6 +459,8 @@ jobs:
               /opt/python/cp312-cp312/bin/python /tmp/wheel_smoke.py '$EXPECTED_VER' cpp-cpu 1
               OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 OMP_NUM_THREADS=1 \
                 mpirun -np 2 --oversubscribe /opt/python/cp312-cp312/bin/python /tmp/wheel_smoke.py '$EXPECTED_VER' cpp-cpu 2
+              OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 OMP_NUM_THREADS=1 \
+                mpirun -np 2 --oversubscribe /opt/python/cp312-cp312/bin/python /tmp/wheel_analytical_vv.py --expected-backend cpp-cpu --expected-version '$EXPECTED_VER' --expected-ranks 2
             "
 
       - name: Upload unified wheelhouse artifact

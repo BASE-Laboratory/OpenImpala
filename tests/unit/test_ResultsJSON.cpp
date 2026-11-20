@@ -42,7 +42,7 @@ TEST_CASE("ResultsJSON produces valid JSON with openimpala block", "[ResultsJSON
 
     REQUIRE(j.contains("openimpala"));
     auto& oi = j["openimpala"];
-    CHECK(oi["version"].get<std::string>() == "0.1.0");
+    CHECK(oi["version"].get<std::string>() == OPENIMPALA_VERSION_STRING);
     CHECK(oi["physics_type"].get<std::string>() == "Diffusion");
     CHECK(oi["input_file"].get<std::string>() == "test.tif");
     CHECK(oi["phase_id"].get<int>() == 1);
@@ -387,6 +387,24 @@ TEST_CASE("ResultsJSON BPX works for positive electrode", "[ResultsJSON][bpx]") 
     auto& params = j["bpx"]["Parameterisation"]["Positive electrode"];
     CHECK(params["Porosity"].get<double>() == Approx(0.35));
     CHECK(params["Transport efficiency"].get<double>() == Approx(0.15));
+}
+
+TEST_CASE("ResultsJSON BPX works for separator", "[ResultsJSON][bpx]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVolumeFraction(0.42);
+    writer.addDirectionResult("X", 0.21);
+    writer.setMacroGeometry(50.0, 400.0, 20000.0);
+    writer.setVoxelSize(0.5e-6);
+    writer.setBPXElectrode("separator");
+
+    auto j = writer.buildJSON();
+    REQUIRE(j["bpx"]["Parameterisation"].contains("Separator"));
+
+    auto& params = j["bpx"]["Parameterisation"]["Separator"];
+    CHECK(params["Porosity"].get<double>() == Approx(0.42));
+    CHECK(params["Transport efficiency"].get<double>() == Approx(0.21));
+    CHECK(params["Thickness [m]"].get<double>() == Approx(50.0 * 0.5e-6));
 }
 
 TEST_CASE("ResultsJSON BPX includes anisotropic data for multi-direction", "[ResultsJSON][bpx]") {

@@ -7,12 +7,12 @@ authors:
     given-names: "James"
     orcid: "https://orcid.org/0000-0002-1576-0673"
     affiliation: "University of Greenwich"
-    email: "james.le-houx@gre.ac.uk"
+    email: "j.lehoux@greenwich.ac.uk"
 repository-code: "https://github.com/BASE-Laboratory/OpenImpala"
 url: "https://base-laboratory.github.io/OpenImpala/"
 license: BSD-3-Clause
-version: 4.7.0
-date-released: "2026-11-19"
+version: 5.0.0
+date-released: "2026-11-20"
 keywords:
   - porous media
   - tortuosity

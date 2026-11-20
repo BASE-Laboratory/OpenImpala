@@ -649,7 +649,10 @@ class TestPhase2HardeningAndBridges:
         # Tie block at [4:6, 0:2, 4:6]: four 0s and four 255s -> tie broken to smallest ID (0)
         vol[4:6, 0:2, 4] = 255
 
-        ds, vz = oi.downsample_volume(vol, factor=2, mode="majority", voxel_size=(0.5, 1.0, 1.5))
+        with pytest.warns(UserWarning, match="truncating trailing slices"):
+            ds, vz = oi.downsample_volume(
+                vol, factor=2, mode="majority", voxel_size=(0.5, 1.0, 1.5)
+            )
         assert ds.shape == (4, 4, 4)
         assert ds.dtype == np.int32
         assert set(np.unique(ds)).issubset({0, 10, 255})

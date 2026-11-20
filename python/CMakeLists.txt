@@ -70,6 +70,19 @@ target_compile_features(_core PRIVATE cxx_std_17)
 # Drop unused DT_NEEDED libraries (e.g. deprecated libmpi_cxx.so injected by OpenMPI 4's mpicxx wrapper)
 target_link_options(_core PRIVATE $<$<LINK_LANGUAGE:CXX>:-Wl,--as-needed>)
 
+# Set ELF DT_RUNPATH (--enable-new-dtags) so pip/conda-installed OpenMPI in
+# <env>/lib ($ORIGIN/../../..) is discovered automatically without LD_LIBRARY_PATH,
+# while HPC `module load openmpi` (LD_LIBRARY_PATH) always takes precedence.
+if(UNIX AND NOT APPLE)
+    set_target_properties(_core PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../../..;$ORIGIN/../../../openmpi"
+    )
+    target_link_options(_core PRIVATE
+        $<$<LINK_LANGUAGE:CXX>:-Wl,--enable-new-dtags>
+        $<$<LINK_LANGUAGE:CUDA>:-Xlinker=--enable-new-dtags>
+    )
+endif()
+
 # --- Place the compiled extension directly into the Python package ---
 # This ensures Python's relative imports (from . import _core) work 
 # natively during local testing. We skip this during wheel builds 
@@ -138,6 +151,8 @@ if(BUILD_TESTING)
             "${PYTHON_TEST_DIR}/test_datasets_and_io.py")
         openimpala_add_pytest(pytest_v470_ecosystem
             "${PYTHON_TEST_DIR}/test_v470_ecosystem.py")
+        openimpala_add_pytest(pytest_v500_ux
+            "${PYTHON_TEST_DIR}/test_v500_ux.py")
 
         # --- Tests requiring _core module ---
         openimpala_add_pytest(pytest_enums

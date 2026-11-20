@@ -12,6 +12,7 @@ dynamic = ["version"]
 description = "Python bindings for OpenImpala — transport-property computation on 3-D voxel images"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
+authors = [{name = "James Le Houx", email = "j.lehoux@greenwich.ac.uk"}]
 requires-python = ">=3.9"
 dependencies = [
     "numpy",
@@ -38,6 +39,7 @@ Changelog = "https://base-laboratory.github.io/OpenImpala/changelog.html"
 
 [project.optional-dependencies]
 mpi = ["mpi4py"]
+openmpi = ["openmpi; platform_system == 'Linux'"]
 progress = ["tqdm"]
 jupyter = ["matplotlib", "ipywidgets"]
 viz = ["yt", "matplotlib"]
@@ -86,7 +88,7 @@ provider = "scikit_build_core.metadata.setuptools_scm"
 # Without this, setuptools_scm appends "+gXXXX" local identifiers
 # that PyPI rejects with HTTP 400.
 local_scheme = "no-local-version"
-fallback_version = "4.7.0"
+fallback_version = "5.0.0"
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]

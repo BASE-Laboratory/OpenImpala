@@ -6,6 +6,9 @@ import os
 import warnings
 
 
+from pathlib import Path
+
+
 def _requested_backend() -> str:
     """Normalise ``OPENIMPALA_BACKEND`` environment variable to ``'auto'``, ``'pure'``, or ``'cpp'``."""
     raw = os.environ.get("OPENIMPALA_BACKEND", "auto").strip().lower()
@@ -18,6 +21,12 @@ def _requested_backend() -> str:
     raise ValueError(
         f"Invalid OPENIMPALA_BACKEND={raw!r}. Expected 'auto', 'cpp', or 'pure'."
     )
+
+
+def _core_binary_exists() -> bool:
+    """Return True if a compiled ``_core`` shared library exists in the package directory."""
+    pkg_dir = Path(__file__).resolve().parent
+    return any(pkg_dir.glob("_core*.so")) or any(pkg_dir.glob("_core*.pyd"))
 
 
 def _probe_core() -> tuple[bool, str | None]:
@@ -44,29 +53,34 @@ class Session:
     """Ensures AMReX ``initialize()`` / ``finalize()`` are called exactly once
     and in the correct order, even when *mpi4py* is also in use.
 
+    Parameters
+    ----------
+    verbose : bool, default False
+        When ``True`` (or when ``OPENIMPALA_PROFILE=1`` is set in the environment),
+        enable AMReX startup banners, ``TinyProfiler`` timing tables, and Arena
+        memory summaries on session exit.  Defaults to ``False`` so scripts and
+        notebooks stay clean.
+
     Usage::
 
         import openimpala as oi
 
         with oi.Session():
             vf = oi.volume_fraction(data, phase=0)
-
-    The session is re-entrant: nested ``with Session()`` blocks share the same
-    underlying AMReX state; only the outermost block triggers init/finalize.
-
-    When the compiled C++ backend (``_core``) is not available (or when
-    ``OPENIMPALA_BACKEND=pure`` is set, or ``openimpala-cuda`` runs on a node
-    with no visible GPU), the session activates the pure-Python solver backend
-    (SciPy / CuPy) automatically unless ``OPENIMPALA_BACKEND=cpp`` is set.
     """
 
     _depth: int = 0  # nesting counter (class-level)
     _pure_python: bool = False  # True when _core is unavailable or bypassed
+    _verbose: bool = False
     _core_load_error: "str | None" = None
     _auto_session: "Session | None" = None
 
+    def __init__(self, *, verbose: bool = False) -> None:
+        self.verbose = bool(verbose)
+
     def __enter__(self) -> "Session":
         if Session._depth == 0:
+            Session._verbose = self.verbose
             self._do_initialize()
         Session._depth += 1
         return self
@@ -96,7 +110,8 @@ class Session:
 
     # ------------------------------------------------------------------
     @staticmethod
-    def _do_initialize() -> None:
+    def _do_initialize(verbose: bool | None = None) -> None:
+        eff_verbose = Session._verbose if verbose is None else bool(verbose)
         req = _requested_backend()
         if req == "pure":
             Session._core_load_error = "Disabled via OPENIMPALA_BACKEND=pure"
@@ -111,7 +126,10 @@ class Session:
                 from openimpala._core import init_amrex
 
                 try:
-                    init_amrex()
+                    try:
+                        init_amrex(bool(eff_verbose))
+                    except TypeError:
+                        init_amrex()
                 except RuntimeError as exc:
                     Session._core_load_error = f"{type(exc).__name__}: {exc}"
                     if req == "cpp":

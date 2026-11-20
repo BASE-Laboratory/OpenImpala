@@ -228,3 +228,101 @@ def test_build_info_fallback_outside_session(monkeypatch):
     assert info["version"] == oi.__version__
 
 
+def test_analyze_downsample_deff_and_bpx_flags(tmp_path, capsys):
+    vol = np.zeros((8, 8, 8), dtype=np.uint8)
+    vol[:, :, :4] = 200  # Straight half-domain channel along Z and Y (blocked along X)
+    tif_path = tmp_path / "channel_bpx.tif"
+    _write_tiny_tiff(tif_path, vol)
+
+    cli_args = [
+        "analyze",
+        str(tif_path),
+        "--phase",
+        "1",
+        "--threshold",
+        "100",
+        "--direction",
+        "z",
+        "--voxel-size",
+        "0.5",
+        "--downsample",
+        "2",
+        "--bpx-electrode",
+        "negative",
+    ]
+    with_deff = oi.build_info()["backend"] != "cpp-cuda"
+    if with_deff:
+        cli_args.append("--deff")
+
+    assert main(cli_args) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["shape"] == [4, 4, 4]
+    assert payload["voxel_size"] == pytest.approx([1.0, 1.0, 1.0])
+    assert payload["tortuosity"] == pytest.approx(1.0, rel=1e-5)
+    assert payload["macmullin_number"] == pytest.approx(2.0, rel=1e-5)
+    assert payload["bruggeman_exponent"] == pytest.approx(1.0, rel=1e-5)
+    assert payload["bpx"]["electrode"] == "negative"
+    neg = payload["bpx"]["Parameterisation"]["Negative electrode"]
+    assert neg["Porosity"] == pytest.approx(0.5)
+    assert neg["Transport efficiency"] == pytest.approx(0.5, rel=1e-5)
+    assert neg["Bruggeman coefficient (electrolyte)"] == pytest.approx(1.0, rel=1e-5)
+    if with_deff:
+        assert payload["deff_diagonal"] == pytest.approx([0.0, 0.5, 0.5], abs=1e-5)
+
+    with pytest.raises(SystemExit):
+        main(["analyze", str(tif_path), "--downsample", "0"])
+
+    # Non-root MPI rank suppresses duplicate JSON stdout & file clobbering
+    monkeypatch_rank = pytest.MonkeyPatch()
+    try:
+        monkeypatch_rank.setattr(
+            oi, "build_info", lambda: {"backend": "cpp-cpu", "mpi_rank": 1, "mpi_ranks": 2}
+        )
+        out_mpi = tmp_path / "should_not_be_written_by_rank1.json"
+        assert (
+            main(
+                [
+                    "analyze",
+                    str(tif_path),
+                    "--phase",
+                    "1",
+                    "--threshold",
+                    "100",
+                    "--output",
+                    str(out_mpi),
+                ]
+            )
+            == 0
+        )
+        assert not out_mpi.exists()
+        assert capsys.readouterr().out == ""
+    finally:
+        monkeypatch_rank.undo()
+
+
+def test_build_info_cuda_gpuless_login_node_reports_pure_python(monkeypatch):
+    import openimpala.facade as facade_mod
+
+    class _FakeCudaCore:
+        @staticmethod
+        def build_info():
+            return {
+                "cuda_enabled": True,
+                "hip_enabled": False,
+                "gpu_enabled": True,
+                "gpu_device_count": 0,
+            }
+
+    monkeypatch.setattr(facade_mod, "_is_pure_python", lambda: False)
+    monkeypatch.setattr(facade_mod, "_has_core", lambda: True)
+    monkeypatch.setattr(facade_mod, "_get_core", lambda: _FakeCudaCore)
+    monkeypatch.setattr(facade_mod.Session, "_core_load_error", None)
+    info = oi.build_info()
+    assert info["backend"] == "pure-python"
+    assert info["core_available"] is False
+    assert "NVIDIA GPU" in str(info["core_load_error"])
+
+
+
+

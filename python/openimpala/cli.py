@@ -109,6 +109,24 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Physical voxel size: single float (isotropic) or 3 floats DZ DY DX",
     )
+    p_analyze.add_argument(
+        "--downsample",
+        nargs="+",
+        type=int,
+        default=None,
+        help="Coarsen volume before analysis: 1 int (isotropic) or 3 ints FZ FY FX",
+    )
+    p_analyze.add_argument(
+        "--deff",
+        action="store_true",
+        help="Also compute the 3x3 periodic homogenised effective diffusivity tensor",
+    )
+    p_analyze.add_argument(
+        "--bpx-electrode",
+        choices=("negative", "positive", "separator"),
+        default=None,
+        help="Embed a Faraday BPX electrode parameterisation fragment in JSON output",
+    )
     p_analyze.add_argument("--output", default=None, help="Output JSON path (default: stdout)")
     p_analyze.add_argument("--max-grid-size", type=_parse_max_grid_size, default="auto")
     p_analyze.add_argument("--verbose", type=int, default=0)
@@ -198,6 +216,13 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _is_cli_io_rank(oi_mod) -> bool:
+    try:
+        return int(oi_mod.build_info().get("mpi_rank", 0)) == 0
+    except Exception:
+        return True
+
+
 def _cmd_vf(args: argparse.Namespace) -> int:
     import openimpala as oi
 
@@ -215,7 +240,8 @@ def _cmd_vf(args: argparse.Namespace) -> int:
         "total_count": vf_res.total_count,
         "volume_fraction": vf_res.fraction,
     }
-    print(json.dumps(result, indent=2))
+    if _is_cli_io_rank(oi):
+        print(json.dumps(result, indent=2))
     return 0
 
 
@@ -238,11 +264,13 @@ def _cmd_percolation(args: argparse.Namespace) -> int:
         "percolates": pc_res.percolates,
         "active_volume_fraction": pc_res.active_volume_fraction,
     }
-    print(json.dumps(result, indent=2))
+    if _is_cli_io_rank(oi):
+        print(json.dumps(result, indent=2))
     return 0
 
 
 def _cmd_analyze(args: argparse.Namespace) -> int:
+    import math
     import openimpala as oi
 
     vz = None
@@ -256,6 +284,21 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
                 f"Error: --voxel-size expects 1 value (isotropic) or 3 values (DZ DY DX), got {len(args.voxel_size)}"
             )
 
+    ds_factor: Union[int, tuple[int, int, int], None] = None
+    if getattr(args, "downsample", None) is not None:
+        if len(args.downsample) == 1:
+            ds_factor = int(args.downsample[0])
+        elif len(args.downsample) == 3:
+            ds_factor = (int(args.downsample[0]), int(args.downsample[1]), int(args.downsample[2]))
+        else:
+            raise SystemExit(
+                f"Error: --downsample expects 1 value (isotropic) or 3 values (FZ FY FX), got {len(args.downsample)}"
+            )
+        if (isinstance(ds_factor, int) and ds_factor < 1) or (
+            isinstance(ds_factor, tuple) and any(f < 1 for f in ds_factor)
+        ):
+            raise SystemExit(f"Error: --downsample factors must be >= 1, got {args.downsample}")
+
     _, img = oi.read_image(
         args.image,
         threshold=args.threshold,
@@ -265,6 +308,9 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         max_grid_size=args.max_grid_size,
     )
 
+    if ds_factor is not None:
+        img = img.downsample(factor=ds_factor, mode="majority")
+
     vf_res = oi.volume_fraction(img, phase=args.phase)
 
     result: dict = {
@@ -273,9 +319,13 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         "direction": args.direction.upper(),
         "volume_fraction": vf_res.fraction,
     }
-    if vz is not None:
-        result["voxel_size"] = list(img.voxel_size)
+    if vz is not None or ds_factor is not None:
+        if hasattr(img, "voxel_size"):
+            result["voxel_size"] = list(img.voxel_size)
+    if ds_factor is not None and hasattr(img, "shape"):
+        result["shape"] = list(img.shape)
 
+    tau_res = None
     try:
         tau_res = oi.tortuosity(
             img,
@@ -302,19 +352,56 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         result["active_volume_fraction"] = tau_res.active_volume_fraction
         result["tortuosity"] = tau_res.tortuosity
         result["effective_diffusivity"] = tau_res.effective_diffusivity
+        nm = tau_res.macmullin_number
+        result["macmullin_number"] = nm if math.isfinite(nm) else None
+        result["bruggeman_exponent"] = tau_res.bruggeman_exponent
         result["solver_converged"] = tau_res.solver_converged
         result["iterations"] = tau_res.iterations
         result["residual_norm"] = tau_res.residual_norm
         result["flux_in"] = tau_res.flux_in
         result["flux_out"] = tau_res.flux_out
 
-    output = json.dumps(result, indent=2)
-    if args.output:
-        with open(args.output, "w") as f:
-            f.write(output + "\n")
-        print(f"Results written to {args.output}")
-    else:
-        print(output)
+    if getattr(args, "deff", False):
+        hypre_solver = "flexgmres" if args.solver in ("auto", "mlmg") else args.solver
+        deff_res = oi.effective_diffusivity(
+            img, phase=args.phase, solver=hypre_solver, verbose=args.verbose
+        )
+        result["deff_tensor"] = deff_res.tensor.tolist()
+        result["deff_diagonal"] = list(deff_res.diagonal)
+
+    bpx_elec = getattr(args, "bpx_electrode", None)
+    if bpx_elec is not None:
+        sec = "Separator" if bpx_elec == "separator" else f"{bpx_elec.capitalize()} electrode"
+        te = (
+            float(tau_res.effective_diffusivity)
+            if (tau_res is not None and tau_res.effective_diffusivity is not None)
+            else 0.0
+        )
+        b_val = (
+            float(math.log(te) / math.log(vf_res.fraction))
+            if (0.0 < vf_res.fraction < 1.0 and te > 0.0)
+            else 0.0
+        )
+        result["bpx"] = {
+            "_comment": "BPX-compatible fragment. Merge into a full BPX file for PyBaMM import.",
+            "electrode": bpx_elec,
+            "Parameterisation": {
+                sec: {
+                    "Porosity": vf_res.fraction,
+                    "Transport efficiency": te,
+                    "Bruggeman coefficient (electrolyte)": b_val,
+                }
+            },
+        }
+
+    if _is_cli_io_rank(oi):
+        output = json.dumps(result, indent=2)
+        if args.output:
+            with open(args.output, "w") as f:
+                f.write(output + "\n")
+            print(f"Results written to {args.output}")
+        else:
+            print(output)
 
     return 0
 
@@ -355,7 +442,8 @@ def _cmd_generate_dataset(args: argparse.Namespace) -> int:
         summary["mean_deff_iso"] = float(
             np.mean(np.trace(ds["deff_tensor"], axis1=1, axis2=2) / 3.0)
         )
-    print(json.dumps(summary, indent=2))
+    if _is_cli_io_rank(oi):
+        print(json.dumps(summary, indent=2))
     return 0
 
 

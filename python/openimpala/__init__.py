@@ -89,11 +89,93 @@ def _preload_cuda_libs():
                 pass
 
 
+def _preload_mpi_libs() -> None:
+    """Pre-load OpenMPI shared libraries installed via pip/uv/Conda when not on LD_LIBRARY_PATH.
+
+    Checks system / ``LD_LIBRARY_PATH`` / ``DT_RUNPATH`` resolution first so HPC
+    ``module load openmpi`` environments always take precedence.  Falls back to
+    ``<sys.prefix>/lib`` and ``importlib.metadata.files('openmpi')`` (which handles
+    ``uv`` symlinked environments where wheel ``lib/`` files live in separate cache dirs).
+    """
+    import ctypes
+    from importlib.metadata import files as dist_files
+    import os
+    import sys
+
+    if sys.platform != "linux":
+        return
+    if os.environ.get("OPENIMPALA_BACKEND", "auto").strip().lower() in (
+        "pure",
+        "pure-python",
+        "pure_python",
+        "scipy",
+    ):
+        return
+
+    pkg_dir = Path(__file__).resolve().parent
+    if not any(pkg_dir.glob("_core*.so")):
+        return
+
+    # 1. System / LD_LIBRARY_PATH / ELF DT_RUNPATH already resolves libmpi -> nothing to do.
+    for soname in ("libmpi.so.40", "libmpi.so.12"):
+        try:
+            ctypes.CDLL(soname, mode=ctypes.RTLD_GLOBAL)
+            return
+        except OSError:
+            pass
+
+    # 2. Check <sys.prefix>/lib and PyPI `openmpi` package metadata (`pip install openmpi`).
+    candidate_files: list[Path] = []
+    prefix_lib = Path(sys.prefix) / "lib"
+    if prefix_lib.is_dir():
+        for pattern in ("libopen-pal.so.*", "libopen-rte.so.*", "libmpi.so.*"):
+            candidate_files.extend(sorted(prefix_lib.glob(pattern)))
+
+    try:
+        ompi_entries = dist_files("openmpi") or []
+    except PackageNotFoundError:
+        ompi_entries = []
+
+    pal_paths: list[Path] = []
+    rte_paths: list[Path] = []
+    mpi_paths: list[Path] = []
+    for entry in ompi_entries:
+        fname = entry.name
+        if (
+            fname.startswith("libopen-pal.so.")
+            or fname.startswith("libopen-rte.so.")
+            or fname.startswith("libmpi.so.")
+        ):
+            located = Path(entry.locate())
+            if fname.startswith("libopen-pal.so."):
+                pal_paths.append(located)
+            elif fname.startswith("libopen-rte.so."):
+                rte_paths.append(located)
+            else:
+                mpi_paths.append(located)
+
+    ordered = [*candidate_files, *pal_paths, *rte_paths, *mpi_paths]
+    seen: set[str] = set()
+    for path in ordered:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            # Skip tiny GNU ld text stubs (e.g. unversioned linker scripts)
+            if not path.is_file() or path.stat().st_size < 4096:
+                continue
+            ctypes.CDLL(key, mode=ctypes.RTLD_GLOBAL)
+        except OSError:
+            continue
+
+
 _preload_cuda_libs()
+_preload_mpi_libs()
 
 # Session context manager and datasets (pure Python — always available)
 from . import datasets
-from .session import Session
+from .session import Session, _core_binary_exists, _probe_core, _requested_backend
 
 # Custom exceptions (pure Python — always available)
 from .exceptions import (
@@ -101,6 +183,35 @@ from .exceptions import (
     OpenImpalaError,
     PercolationError,
 )
+
+
+def _warn_if_compiled_core_broken() -> None:
+    """Warn once on import when a compiled ``_core`` binary is installed yet fails to load."""
+    import warnings
+
+    try:
+        if _requested_backend() == "pure":
+            return
+    except ValueError:
+        return
+
+    if not _core_binary_exists():
+        return
+
+    ok, err = _probe_core()
+    if not ok:
+        warnings.warn(
+            f"OpenImpala compiled C++ backend (_core) is installed but failed to load "
+            f"({err}); falling back to the slower pure-Python SciPy solver. "
+            f"To enable the C++/MPI engine, load or install OpenMPI (`module load openmpi`, "
+            f"`apt install libopenmpi-dev`, or `pip install openmpi`), or set "
+            f"OPENIMPALA_BACKEND=pure to silence this warning.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+
+_warn_if_compiled_core_broken()
 
 
 def _augment_core_voxelimage(_core) -> None:
@@ -214,6 +325,7 @@ def _augment_core_voxelimage(_core) -> None:
         factor=2,
         *,
         mode: str = "majority",
+        tie_break: str = "lowest",
         max_grid_size: int = 32,
     ):
         import numpy as np
@@ -222,6 +334,7 @@ def _augment_core_voxelimage(_core) -> None:
             self.to_numpy(),
             factor=factor,
             mode=mode,
+            tie_break=tie_break,
             voxel_size=self.voxel_size,
         )
         return type(self).from_numpy(
@@ -270,6 +383,8 @@ def __getattr__(name):
         "particle_size_distribution",
         "through_thickness_profile",
         "rev_study",
+        "to_pybamm_parameters",
+        "export_bpx_json",
         "estimate_memory",
         "read_image",
         "build_info",
@@ -357,6 +472,8 @@ __all__ = [
     "particle_size_distribution",
     "through_thickness_profile",
     "rev_study",
+    "to_pybamm_parameters",
+    "export_bpx_json",
     "estimate_memory",
     "read_image",
     "build_info",

@@ -1,5 +1,18 @@
 # Changelog
 
+## v5.0.0 (2026-11-20)
+
+Major API consistency, runtime diagnostics, and JOSS 2026 release.
+
+- **Breaking API clean-up — explicit `phase` parameter** — `volume_fraction()`, `percolation_check()`, `tortuosity()`, `tortuosity_all()`, `effective_diffusivity()`, `connected_components()`, `particle_size_distribution()`, `through_thickness_profile()`, and `rev_study()` now require `phase` explicitly on single-phase calls (eliminating the `phase=0` vs `phase=1` default split across functions; multi-phase `phase_diffusivities={...}` calls continue to require no `phase`)
+- **Automatic OpenMPI discovery & loud fallback diagnostics** — compiled Linux wheels embed `$ORIGIN/../../..` ELF `DT_RUNPATH` and preload `pip`/`uv`/Conda `openmpi` libraries automatically (`pip install "openimpala[openmpi]"`), while HPC `module load openmpi` (`LD_LIBRARY_PATH`) retains precedence; if `_core` exists on disk yet fails to load, `import openimpala` now emits a one-time `RuntimeWarning` with exact `dlopen` diagnostics and remediation commands
+- **Quiet default AMReX lifecycle** — `AMReX` startup banners, `TinyProfiler` timing tables, and Arena memory summaries are now silenced by default so scripts and notebooks remain clutter-free; pass `oi.Session(verbose=True)` or set `OPENIMPALA_PROFILE=1` to enable profiling output
+- **Explicit `downsample_volume()` warnings & tie-breaking** — `downsample_volume()` emits a `UserWarning` when truncating non-divisible trailing slices and adds `tie_break="lowest" | "highest"` for deterministic modal tie resolution
+- **Empirically calibrated `estimate_memory()` & wheel analytical V&V** — calibrated `estimate_memory()` against measured `MLMG` vs `HYPRE` peak RAM (`~310` vs `~1,030`–`1,400` B/voxel) and added automated 8-case analytical & cross-backend parity verification on every CI and PyPI wheel build
+- **PyBaMM & Faraday BPX parameterisation helpers** — added `.macmullin_number` and `.bruggeman_exponent` properties on `TortuosityResult`, in-memory `to_pybamm_parameters()`, BattINFO-aligned `export_bpx_json()`, and CLI parity flags (`openimpala analyze --downsample --deff --bpx-electrode`), plus root `.zenodo.json` archive metadata
+
+See the [v5.0.0 release notes](https://github.com/BASE-Laboratory/OpenImpala/releases/tag/v5.0.0).
+
 ## v4.7.0 (2026-11-19)
 
 Cloud-native OME-Zarr I/O, zero-dependency Otsu segmentation, out-of-core `yt`

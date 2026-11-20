@@ -253,7 +253,10 @@ public:
     }
 
 private:
-    static constexpr const char* OPENIMPALA_VERSION = "0.1.0";
+#ifndef OPENIMPALA_VERSION_STRING
+#define OPENIMPALA_VERSION_STRING "5.0.0"
+#endif
+    static constexpr const char* OPENIMPALA_VERSION = OPENIMPALA_VERSION_STRING;
 
     // Physics configuration
     PhysicsConfig m_physics;
@@ -433,7 +436,9 @@ private:
     // directions, since BPX is inherently isotropic. Per-direction values
     // are available in the openimpala block for anisotropic workflows.
     void buildBPXBlock(nlohmann::ordered_json& j) const {
-        std::string prefix = capitalise(m_bpx_electrode) + " electrode";
+        std::string prefix = (m_bpx_electrode == "separator")
+                                 ? "Separator"
+                                 : (capitalise(m_bpx_electrode) + " electrode");
 
         Real mean_te = meanDeffRatio();
         Real mean_tau = m_physics.tortuosityFactor(mean_te, m_volume_fraction);
@@ -456,7 +461,9 @@ private:
             params["Particle radius [m]"] = m_psd_mean_radius * m_voxel_size_m;
         }
         if (m_has_macro && m_voxel_size_m > 0.0) {
-            params["Electrode thickness [m]"] = m_macro_thickness * m_voxel_size_m;
+            const char* thick_key =
+                (m_bpx_electrode == "separator") ? "Thickness [m]" : "Electrode thickness [m]";
+            params[thick_key] = m_macro_thickness * m_voxel_size_m;
         }
 
         // Per-direction transport efficiencies (BPX extension — not in base spec)

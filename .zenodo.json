@@ -1,0 +1,42 @@
+{
+  "title": "OpenImpala: Scalable Transport Property Computation on 3D Voxel Images of Porous Media",
+  "description": "Open-source C++17 (AMReX + HYPRE, MPI/OpenMP/CUDA) and Python framework for computing steady-state tortuosity, symmetric 3x3 effective diffusivity tensors, multi-phase composite transport, and stereological microstructure metrics directly on 3D voxel images of porous media.",
+  "upload_type": "software",
+  "license": "BSD-3-Clause",
+  "creators": [
+    {
+      "name": "Le Houx, James",
+      "affiliation": "University of Greenwich; ISIS Neutron and Muon Source, Rutherford Appleton Laboratory; The Faraday Institution",
+      "orcid": "0000-0002-1576-0673"
+    }
+  ],
+  "keywords": [
+    "porous media",
+    "tortuosity",
+    "effective diffusivity",
+    "homogenisation",
+    "X-ray computed tomography",
+    "battery modelling",
+    "AMReX",
+    "HYPRE",
+    "high-performance computing",
+    "PyBaMM"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/BASE-Laboratory/OpenImpala",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    },
+    {
+      "identifier": "10.1016/j.softx.2021.100729",
+      "relation": "isNewVersionOf",
+      "scheme": "doi"
+    },
+    {
+      "identifier": "10.1007/s11242-023-01993-7",
+      "relation": "isCitedBy",
+      "scheme": "doi"
+    }
+  ]
+}

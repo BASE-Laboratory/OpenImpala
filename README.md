@@ -16,7 +16,7 @@
 transport properties — tortuosity, effective diffusivity tensors, and
 effective conductivity — directly from 3D voxel images of porous media (X-ray
 CT, FIB-SEM, synthetic microstructures). It solves the governing PDEs on the
-Cartesian voxel grid using finite differences, bypassing mesh generation, and
+Cartesian voxel grid using finite-volume discretisation, bypassing mesh generation, and
 scales across MPI ranks and CUDA GPUs via [AMReX](https://github.com/AMReX-Codes/amrex)
 and [HYPRE](https://github.com/hypre-space/hypre).
 
@@ -60,16 +60,14 @@ All tutorials are pre-rendered in the [online documentation](https://base-labora
 ### Python (recommended)
 
 ```bash
-pip install openimpala            # Linux x86_64 AMReX/HYPRE wheel + universal pure-Python fallback
-pip install openimpala-cuda       # compiled HYPRE/AMReX CUDA wheel (Linux x86_64)
+pip install "openimpala[openmpi]"   # Linux x86_64 C++/MPI wheel + OpenMPI runtime
+pip install openimpala-cuda openmpi # compiled CUDA 12 GPU wheel + OpenMPI runtime (Linux x86_64)
 ```
 
-On Linux `x86_64`, `openimpala` installs pre-built AMReX/HYPRE C++ bindings —
-install an MPI runtime (`libopenmpi-dev`, `openmpi`, or
-`conda install -c conda-forge openmpi`) to enable multi-rank C++ execution. On
-macOS, Windows, and ARM64 (or when MPI is absent), `openimpala` automatically
-uses its pure-Python SciPy solver (with optional CuPy acceleration) under the
-same API. See
+On HPC clusters, load your system MPI module (`module load openmpi`) and run
+`pip install openimpala` so cluster InfiniBand MPI takes precedence automatically.
+On macOS, Windows, and ARM64, `pip install openimpala` installs a universal
+pure-Python SciPy solver (with optional CuPy acceleration) under the identical API. See
 [Getting Started](https://base-laboratory.github.io/OpenImpala/getting-started.html)
 for full details.
 

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -28,6 +29,9 @@
 #include <AMReX_RealBox.H>
 #include <AMReX_iMultiFab.H>
 
+#ifdef AMREX_USE_MPI
+#include <mpi.h>
+#endif
 #ifdef AMREX_USE_GPU
 #include <AMReX_Gpu.H>
 #endif
@@ -51,28 +55,94 @@ void init_props(py::module_& m);
 void init_solvers(py::module_& m);
 void init_config(py::module_& m);
 
+static bool g_tiny_profile_active = false;
+
+#ifdef AMREX_USE_MPI
+static bool g_we_initialized_mpi = false;
+static bool g_mpi_atexit_registered = false;
+
+static void cleanup_amrex_and_mpi_at_exit() {
+    if (amrex::Initialized()) {
+        amrex::Finalize();
+        g_tiny_profile_active = false;
+    }
+    if (g_we_initialized_mpi) {
+        int mpi_fin = 0;
+        MPI_Finalized(&mpi_fin);
+        if (mpi_fin == 0) {
+            MPI_Finalize();
+        }
+        g_we_initialized_mpi = false;
+    }
+}
+#endif
+
+static bool env_profile_requested() {
+    const char* raw = std::getenv("OPENIMPALA_PROFILE");
+    if (raw == nullptr) {
+        return false;
+    }
+    std::string val(raw);
+    return val == "1" || val == "true" || val == "TRUE" || val == "on" || val == "ON";
+}
+
 // =========================================================================
 // AMReX lifecycle — replaces amrex.initialize() / amrex.finalize()
 // =========================================================================
-static void init_amrex() {
+static void init_amrex(bool verbose = false) {
     if (!amrex::Initialized()) {
 #ifdef AMREX_USE_CUDA
         int dev_count = 0;
         cudaError_t cerr = cudaGetDeviceCount(&dev_count);
         if (cerr != cudaSuccess || dev_count <= 0) {
+            (void)cudaGetLastError();
             throw std::runtime_error(
                 std::string("OpenImpala CUDA backend found no active NVIDIA GPU (") +
                 cudaGetErrorString(cerr) +
                 "). Switch to a GPU runtime/compute node or set OPENIMPALA_BACKEND=pure.");
         }
 #endif
+#ifdef AMREX_USE_MPI
+        int mpi_fin = 0;
+        MPI_Finalized(&mpi_fin);
+        if (mpi_fin != 0) {
+            throw std::runtime_error(
+                "OpenImpala cannot initialise AMReX because MPI_Finalize() has already been "
+                "called in this process.");
+        }
+        int mpi_init = 0;
+        MPI_Initialized(&mpi_init);
+        if (mpi_init == 0) {
+            // Initialise MPI once at process scope so exiting `with oi.Session():`
+            // calls `amrex::Finalize()` without calling `MPI_Finalize()`, allowing
+            // multiple sequential `Session()` blocks in scripts and Jupyter notebooks.
+            int mpi_argc = 1;
+            char prog_name[] = "openimpala";
+            char* mpi_argv_arr[] = {prog_name, nullptr};
+            char** mpi_argv = mpi_argv_arr;
+            int provided = 0;
+            MPI_Init_thread(&mpi_argc, &mpi_argv, MPI_THREAD_FUNNELED, &provided);
+            g_we_initialized_mpi = true;
+        }
+        if (!g_mpi_atexit_registered) {
+            Py_AtExit(&cleanup_amrex_and_mpi_at_exit);
+            g_mpi_atexit_registered = true;
+        }
+#endif
+        const bool enable_profile = verbose || env_profile_requested();
         // Initialise with ParmParse defaults that play nicely with smaller GPUs
         // (T4 on Colab has ~15 GB and AMReX's default arena tries to grab most
-        // of it upfront). Use lazy allocation instead.
+        // of it upfront) and stay quiet in scripts/notebooks unless verbose/profiling
+        // output is explicitly requested.
         std::vector<std::string> argv_storage = {
             "openimpala",
             "amrex.the_arena_init_size=0",
         };
+        if (!enable_profile) {
+            argv_storage.emplace_back("amrex.v=0");
+            argv_storage.emplace_back("tiny_profiler.enabled=0");
+            argv_storage.emplace_back("tiny_profiler.memprof_enabled=0");
+        }
         std::vector<char*> argv_ptrs;
         argv_ptrs.reserve(argv_storage.size() + 1);
         for (auto& s : argv_storage) {
@@ -85,12 +155,18 @@ static void init_amrex() {
         int argc = static_cast<int>(argv_storage.size());
         char** argv = argv_ptrs.data();
         amrex::Initialize(argc, argv);
+#ifdef AMREX_TINY_PROFILING
+        g_tiny_profile_active = enable_profile;
+#else
+        g_tiny_profile_active = false;
+#endif
     }
 }
 
 static void finalize_amrex() {
     if (amrex::Initialized()) {
         amrex::Finalize();
+        g_tiny_profile_active = false;
     }
 }
 
@@ -99,15 +175,43 @@ static bool amrex_initialized() {
 }
 
 static int mpi_ranks() {
-    return amrex::Initialized() ? amrex::ParallelDescriptor::NProcs() : 1;
+    if (amrex::Initialized()) {
+        return amrex::ParallelDescriptor::NProcs();
+    }
+#ifdef AMREX_USE_MPI
+    int mpi_init = 0;
+    int mpi_fin = 0;
+    MPI_Initialized(&mpi_init);
+    MPI_Finalized(&mpi_fin);
+    if (mpi_init != 0 && mpi_fin == 0) {
+        int sz = 1;
+        MPI_Comm_size(MPI_COMM_WORLD, &sz);
+        return sz;
+    }
+#endif
+    return 1;
 }
 
 static int mpi_rank() {
-    return amrex::Initialized() ? amrex::ParallelDescriptor::MyProc() : 0;
+    if (amrex::Initialized()) {
+        return amrex::ParallelDescriptor::MyProc();
+    }
+#ifdef AMREX_USE_MPI
+    int mpi_init = 0;
+    int mpi_fin = 0;
+    MPI_Initialized(&mpi_init);
+    MPI_Finalized(&mpi_fin);
+    if (mpi_init != 0 && mpi_fin == 0) {
+        int rk = 0;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rk);
+        return rk;
+    }
+#endif
+    return 0;
 }
 
 static bool is_io_rank() {
-    return amrex::Initialized() ? amrex::ParallelDescriptor::IOProcessor() : true;
+    return amrex::Initialized() ? amrex::ParallelDescriptor::IOProcessor() : (mpi_rank() == 0);
 }
 
 static double mpi_bcast_double(double val) {
@@ -160,9 +264,11 @@ static py::dict build_info() {
     info["mpi_rank"] = mpi_rank();
 
 #ifdef AMREX_TINY_PROFILING
-    info["tiny_profile"] = true;
+    info["tiny_profile"] = g_tiny_profile_active;
+    info["tiny_profile_compiled"] = true;
 #else
     info["tiny_profile"] = false;
+    info["tiny_profile_compiled"] = false;
 #endif
 
 #ifdef HYPRE_USING_CUDA
@@ -177,13 +283,24 @@ static py::dict build_info() {
     info["hypre_hip"] = false;
 #endif
 
-    // Runtime GPU device count — only meaningful when the wheel has GPU support
-    // AND AMReX has been initialised (otherwise the query can segfault).
+    // Runtime GPU device count — query CUDA device count safely before AMReX
+    // initialization so login-node calls to build_info() match Session() fallback.
 #ifdef AMREX_USE_GPU
     if (amrex::Initialized()) {
         info["gpu_device_count"] = amrex::Gpu::Device::numDevicesUsed();
     } else {
-        info["gpu_device_count"] = -1; // unknown until init_amrex() called
+#ifdef AMREX_USE_CUDA
+        int dev_count = 0;
+        cudaError_t cerr = cudaGetDeviceCount(&dev_count);
+        if (cerr != cudaSuccess) {
+            (void)cudaGetLastError();
+            info["gpu_device_count"] = 0;
+        } else {
+            info["gpu_device_count"] = (dev_count > 0) ? dev_count : 0;
+        }
+#else
+        info["gpu_device_count"] = -1;
+#endif
     }
 #else
     info["gpu_device_count"] = 0;
@@ -317,8 +434,9 @@ PYBIND11_MODULE(_core, m) {
               "computation on 3-D voxel images of porous microstructures.";
 
     // --- AMReX lifecycle ---
-    m.def("init_amrex", &init_amrex,
-          "Initialise the AMReX runtime (no-op if already initialised).");
+    m.def("init_amrex", &init_amrex, py::arg("verbose") = false,
+          "Initialise the AMReX runtime (no-op if already initialised). "
+          "Pass verbose=True or set OPENIMPALA_PROFILE=1 to enable AMReX/TinyProfiler output.");
     m.def("finalize_amrex", &finalize_amrex,
           "Shut down the AMReX runtime (no-op if not initialised).");
     m.def("amrex_initialized", &amrex_initialized,

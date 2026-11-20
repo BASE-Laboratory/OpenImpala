@@ -221,7 +221,8 @@ jobs:
             --exclude libcurand.so
             --exclude libcurand.so.10
             --exclude libnvJitLink.so
-            --exclude libnvJitLink.so.12
+            --exclude libnvJitLink.so.12 &&
+            /opt/python/cp39-cp39/bin/python /project/scripts/patch_wheel_rpath.py {dest_dir}
 
       - name: Check GPU dependencies tarball
         id: check-deps
@@ -385,7 +386,8 @@ jobs:
             --exclude libcurand.so
             --exclude libcurand.so.10
             --exclude libnvJitLink.so
-            --exclude libnvJitLink.so.12
+            --exclude libnvJitLink.so.12 &&
+            /opt/python/${{ matrix.py }}-${{ matrix.py }}/bin/python /project/scripts/patch_wheel_rpath.py {dest_dir}
 
       - name: Upload ${{ matrix.py }} GPU wheel
         uses: actions/upload-artifact@v4
@@ -400,6 +402,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all GPU wheel parts
         uses: actions/download-artifact@v4
         with:
@@ -425,11 +430,12 @@ jobs:
             fi
           done
 
-      - name: Smoke-test CUDA wheel on GPU-less host (no-SIGABRT login-node safety)
+      - name: Smoke-test & analytical V&V on CUDA wheel (pip-openmpi auto-RPATH + GPU-less login-node safety)
         run: |
           set -euo pipefail
           GPU_WHL="$(ls "$PWD"/wheelhouse/openimpala_cuda-*-cp312-cp312-*.whl)"
           EXPECTED_VER="$(basename "$GPU_WHL" | sed -E 's/^openimpala_cuda-([^-]+)-.*/\1/')"
+          VV_SCRIPT="$PWD/tests/validation/wheel_analytical_vv.py"
           cat > /tmp/gpu_wheel_smoke.py << 'PYEOF'
           import pathlib
           import sys
@@ -456,16 +462,15 @@ jobs:
           docker run --rm \
             -v "$PWD/wheelhouse:/wheels:ro" \
             -v /tmp/gpu_wheel_smoke.py:/tmp/gpu_wheel_smoke.py:ro \
+            -v "$VV_SCRIPT:/tmp/wheel_analytical_vv.py:ro" \
             sameli/manylinux_2_34_x86_64_cuda_12.6 \
             bash -c "
               set -euo pipefail
-              dnf install -y -q epel-release
-              dnf --enablerepo=crb install -y -q openmpi-devel
-              export PATH=/usr/lib64/openmpi/bin:\$PATH
-              export LD_LIBRARY_PATH=/usr/lib64/openmpi/lib:\${LD_LIBRARY_PATH:-}
-              /opt/python/cp312-cp312/bin/pip install --quiet /wheels/$(basename "$GPU_WHL")
+              /opt/python/cp312-cp312/bin/pip install --quiet openmpi /wheels/$(basename "$GPU_WHL")
+              unset LD_LIBRARY_PATH
               cd /tmp
               /opt/python/cp312-cp312/bin/python /tmp/gpu_wheel_smoke.py '$EXPECTED_VER'
+              /opt/python/cp312-cp312/bin/python /tmp/wheel_analytical_vv.py --expected-backend pure-python --expected-version '$EXPECTED_VER'
             "
 
       - name: Upload unified GPU wheelhouse artifact

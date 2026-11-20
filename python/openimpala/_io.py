@@ -186,6 +186,7 @@ class PureVoxelImage:
         factor: Union[int, Sequence[int]] = 2,
         *,
         mode: str = "majority",
+        tie_break: str = "lowest",
         max_grid_size: int = 32,
     ) -> "PureVoxelImage":
         """Return a coarsened ``VoxelImage`` with physical ``voxel_size`` scaled by *factor*."""
@@ -194,6 +195,7 @@ class PureVoxelImage:
             self._arr,
             factor=factor,
             mode=mode,
+            tie_break=tie_break,
             voxel_size=self.voxel_size,
         )
         return PureVoxelImage(
@@ -1140,6 +1142,7 @@ def downsample_volume(
     factor: Union[int, Sequence[int]] = 2,
     *,
     mode: str = "majority",
+    tie_break: str = "lowest",
     voxel_size: Optional[Union[float, Sequence[float]]] = None,
 ) -> Union[np.ndarray, tuple[np.ndarray, tuple[float, float, float]]]:
     """Coarsen a 3-D ``(Nz, Ny, Nx)`` volume by integer block factors.
@@ -1150,18 +1153,28 @@ def downsample_volume(
         3-D segmented phase array or grayscale tomogram with shape ``(Nz, Ny, Nx)``.
     factor : int or (int, int, int), default 2
         Isotropic coarsening factor or per-axis ``(fz, fy, fx)`` integer factors.
-        Trailing slices that do not fill a complete ``(fz, fy, fx)`` block are trimmed.
+        If any axis length is not an exact multiple of its factor, trailing slices
+        are truncated and a :class:`UserWarning` is emitted.
     mode : {"majority", "mean", "nearest"}, default "majority"
-        * ``"majority"`` (or ``"mode"``): exact per-block modal phase ID (ties broken
-          deterministically toward the smallest phase label), preserving discrete
-          segmented labels without creating phantom intermediate values.
+        * ``"majority"`` (or ``"mode"``): exact per-block modal phase ID, preserving
+          discrete segmented labels without creating phantom intermediate values.
+          Exact ties between two or more phase IDs in an even-sized block (e.g.
+          4v4 in a ``2x2x2`` block) are broken deterministically according to
+          *tie_break* (default ``"lowest"``, which slightly biases volume fraction
+          upward for phase ``0``).
         * ``"mean"`` (or ``"average"``): block arithmetic mean for grayscale volumes
           prior to thresholding.
         * ``"nearest"`` (or ``"stride"``): strided subsampling ``array[::fz, ::fy, ::fx]``.
+    tie_break : {"lowest", "highest"}, default "lowest"
+        Deterministic tie-breaking rule for ``mode="majority"`` when two or more
+        labels share the maximum voxel count inside a block: ``"lowest"`` selects
+        the smallest phase ID; ``"highest"`` selects the largest phase ID.
     voxel_size : float or (float, float, float), optional
         If supplied, returns ``(coarsened_array, (dz * fz, dy * fy, dx * fx))``.
         If omitted, returns ``coarsened_array`` directly.
     """
+    import warnings
+
     arr = np.asarray(array)
     if arr.ndim != 3:
         raise ValueError(f"Expected a 3-D volume (Nz, Ny, Nx), got shape {arr.shape}")
@@ -1177,6 +1190,12 @@ def downsample_volume(
     if mode_norm not in ("majority", "mode", "mean", "average", "nearest", "stride"):
         raise ValueError(
             f"Unsupported downsample mode {mode!r}. Expected 'majority', 'mean', or 'nearest'."
+        )
+
+    tie_norm = tie_break.strip().lower()
+    if tie_norm not in ("lowest", "highest"):
+        raise ValueError(
+            f"Unsupported tie_break={tie_break!r}. Expected 'lowest' or 'highest'."
         )
 
     if mode_norm in ("majority", "mode") and np.issubdtype(arr.dtype, np.floating):
@@ -1206,6 +1225,15 @@ def downsample_volume(
     nz_t = (nz // fz) * fz
     ny_t = (ny // fy) * fy
     nx_t = (nx // fx) * fx
+    oz, oy, ox = nz_t // fz, ny_t // fy, nx_t // fx
+    if (nz_t, ny_t, nx_t) != (nz, ny, nx):
+        warnings.warn(
+            f"downsample_volume: input shape {(nz, ny, nx)} is not an exact multiple of "
+            f"factor {(fz, fy, fx)}; truncating trailing slices to {(nz_t, ny_t, nx_t)} "
+            f"(output shape {(oz, oy, ox)}).",
+            UserWarning,
+            stacklevel=2,
+        )
     trimmed = arr[:nz_t, :ny_t, :nx_t]
 
     if (fz, fy, fx) == (1, 1, 1):
@@ -1218,7 +1246,6 @@ def downsample_volume(
             out = np.ascontiguousarray(trimmed.copy())
         return (out, vz_scaled) if vz_scaled is not None else out
 
-    oz, oy, ox = nz_t // fz, ny_t // fy, nx_t // fx
     if mode_norm in ("nearest", "stride"):
         out = np.ascontiguousarray(trimmed[::fz, ::fy, ::fx])
         return (out, vz_scaled) if vz_scaled is not None else out
@@ -1238,7 +1265,8 @@ def downsample_volume(
     elif uniq.size <= 32:
         out = np.empty((oz, oy, ox), dtype=np.int32)
         best_count = np.full((oz, oy, ox), -1, dtype=np.int32)
-        for lbl in uniq:
+        ordered_labels = uniq if tie_norm == "lowest" else uniq[::-1]
+        for lbl in ordered_labels:
             cnt = np.sum(int_blocks == lbl, axis=-1, dtype=np.int32)
             win = cnt > best_count
             out[win] = int(lbl)
@@ -1246,9 +1274,15 @@ def downsample_volume(
     else:
         from scipy import stats
 
-        mode_res = stats.mode(int_blocks, axis=-1, keepdims=False)
-        out = np.ascontiguousarray(mode_res.mode, dtype=np.int32)
+        if tie_norm == "lowest":
+            mode_res = stats.mode(int_blocks, axis=-1, keepdims=False)
+            out = np.ascontiguousarray(mode_res.mode, dtype=np.int32)
+        else:
+            neg = -int_blocks.astype(np.int64)
+            mode_res = stats.mode(neg, axis=-1, keepdims=False)
+            out = np.ascontiguousarray(-mode_res.mode, dtype=np.int32)
 
     return (out, vz_scaled) if vz_scaled is not None else out
+
 
 
