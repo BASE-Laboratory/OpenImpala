@@ -138,5 +138,6 @@ HYPRE, libtiff, and HDF5.
 
 ## Contact
 
+Maintainer: James Le Houx (`j.lehoux@greenwich.ac.uk`).
 Issues and feature requests: <https://github.com/BASE-Laboratory/OpenImpala/issues>.
 Questions: [GitHub Discussions](https://github.com/BASE-Laboratory/OpenImpala/discussions).

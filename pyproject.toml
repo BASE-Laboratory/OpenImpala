@@ -98,8 +98,12 @@ layer = 3
 source_dirs = ["python/openimpala"]
 banned_imports = [
     "multimodal_benchmark",
+    "xct_research",
+    "porousdiff_workflows",
     "openlsrx",
     "x_fuse",
     "braggtrack",
+    "porousdiff",
+    "sms",
     "basecoat",
 ]
