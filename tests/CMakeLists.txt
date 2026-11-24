@@ -580,6 +580,11 @@ set_tests_properties(tTortuosityMLMG_channel PROPERTIES
 # which exercises the user-facing facade against a real porespy blob structure.
 
 # ==============================================================================
+# EffectiveDiffusivityMLMG Tests (Matrix-free periodic homogenisation solver)
+# ==============================================================================
+openimpala_add_test(tEffectiveDiffusivityMLMG  "${CMAKE_CURRENT_SOURCE_DIR}/tEffectiveDiffusivityMLMG.cpp")
+
+# ==============================================================================
 # Unit Tests (Catch2 — fast, no MPI/AMReX required)
 # ==============================================================================
 add_subdirectory(unit)

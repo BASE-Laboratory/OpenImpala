@@ -1,5 +1,15 @@
 # Changelog
 
+## v5.1.0 (Unreleased)
+
+Matrix-free 3×3 periodic homogenisation (`EffectiveDiffusivityMLMG`) across CPU, MPI,
+and CUDA GPUs, plus `BASE-Laboratory` Layer 3 `VolumeProtocol` and `.ome.zarr` polish.
+
+- **Matrix-free periodic homogenisation (`EffectiveDiffusivityMLMG`)** — `effective_diffusivity()` and `rev_study()` now default (`solver="auto"` / `"mlmg"`) to a matrix-free AMReX `MLABecLaplacian` + `GMRESMLMG` periodic cell-problem solver across CPU, MPI, and `openimpala-cuda` GPUs (~3.3× lower peak RAM than HYPRE `FlexGMRES` and full $3\times 3$ periodic homogenisation on CUDA GPUs); HYPRE solvers (`"flexgmres"`, `"pcg"`, `"bicgstab"`, `"gmres"`, `"smg"`, `"pfmg"`) remain available via `solver=`
+- **Zero-dependency `VolumeProtocol` & `UnitCalibrationError`** — all high-level solvers accept calibrated `openimpala.VolumeProtocol` and `VolumeSet`-like containers (including `basecoat.Volume` and `basecoat.VolumeSet` with `labels["phase"]`) with zero runtime `basecoat` dependency, converting physical spacing to SI metres (`spacing_in("m")`) and raising `UnitCalibrationError` on uncalibrated volumes unless `voxel_size=` is supplied
+- **Lazy OME-Zarr `labels/<label_key>`, SI `[m]` safety & CLI `--label-key`** — phase solvers and `read_image(..., zarr_label_key=...)` inspect OME-Zarr metadata lazily without reading grayscale root chunks, `openimpala analyze / vf / percolation` gain `--label-key` (e.g. `phase`, `phase_lower`, `phase_upper`), and `to_pybamm_parameters()` / `export_bpx_json()` automatically convert calibrated OME-Zarr spatial units to SI metres
+- **CUDA wheel linker & packaging fixes** — fixed the `openimpala-cuda` host-linker flag under `AMReX_GPU_RDC=OFF` and ensured `openimpala/protocol.py` is installed in compiled wheels
+
 ## v5.0.0 (2026-11-20)
 
 Major API consistency, runtime diagnostics, and JOSS 2026 release.

@@ -5,6 +5,7 @@
 #include "REVStudy.H"
 #include "DeffTensor.H"
 #include "EffectiveDiffusivityHypre.H"
+#include "EffectiveDiffusivityMLMG.H"
 #include "Tortuosity.H"
 
 #include <AMReX_Loop.H>
@@ -123,15 +124,17 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
             mf_temp.ParallelCopy(mf_phase_full, 0, 0, 1, amrex::IntVect::TheZeroVector(),
                                  amrex::IntVect::TheZeroVector(), geom_full.periodicity());
 
-            // Now copy from shifted coords to REV coords (same rank, same FAB order)
+            // Copy from shifted coords to REV coords on CPU or GPU
             mf_phase_rev.setVal(0);
-            for (amrex::MFIter mfi(mf_phase_rev); mfi.isValid(); ++mfi) {
-                amrex::IArrayBox& dest_fab = mf_phase_rev[mfi];
-                const amrex::IArrayBox& src_fab = mf_temp[mfi];
-                const amrex::Box& dest_box = mfi.validbox();
-                amrex::Box src_box = dest_box;
-                src_box.shift(bx_rev.smallEnd());
-                dest_fab.template copy<amrex::RunOn::Host>(src_fab, src_box, 0, dest_box, 0, 1);
+            const amrex::IntVect rev_shift = bx_rev.smallEnd();
+            for (amrex::MFIter mfi(mf_phase_rev, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                const amrex::Box& dest_box = mfi.tilebox();
+                const auto dest_arr = mf_phase_rev.array(mfi);
+                const auto src_arr = mf_temp.const_array(mfi);
+                amrex::ParallelFor(dest_box, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                    dest_arr(i, j, k, 0) =
+                        src_arr(i + rev_shift[0], j + rev_shift[1], k + rev_shift[2], 0);
+                });
             }
             mf_phase_rev.FillBoundary(geom_rev.periodicity());
 
@@ -149,6 +152,9 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
                 solve_dirs.push_back(Direction::Z);
             }
 
+            amrex::iMultiFab shared_cell_type;
+            bool has_shared_cell_type = false;
+
             for (const auto& dir : solve_dirs) {
                 std::string subdir = "REV_Sample" + std::to_string(s_idx + 1) + "_Size" +
                                      std::to_string(bx_rev.length(0)) + "_Dir" +
@@ -160,26 +166,56 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
                 }
                 amrex::ParallelDescriptor::Barrier();
 
-                std::unique_ptr<EffectiveDiffusivityHypre> solver;
                 try {
-                    solver = std::make_unique<EffectiveDiffusivityHypre>(
-                        geom_rev, ba_rev, dm_rev, mf_phase_rev, config.phase_id, dir,
-                        config.solver_type, plot_path.string(), config.verbose,
-                        config.write_plotfiles);
-                    if (!solver->solve()) {
-                        all_converged = false;
-                        if (config.verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
-                            amrex::Print() << "    REV Chi solve FAILED for dir "
-                                           << static_cast<int>(dir) << std::endl;
+                    if (config.use_mlmg) {
+                        const amrex::iMultiFab* cell_type_ptr =
+                            has_shared_cell_type ? &shared_cell_type : nullptr;
+                        EffectiveDiffusivityMLMG mlmg_solver(
+                            geom_rev, ba_rev, dm_rev, mf_phase_rev, config.phase_id, dir,
+                            plot_path.string(), config.verbose, config.write_plotfiles,
+                            config.mlmg_eps, config.mlmg_maxiter, config.mlmg_max_coarsening_level,
+                            {}, cell_type_ptr);
+                        if (!has_shared_cell_type) {
+                            shared_cell_type.define(ba_rev, dm_rev, 1, 1);
+                            amrex::Copy(shared_cell_type, mlmg_solver.getCellTypeMask(), 0, 0, 1,
+                                        0);
+                            shared_cell_type.FillBoundary(geom_rev.periodicity());
+                            has_shared_cell_type = true;
                         }
-                        break;
+                        if (!mlmg_solver.solve()) {
+                            all_converged = false;
+                            if (config.verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+                                amrex::Print() << "    REV Chi MLMG solve FAILED for dir "
+                                               << static_cast<int>(dir) << std::endl;
+                            }
+                            break;
+                        }
+                        if (dir == Direction::X)
+                            mlmg_solver.getChiSolution(mf_chi_x);
+                        else if (dir == Direction::Y)
+                            mlmg_solver.getChiSolution(mf_chi_y);
+                        else if (AMREX_SPACEDIM == 3 && dir == Direction::Z)
+                            mlmg_solver.getChiSolution(mf_chi_z);
+                    } else {
+                        auto solver = std::make_unique<EffectiveDiffusivityHypre>(
+                            geom_rev, ba_rev, dm_rev, mf_phase_rev, config.phase_id, dir,
+                            config.solver_type, plot_path.string(), config.verbose,
+                            config.write_plotfiles);
+                        if (!solver->solve()) {
+                            all_converged = false;
+                            if (config.verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+                                amrex::Print() << "    REV Chi solve FAILED for dir "
+                                               << static_cast<int>(dir) << std::endl;
+                            }
+                            break;
+                        }
+                        if (dir == Direction::X)
+                            solver->getChiSolution(mf_chi_x);
+                        else if (dir == Direction::Y)
+                            solver->getChiSolution(mf_chi_y);
+                        else if (AMREX_SPACEDIM == 3 && dir == Direction::Z)
+                            solver->getChiSolution(mf_chi_z);
                     }
-                    if (dir == Direction::X)
-                        solver->getChiSolution(mf_chi_x);
-                    else if (dir == Direction::Y)
-                        solver->getChiSolution(mf_chi_y);
-                    else if (AMREX_SPACEDIM == 3 && dir == Direction::Z)
-                        solver->getChiSolution(mf_chi_z);
                 } catch (const std::exception& e) {
                     if (config.verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
                         amrex::Print() << "    REV Chi solve EXCEPTION for dir "

@@ -25,6 +25,7 @@
 
 #include "DeffTensor.H"
 #include "EffectiveDiffusivityHypre.H"
+#include "EffectiveDiffusivityMLMG.H"
 #include "HypreStructSolver.H"
 #include "TortuosityDirect.H"
 #include "TortuosityHypre.H"
@@ -42,7 +43,8 @@ py::dict compute_effective_diffusivity_tensor(std::shared_ptr<VoxelImage> img, i
                                               const std::string& results_path, int verbose,
                                               bool write_plotfile,
                                               const std::map<int, amrex::Real>& phase_coeffs,
-                                              bool return_chi) {
+                                              bool return_chi, bool use_mlmg, amrex::Real mlmg_eps,
+                                              int mlmg_maxiter, int mlmg_max_coarsening_level) {
     if (!img || !img->mf) {
         throw std::runtime_error("Cannot compute effective diffusivity on an empty VoxelImage.");
     }
@@ -81,38 +83,82 @@ py::dict compute_effective_diffusivity_tensor(std::shared_ptr<VoxelImage> img, i
     bool empty_active_phase = false;
     bool all_converged = true;
 
-    for (int d = 0; d < 3; ++d) {
-        EffectiveDiffusivityHypre solver(geom_per, img->ba, img->dm, mf_phase_per, phase_id,
-                                         dirs[d], solver_type, results_path, verbose,
-                                         write_plotfile, phase_coeffs);
+    amrex::iMultiFab shared_cell_type;
+    bool has_shared_cell_type = false;
 
-        if (d == 0) {
-            amrex::Copy(active_mask_0g, solver.getActiveMask(), 0, 0, 1, 0);
-            amrex::Copy(diff_coeff_0g, solver.getDiffCoeff(), 0, 0, 1, 0);
-            VolumeFraction vf_calc(active_mask_0g, 1, 0);
-            long long active_ll = 0;
-            long long total_ll = 0;
-            vf_calc.value(active_ll, total_ll, false);
-            active_cells = static_cast<long>(active_ll);
-            if (active_cells == 0) {
-                empty_active_phase = true;
-                dir_converged = {true, true, true};
+    for (int d = 0; d < 3; ++d) {
+        if (use_mlmg) {
+            const amrex::iMultiFab* cell_type_ptr =
+                has_shared_cell_type ? &shared_cell_type : nullptr;
+            EffectiveDiffusivityMLMG solver(geom_per, img->ba, img->dm, mf_phase_per, phase_id,
+                                            dirs[d], results_path, verbose, write_plotfile,
+                                            mlmg_eps, mlmg_maxiter, mlmg_max_coarsening_level,
+                                            phase_coeffs, cell_type_ptr);
+
+            if (d == 0) {
+                amrex::Copy(active_mask_0g, solver.getActiveMask(), 0, 0, 1, 0);
+                amrex::Copy(diff_coeff_0g, solver.getDiffCoeff(), 0, 0, 1, 0);
+                VolumeFraction vf_calc(active_mask_0g, 1, 0);
+                long long active_ll = 0;
+                long long total_ll = 0;
+                vf_calc.value(active_ll, total_ll, false);
+                active_cells = static_cast<long>(active_ll);
+                if (active_cells == 0) {
+                    empty_active_phase = true;
+                    dir_converged = {true, true, true};
+                    break;
+                }
+                shared_cell_type.define(img->ba, img->dm, 1, 1);
+                amrex::Copy(shared_cell_type, solver.getCellTypeMask(), 0, 0, 1, 0);
+                shared_cell_type.FillBoundary(geom_per.periodicity());
+                has_shared_cell_type = true;
+            }
+
+            const bool ok = solver.solve();
+            dir_converged[d] = ok && solver.getSolverConverged();
+            dir_iterations[d] = solver.getSolverIterations();
+            dir_residuals[d] = static_cast<double>(solver.getFinalRelativeResidualNorm());
+
+            if (!dir_converged[d]) {
+                all_converged = false;
                 break;
             }
+
+            solver.getChiSolution(*chi_ptrs[d]);
+            chi_ptrs[d]->FillBoundary(geom_per.periodicity());
+        } else {
+            EffectiveDiffusivityHypre solver(geom_per, img->ba, img->dm, mf_phase_per, phase_id,
+                                             dirs[d], solver_type, results_path, verbose,
+                                             write_plotfile, phase_coeffs);
+
+            if (d == 0) {
+                amrex::Copy(active_mask_0g, solver.getActiveMask(), 0, 0, 1, 0);
+                amrex::Copy(diff_coeff_0g, solver.getDiffCoeff(), 0, 0, 1, 0);
+                VolumeFraction vf_calc(active_mask_0g, 1, 0);
+                long long active_ll = 0;
+                long long total_ll = 0;
+                vf_calc.value(active_ll, total_ll, false);
+                active_cells = static_cast<long>(active_ll);
+                if (active_cells == 0) {
+                    empty_active_phase = true;
+                    dir_converged = {true, true, true};
+                    break;
+                }
+            }
+
+            const bool ok = solver.solve();
+            dir_converged[d] = ok && solver.getSolverConverged();
+            dir_iterations[d] = solver.getSolverIterations();
+            dir_residuals[d] = static_cast<double>(solver.getFinalRelativeResidualNorm());
+
+            if (!dir_converged[d]) {
+                all_converged = false;
+                break;
+            }
+
+            solver.getChiSolution(*chi_ptrs[d]);
+            chi_ptrs[d]->FillBoundary(geom_per.periodicity());
         }
-
-        const bool ok = solver.solve();
-        dir_converged[d] = ok && solver.getSolverConverged();
-        dir_iterations[d] = solver.getSolverIterations();
-        dir_residuals[d] = static_cast<double>(solver.getFinalRelativeResidualNorm());
-
-        if (!dir_converged[d]) {
-            all_converged = false;
-            break;
-        }
-
-        solver.getChiSolution(*chi_ptrs[d]);
-        chi_ptrs[d]->FillBoundary(geom_per.periodicity());
     }
 
     const long total_cells = geom_per.Domain().numPts();
@@ -382,6 +428,37 @@ void init_solvers(py::module_& m) {
         .def_property_readonly("iterations", &EffectiveDiffusivityHypre::getSolverIterations);
 
     // =========================================================================
+    // EffectiveDiffusivityMLMG
+    // =========================================================================
+    py::class_<EffectiveDiffusivityMLMG>(
+        m, "EffectiveDiffusivityMLMG",
+        "Matrix-free AMReX MLMG solver for 3-D periodic homogenisation cell problems.")
+
+        .def(py::init([](std::shared_ptr<VoxelImage> img, int phase_id, OpenImpala::Direction dir,
+                         const std::string& results_path, int verbose, bool write_plotfile,
+                         amrex::Real eps, int maxiter, int max_coarsening_level,
+                         const std::map<int, amrex::Real>& phase_coeffs) {
+                 return new EffectiveDiffusivityMLMG(
+                     img->geom, img->ba, img->dm, *(img->mf), phase_id, dir, results_path, verbose,
+                     write_plotfile, eps, maxiter, max_coarsening_level, phase_coeffs, nullptr);
+             }),
+             py::arg("img"), py::arg("phase_id"), py::arg("dir"), py::arg("results_path") = ".",
+             py::arg("verbose") = 0, py::arg("write_plotfile") = false, py::arg("eps") = 1.0e-8,
+             py::arg("maxiter") = 200, py::arg("max_coarsening_level") = 30,
+             py::arg("phase_coeffs") = std::map<int, amrex::Real>{}, py::keep_alive<1, 2>())
+
+        .def("solve", &EffectiveDiffusivityMLMG::solve,
+             "Solve the periodic cell problem.  Returns True if the solver converged.")
+
+        .def("get_chi_solution", &EffectiveDiffusivityMLMG::getChiSolution, py::arg("chi_field"),
+             "Copy the solved corrector field into *chi_field*.")
+
+        .def_property_readonly("solver_converged", &EffectiveDiffusivityMLMG::getSolverConverged)
+        .def_property_readonly("residual_norm",
+                               &EffectiveDiffusivityMLMG::getFinalRelativeResidualNorm)
+        .def_property_readonly("iterations", &EffectiveDiffusivityMLMG::getSolverIterations);
+
+    // =========================================================================
     // Full 3x3 D_eff tensor homogenization helper
     // =========================================================================
     m.def("compute_effective_diffusivity_tensor", &compute_effective_diffusivity_tensor,
@@ -389,6 +466,8 @@ void init_solvers(py::module_& m) {
           py::arg("solver_type") = OpenImpala::SolverType::FlexGMRES, py::arg("results_path") = ".",
           py::arg("verbose") = 0, py::arg("write_plotfile") = false,
           py::arg("phase_coeffs") = std::map<int, amrex::Real>{}, py::arg("return_chi") = false,
+          py::arg("use_mlmg") = false, py::arg("mlmg_eps") = 1.0e-8, py::arg("mlmg_maxiter") = 200,
+          py::arg("mlmg_max_coarsening_level") = 30,
           "Solve the 3 periodic homogenization cell problems and assemble the 3x3 effective "
           "diffusivity tensor D_eff (in X=0, Y=1, Z=2 order).");
 }

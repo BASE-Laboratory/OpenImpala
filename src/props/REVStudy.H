@@ -32,15 +32,20 @@ struct REVConfig {
     int verbose = 1;              ///< Verbosity level
     bool write_plotfiles = false; ///< Write plotfiles for each chi_k solve
     SolverType solver_type = SolverType::FlexGMRES;
-    std::filesystem::path results_path;              ///< Directory for output files
+    bool use_mlmg = false;              ///< Use matrix-free EffectiveDiffusivityMLMG when true
+    amrex::Real mlmg_eps = 1.0e-8;      ///< MLMG relative residual tolerance
+    int mlmg_maxiter = 200;             ///< MLMG maximum outer iterations
+    int mlmg_max_coarsening_level = 30; ///< MLMG maximum multigrid coarsening depth
+    std::filesystem::path results_path; ///< Directory for output files
     std::string csv_filename = "rev_study_Deff.csv"; ///< CSV output filename
 };
 
 /** @brief Runs an REV convergence study on the given full-domain phase field.
  *
  *  For each target size and sample, extracts a random sub-volume from the full
- *  domain, solves the cell problem in 3 directions using EffectiveDiffusivityHypre,
- *  assembles the D_eff tensor, and appends the result to a CSV file.
+ *  domain, solves the cell problem in 3 directions using EffectiveDiffusivityMLMG
+ *  or EffectiveDiffusivityHypre, assembles the D_eff tensor, and appends the
+ *  result to a CSV file.
  *
  *  @param geom_full       Geometry of the full domain.
  *  @param ba_full         BoxArray of the full domain.

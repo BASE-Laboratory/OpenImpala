@@ -106,13 +106,21 @@ class TestV500ImportFallbackAndRpath:
                 "openimpala-5.0.0.dist-info/RECORD,,\n",
             )
 
-        state = {"rpath": "$ORIGIN/../openimpala.libs"}
+        state = {
+            "rpath": "$ORIGIN/../openimpala.libs",
+            "needed": ["libmpi.so.40", "libmpi_cxx.so.40", "libc.so.6"],
+        }
 
         def fake_check_output(cmd, text=True):
+            if cmd[:2] == ["patchelf", "--print-needed"]:
+                return "\n".join(state["needed"]) + "\n"
             assert cmd[:2] == ["patchelf", "--print-rpath"]
             return state["rpath"] + "\n"
 
         def fake_check_call(cmd):
+            if cmd[:2] == ["patchelf", "--remove-needed"]:
+                state["needed"].remove(cmd[2])
+                return
             assert cmd[:2] == ["patchelf", "--set-rpath"]
             state["rpath"] = cmd[2]
             Path(cmd[3]).write_bytes(orig_bytes + b"_PATCHED")
@@ -121,6 +129,8 @@ class TestV500ImportFallbackAndRpath:
         monkeypatch.setattr(mod.subprocess, "check_call", fake_check_call)
 
         assert mod.main([str(whl_path)]) == 0
+        assert "libmpi_cxx.so.40" not in state["needed"]
+        assert "libmpi.so.40" in state["needed"]
         assert "$ORIGIN/../../.." in state["rpath"]
         assert "$ORIGIN/../../../openmpi" in state["rpath"]
 
@@ -171,10 +181,9 @@ class TestV500RequiredPhaseAndDownsample:
         assert all_tau["x"].effective_diffusivity == pytest.approx(0.325, abs=1e-5)
         assert all_tau["y"].effective_diffusivity == pytest.approx(1.0 / 7.75, abs=1e-4)
 
-        if oi.build_info()["backend"] != "cpp-cuda":
-            res_deff = oi.effective_diffusivity(lam, phase_diffusivities=pmap)
-            assert res_deff.tensor[0, 0] == pytest.approx(0.325, abs=1e-5)
-            assert res_deff.tensor[1, 1] == pytest.approx(1.0 / 7.75, abs=1e-4)
+        res_deff = oi.effective_diffusivity(lam, phase_diffusivities=pmap)
+        assert res_deff.tensor[0, 0] == pytest.approx(0.325, abs=1e-5)
+        assert res_deff.tensor[1, 1] == pytest.approx(1.0 / 7.75, abs=1e-4)
 
     def test_downsample_volume_truncation_warning_and_tie_break(self):
         odd = np.zeros((5, 6, 7), dtype=np.int32)
@@ -291,7 +300,6 @@ class TestV500ElectrochemAndZenodo:
             seed=5,
         )
         out_json = tmp_path / "bpx" / "positive_electrode.json"
-        with_tensor = oi.build_info()["backend"] != "cpp-cuda"
 
         doc = oi.export_bpx_json(
             vol,
@@ -300,7 +308,7 @@ class TestV500ElectrochemAndZenodo:
             solid_phase=1,
             electrode="positive",
             directions=("x", "z"),
-            compute_deff_tensor=with_tensor,
+            compute_deff_tensor=True,
             voxel_size=0.5e-6,
             sample_id="NMC811-001",
             provenance_uri="https://example.org/samples/NMC811-001",
@@ -325,10 +333,9 @@ class TestV500ElectrochemAndZenodo:
         assert pos["Particle radius [m]"] > 0.0
         assert "anisotropic" in doc["bpx"]
 
-        if with_tensor:
-            assert set(doc["openimpala"]["deff_tensor"].keys()) == {
-                "XX", "XY", "XZ", "YX", "YY", "YZ", "ZX", "ZY", "ZZ"
-            }
+        assert set(doc["openimpala"]["deff_tensor"].keys()) == {
+            "XX", "XY", "XZ", "YX", "YY", "YZ", "ZX", "ZY", "ZZ"
+        }
 
     def test_zenodo_json_metadata_valid(self):
         import json

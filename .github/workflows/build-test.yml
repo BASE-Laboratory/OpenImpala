@@ -70,7 +70,7 @@ jobs:
       - name: Install Python test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest pytest-cov numpy "scipy>=1.7" tifffile h5py "zarr>=2.16,<3" "yt>=4.3" "basecoat @ git+https://github.com/BASE-Laboratory/basecoat.git@v0.2.0"
+          python -m pip install pytest pytest-cov numpy "scipy>=1.7" tifffile h5py "zarr>=2.16,<3" "yt>=4.3" "basecoat @ git+https://github.com/BASE-Laboratory/basecoat.git@v0.3.0"
 
       - name: Check Layer 3 architectural import boundaries (zero basecoat runtime import)
         run: |

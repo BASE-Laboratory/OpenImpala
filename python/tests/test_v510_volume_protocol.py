@@ -199,3 +199,104 @@ class TestBasecoatAndOmeZarrContract:
             )
             with pytest.raises(oi.UnitCalibrationError):
                 oi.read_zarr_volume(uncal_store, unit="m")
+
+            # 5. PyBaMM & Faraday BPX [m] parity: .ome.zarr path matches in-memory VolumeSet!
+            pybamm_vset = oi.to_pybamm_parameters(
+                vset, electrolyte_phase=1, solid_phase=0, electrode="negative", direction="z"
+            )
+            pybamm_store = oi.to_pybamm_parameters(
+                store, electrolyte_phase=1, solid_phase=0, electrode="negative", direction="z"
+            )
+            assert pybamm_store == pytest.approx(pybamm_vset, rel=1e-9)
+            assert pybamm_store["Negative electrode thickness [m]"] == pytest.approx(
+                12 * 1.0e-6, rel=1e-12
+            )
+
+            bpx_vset = oi.export_bpx_json(
+                vset, electrolyte_phase=1, solid_phase=0, electrode="negative", directions=("z",)
+            )
+            bpx_store = oi.export_bpx_json(
+                store, electrolyte_phase=1, solid_phase=0, electrode="negative", directions=("z",)
+            )
+            assert bpx_store["bpx"]["Parameterisation"]["Negative electrode"] == pytest.approx(
+                bpx_vset["bpx"]["Parameterisation"]["Negative electrode"], rel=1e-9
+            )
+            assert bpx_store["openimpala"]["microstructure"]["voxel_size_m"] == pytest.approx(
+                (1.0e-6 * 0.5e-6 * 0.5e-6) ** (1.0 / 3.0), rel=1e-12
+            )
+
+            # 6. read_image(..., zarr_label_key=...) preserves discrete labels & selects envelopes
+            _, img_lo = oi.read_image(store, zarr_label_key="phase_lower")
+            _, img_hi = oi.read_image(store, zarr_label_key="phase_upper")
+            assert oi.volume_fraction(img_lo, phase=1).fraction == pytest.approx(0.25)
+            assert oi.volume_fraction(img_hi, phase=1).fraction == pytest.approx(0.75)
+
+            # 7. ECOSYSTEM.md Invariant #4 ("Don't load what you don't need"):
+            #    Delete all raw grayscale chunk files under <store>/0 (leaving .zarray metadata)
+            #    and verify phase solvers & read_image STILL succeed without reading root chunks!
+            root_arr_dir = Path(store) / "0"
+            for child in list(root_arr_dir.iterdir()):
+                if child.name not in (".zarray", ".zattrs", "zarr.json"):
+                    if child.is_dir():
+                        import shutil
+
+                        shutil.rmtree(child)
+                    else:
+                        child.unlink()
+
+            assert oi.volume_fraction(store, phase=1).fraction == pytest.approx(0.50)
+            assert oi.tortuosity(store, phase=1, direction="z").tortuosity == pytest.approx(
+                1.0, rel=1e-6
+            )
+            _, lazy_img = oi.read_image(store)
+            assert oi.volume_fraction(lazy_img, phase=1).fraction == pytest.approx(0.50)
+
+    def test_read_image_zarr_label_key_preserves_multiphase_ids(self, tmp_path: Path):
+        pytest.importorskip("zarr")
+
+        store_path = tmp_path / "three_phase.ome.zarr"
+        oi.write_zarr_volume(store_path, np.zeros((6, 6, 6), dtype=np.float32), chunks=(6, 6, 6))
+        seg3 = np.zeros((6, 6, 6), dtype=np.uint8)
+        seg3[:, :, 2:4] = 1
+        seg3[:, :, 4:] = 2
+        oi.write_zarr_volume(store_path / "labels" / "phase", seg3, chunks=(6, 6, 6))
+
+        with oi.Session():
+            _, img = oi.read_image(store_path)
+            assert oi.volume_fraction(img, phase=0).fraction == pytest.approx(1.0 / 3.0)
+            assert oi.volume_fraction(img, phase=1).fraction == pytest.approx(1.0 / 3.0)
+            assert oi.volume_fraction(img, phase=2).fraction == pytest.approx(1.0 / 3.0)
+
+
+class TestEffectiveDiffusivityMLMG:
+    """Verify matrix-free EffectiveDiffusivityMLMG ('auto' / 'mlmg') across backends."""
+
+    def test_effective_diffusivity_mlmg_analytical_and_hypre_parity(self):
+        with oi.Session():
+            # 1. Two-phase Voigt/Reuss laminate
+            lam = np.ones((12, 12, 12), dtype=np.int32)
+            lam[:, :3, :] = 0
+            pmap = {0: 1.0, 1: 0.1}
+            res_mlmg = oi.effective_diffusivity(lam, phase_diffusivities=pmap, solver="mlmg")
+            assert res_mlmg.solver_converged
+            assert res_mlmg.tensor[0, 0] == pytest.approx(0.325, abs=1e-5)
+            assert res_mlmg.tensor[2, 2] == pytest.approx(0.325, abs=1e-5)
+            assert res_mlmg.tensor[1, 1] == pytest.approx(1.0 / 7.75, abs=1e-4)
+
+            # 2. Random 32^3 3-D blobs with 44 isolated 1- and 2-voxel pockets + HYPRE parity
+            blobs = oi.synthetic.gaussian_blobs(
+                32, porosity=0.52, blobiness=1.2, pore_value=0, solid_value=1, seed=42
+            )
+            deff_auto = oi.effective_diffusivity(blobs, phase=0)  # defaults to solver='auto' (mlmg)
+            assert deff_auto.solver_converged
+            assert np.allclose(deff_auto.tensor, deff_auto.tensor.T, atol=1e-5)
+
+            if oi.build_info()["backend"] != "cpp-cuda":
+                deff_hypre = oi.effective_diffusivity(blobs, phase=0, solver="flexgmres")
+                assert np.allclose(deff_auto.tensor, deff_hypre.tensor, atol=1e-5)
+
+            # 3. REV study default solver ('auto' -> MLMG)
+            rev = oi.rev_study(blobs, sizes=[8, 12], phase=0, num_samples=2)
+            assert rev.sizes == [8, 12]
+            assert len(rev.samples) == 4
+

@@ -41,10 +41,12 @@ set(PROPS_SOURCES
     props/ConnectedComponents.cpp
     props/DeffTensor.cpp
     props/EffectiveDiffusivityHypre.cpp
+    props/EffectiveDiffusivityMLMG.cpp
     props/FloodFill.cpp
     props/HypreStructSolver.cpp
     props/ParticleSizeDistribution.cpp
     props/PercolationCheck.cpp
+    props/PeriodicComponentPin.cpp
     props/REVStudy.cpp
     props/SpecificSurfaceArea.cpp
     props/ThroughThicknessProfile.cpp

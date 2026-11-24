@@ -895,6 +895,150 @@ def write_zarr_volume(
     return target
 
 
+def _resolve_zarr_multiscales(node: Any) -> Any:
+    """Return OME-NGFF ``multiscales`` metadata list from a Zarr group, or ``None``."""
+    multiscales = node.attrs.get("multiscales")
+    if multiscales is None:
+        ome_block = node.attrs.get("ome")
+        if isinstance(ome_block, Mapping):
+            multiscales = ome_block.get("multiscales")
+    return multiscales
+
+
+def _open_zarr_label_subnode(zarr: Any, target: Path, node: Any, label_key: str) -> Any:
+    """Open ``labels/<label_key>`` via Zarr group membership or directory fallback."""
+    if hasattr(node, "keys") and "labels" in node:
+        labels_grp = node["labels"]
+        if hasattr(labels_grp, "keys") and label_key in labels_grp:
+            return labels_grp[label_key]
+    cand_dir = target / "labels" / label_key
+    if cand_dir.is_dir():
+        try:
+            return zarr.open(str(cand_dir), mode="r")
+        except Exception:
+            return None
+    return None
+
+
+def _peek_zarr_default_label_key(
+    path: Union[str, os.PathLike],
+    *,
+    level: int = 0,
+) -> Optional[str]:
+    """Inspect Zarr metadata lazily (zero chunk reads) to see if ``labels/phase`` should be used.
+
+    Returns ``'phase'`` when *path* is an OME-Zarr group whose root image array has
+    floating-point grayscale ``dtype`` and a ``labels/phase`` subgroup is present;
+    returns ``None`` otherwise.
+    """
+    zarr = _import_zarr()
+    target = Path(path)
+    if not target.exists():
+        return None
+    try:
+        node = zarr.open(str(target), mode="r")
+    except Exception:
+        return None
+    if hasattr(node, "shape") and hasattr(node, "dtype"):
+        return None
+    if _open_zarr_label_subnode(zarr, target, node, "phase") is None:
+        return None
+
+    root_arr = None
+    multiscales = _resolve_zarr_multiscales(node)
+    if isinstance(multiscales, list) and multiscales and isinstance(multiscales[0], Mapping):
+        datasets = multiscales[0].get("datasets", [])
+        if datasets and 0 <= level < len(datasets):
+            ds_path = datasets[level].get("path")
+            if ds_path and ds_path in node:
+                root_arr = node[ds_path]
+    if root_arr is None:
+        if "0" in node:
+            root_arr = node["0"]
+        elif "data" in node:
+            root_arr = node["data"]
+    if root_arr is not None and hasattr(root_arr, "dtype"):
+        if np.issubdtype(np.dtype(root_arr.dtype), np.floating):
+            return "phase"
+    return None
+
+
+def _try_zarr_spacing_in_metres(
+    path: Union[str, os.PathLike],
+    *,
+    label_key: Optional[str] = None,
+    array_path: Optional[str] = None,
+    level: int = 0,
+) -> Optional[tuple[float, float, float]]:
+    """Return ``(dz, dy, dx)`` in SI metres from OME-NGFF metadata without reading chunks.
+
+    Returns ``None`` if the store lacks OME-NGFF scale metadata or physical length units.
+    """
+    from .exceptions import UnitCalibrationError
+    from .protocol import convert_ome_zyx_scale
+
+    zarr = _import_zarr()
+    target = Path(path)
+    if not target.exists():
+        return None
+    try:
+        node = zarr.open(str(target), mode="r")
+    except Exception:
+        return None
+
+    if label_key is not None and array_path is None:
+        sub_node = _open_zarr_label_subnode(zarr, target, node, label_key)
+        if sub_node is None:
+            return None
+        node = sub_node
+
+    if hasattr(node, "shape") and hasattr(node, "dtype"):
+        return None
+
+    multiscales = _resolve_zarr_multiscales(node)
+    if not (isinstance(multiscales, list) and multiscales and isinstance(multiscales[0], Mapping)):
+        return None
+    axes_meta = multiscales[0].get("axes", ())
+    datasets = multiscales[0].get("datasets", [])
+    if not datasets:
+        return None
+
+    ds_meta = None
+    if array_path is not None:
+        for cand in datasets:
+            if cand.get("path") == array_path:
+                ds_meta = cand
+                break
+    elif 0 <= level < len(datasets):
+        ds_meta = datasets[level]
+
+    if ds_meta is None:
+        return None
+    meta_vz = _extract_ome_zyx_scale(ds_meta, axes_meta)
+    if meta_vz is None:
+        return None
+
+    ds_path = ds_meta.get("path")
+    zarr_arr = node[ds_path] if (ds_path and ds_path in node) else None
+    n_squeezed = 0
+    if zarr_arr is not None and hasattr(zarr_arr, "shape"):
+        shp = tuple(zarr_arr.shape)
+        while len(shp) > 3 and shp[0] == 1:
+            shp = shp[1:]
+            n_squeezed += 1
+
+    try:
+        return convert_ome_zyx_scale(
+            meta_vz,
+            axes_meta,
+            "m",
+            n_squeezed=n_squeezed,
+            context=f"Zarr store '{target}'",
+        )
+    except UnitCalibrationError:
+        return None
+
+
 def read_zarr_volume(
     path: Union[str, os.PathLike],
     *,
@@ -948,15 +1092,20 @@ def read_zarr_volume(
 
     node = zarr.open(str(target), mode="r")
     if label_key is not None and array_path is None:
-        if not hasattr(node, "keys") or "labels" not in node:
-            raise KeyError(f"Zarr store '{target}' does not contain a 'labels' group.")
-        labels_grp = node["labels"]
-        if label_key not in labels_grp:
-            avail = list(labels_grp.keys()) if hasattr(labels_grp, "keys") else []
+        sub_node = _open_zarr_label_subnode(zarr, target, node, label_key)
+        if sub_node is None:
+            labels_dir = target / "labels"
+            if not (hasattr(node, "keys") and "labels" in node) and not labels_dir.is_dir():
+                raise KeyError(f"Zarr store '{target}' does not contain a 'labels' group.")
+            avail: list[str] = []
+            if hasattr(node, "keys") and "labels" in node and hasattr(node["labels"], "keys"):
+                avail = list(node["labels"].keys())
+            elif labels_dir.is_dir():
+                avail = sorted(p.name for p in labels_dir.iterdir() if p.is_dir())
             raise KeyError(
                 f"Label '{label_key}' not found in '{target}/labels' (available: {avail})."
             )
-        node = labels_grp[label_key]
+        node = sub_node
 
     meta_vz: Optional[tuple[float, float, float]] = None
     axes_meta: Sequence[Any] = ()

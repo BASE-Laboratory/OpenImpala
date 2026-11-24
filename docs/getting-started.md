@@ -92,14 +92,14 @@ ssa = oi.specific_surface_area(tiff_path, phase_a=0, phase_b=1, voxel_size=0.5e-
 
 For unsegmented grayscale reconstructions, pass `threshold="otsu"` for automatic Otsu segmentation or a numeric threshold such as `threshold=128` (`dark_is_pore=True` maps dark pores to `0` and bright solid to `1` when using Otsu).
 
-## Ecosystem Interoperability (CIL, PoreSpy & PyBaMM)
+## Ecosystem Interoperability (`basecoat`, CIL, PoreSpy & PyBaMM)
 
-OpenImpala accepts reconstruction volumes from [STFC CIL](https://tomographicimaging.github.io/CIL/) (`ImageData`, automatically extracting `(dz, dy, dx)` voxel pitch from `.geometry`) and [PoreSpy](https://porespy.org/) (`bool` / integer NumPy arrays or `xarray.DataArray`) without extra wrapper packages, and exports continuum battery parameters directly to [PyBaMM](https://www.pybamm.org/) and [Faraday BPX](https://bpxstandard.com/):
+OpenImpala operates as a zero-dependency **Layer 3** solver in the `BASE-Laboratory` stack: it accepts calibrated `basecoat.Volume` / `basecoat.VolumeSet` objects (via structural `oi.VolumeProtocol` duck-typing, automatically converting spacing to SI metres), OME-Zarr v0.4 stores with `labels/phase` (plus conformal `phase_lower` / `phase_upper` envelopes), [STFC CIL](https://tomographicimaging.github.io/CIL/) `ImageData`, and [PoreSpy](https://porespy.org/) arrays, and exports continuum battery parameters directly to [PyBaMM](https://www.pybamm.org/) and [Faraday BPX](https://bpxstandard.com/):
 
 ```python
 import openimpala as oi
 
-# 1. PoreSpy boolean / integer microstructures (or CIL ImageData) work directly
+# 1. PoreSpy / NumPy arrays, CIL ImageData, basecoat.VolumeSet, or .ome.zarr stores
 vol = oi.synthetic.multiphase_electrode(shape=(64, 64, 64), seed=7)
 
 # 2. Extract in-memory PyBaMM DFN/SPM parameters (porosity, Bruggeman, thickness, R_p)
@@ -109,7 +109,7 @@ params = oi.to_pybamm_parameters(
     solid_phase=1,
     electrode="negative",
     direction="x",
-    voxel_size=0.5e-6,  # metres
+    voxel_size=0.5e-6,  # metres (inferred automatically from basecoat / calibrated .ome.zarr)
 )
 # pybamm.ParameterValues("Chen2020").update(params, check_already_exists=False)
 
@@ -122,6 +122,10 @@ bpx_doc = oi.export_bpx_json(
     electrode="negative",
     voxel_size=0.5e-6,
 )
+
+# 4. Inspect conformal segmentation bounds from a basecoat .ome.zarr store:
+# lo_arr, vz_m = oi.read_zarr_volume("catalyst.ome.zarr", label_key="phase_lower", unit="m")
+# hi_arr, _    = oi.read_zarr_volume("catalyst.ome.zarr", label_key="phase_upper", unit="m")
 ```
 
 ## Estimating Memory Before Large Runs

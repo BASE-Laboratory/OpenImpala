@@ -41,6 +41,15 @@ def patch_wheel(whl_path: Path) -> None:
 
         patched_rel: dict[str, tuple[str, str]] = {}
         for so in so_files:
+            needed = subprocess.check_output(
+                ["patchelf", "--print-needed", str(so)], text=True
+            ).splitlines()
+            for dep in needed:
+                dep_s = dep.strip()
+                if dep_s.startswith("libmpi_cxx.so"):
+                    subprocess.check_call(["patchelf", "--remove-needed", dep_s, str(so)])
+                    print(f"[patched] {whl_path.name}: removed unused DT_NEEDED {dep_s}")
+
             cur = subprocess.check_output(["patchelf", "--print-rpath", str(so)], text=True).strip()
             parts = [p for p in cur.split(":") if p]
             for extra in EXTRA_RUNPATH:

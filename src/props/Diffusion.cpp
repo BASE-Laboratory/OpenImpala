@@ -20,7 +20,9 @@
 #include "REVStudy.H"
 #include "SolverConfig.H"
 #include "EffectiveDiffusivityHypre.H"
+#include "EffectiveDiffusivityMLMG.H"
 #include "TortuosityHypre.H"
+#include "TortuosityMLMG.H"
 #include "VolumeFraction.H"
 #include "PercolationCheck.H"
 #include "Tortuosity.H"
@@ -336,6 +338,10 @@ void runHomogenization(const amrex::Geometry& geom, const amrex::BoxArray& ba,
         dirs.push_back(OpenImpala::Direction::Z);
     }
 
+    const bool use_mlmg = OpenImpala::isMLMGSolverString(solver_str);
+    amrex::iMultiFab shared_cell_type;
+    bool has_shared_cell_type = false;
+
     for (const auto& dir : dirs) {
         std::string dir_str = (dir == OpenImpala::Direction::X)   ? "X"
                               : (dir == OpenImpala::Direction::Y) ? "Y"
@@ -350,21 +356,44 @@ void runHomogenization(const amrex::Geometry& geom, const amrex::BoxArray& ba,
         }
         amrex::ParallelDescriptor::Barrier();
 
-        std::unique_ptr<OpenImpala::EffectiveDiffusivityHypre> solver;
         try {
-            solver = std::make_unique<OpenImpala::EffectiveDiffusivityHypre>(
-                geom, ba, dm, mf_phase, phase_id, dir, solver_type, plot_dir.string(), verbose,
-                write_plotfiles);
-            if (!solver->solve()) {
-                all_converged = false;
-                break;
+            if (use_mlmg) {
+                const amrex::iMultiFab* cell_type_ptr =
+                    has_shared_cell_type ? &shared_cell_type : nullptr;
+                OpenImpala::EffectiveDiffusivityMLMG mlmg_solver(
+                    geom, ba, dm, mf_phase, phase_id, dir, plot_dir.string(), verbose,
+                    write_plotfiles, 1.0e-8, 200, 30, {}, cell_type_ptr);
+                if (!has_shared_cell_type) {
+                    shared_cell_type.define(ba, dm, 1, 1);
+                    amrex::Copy(shared_cell_type, mlmg_solver.getCellTypeMask(), 0, 0, 1, 0);
+                    shared_cell_type.FillBoundary(geom.periodicity());
+                    has_shared_cell_type = true;
+                }
+                if (!mlmg_solver.solve()) {
+                    all_converged = false;
+                    break;
+                }
+                if (dir == OpenImpala::Direction::X)
+                    mlmg_solver.getChiSolution(mf_chi_x);
+                else if (dir == OpenImpala::Direction::Y)
+                    mlmg_solver.getChiSolution(mf_chi_y);
+                else if (AMREX_SPACEDIM == 3 && dir == OpenImpala::Direction::Z)
+                    mlmg_solver.getChiSolution(mf_chi_z);
+            } else {
+                auto solver = std::make_unique<OpenImpala::EffectiveDiffusivityHypre>(
+                    geom, ba, dm, mf_phase, phase_id, dir, solver_type, plot_dir.string(), verbose,
+                    write_plotfiles);
+                if (!solver->solve()) {
+                    all_converged = false;
+                    break;
+                }
+                if (dir == OpenImpala::Direction::X)
+                    solver->getChiSolution(mf_chi_x);
+                else if (dir == OpenImpala::Direction::Y)
+                    solver->getChiSolution(mf_chi_y);
+                else if (AMREX_SPACEDIM == 3 && dir == OpenImpala::Direction::Z)
+                    solver->getChiSolution(mf_chi_z);
             }
-            if (dir == OpenImpala::Direction::X)
-                solver->getChiSolution(mf_chi_x);
-            else if (dir == OpenImpala::Direction::Y)
-                solver->getChiSolution(mf_chi_y);
-            else if (AMREX_SPACEDIM == 3 && dir == OpenImpala::Direction::Z)
-                solver->getChiSolution(mf_chi_z);
         } catch (const std::exception& e) {
             if (verbose >= 0 && amrex::ParallelDescriptor::IOProcessor()) {
                 amrex::Print() << "    Full Domain Chi solve EXCEPTION for dir "
@@ -564,14 +593,22 @@ void runFlowThrough(const amrex::Geometry& geom, const amrex::BoxArray& ba,
             amrex::Print() << "\n--- Solving for Tortuosity in Direction: " << dir_char << " ---\n";
         }
 
-        auto solver_type_enum = OpenImpala::parseSolverType(solver_str);
-
-        OpenImpala::TortuosityHypre tort_solver(
-            geom_tort, ba, dm, mf_phase, volume_fraction, phase_id, dir, solver_type_enum,
-            results_path.string(), vlo, vhi, verbose, write_plotfiles);
-
-        amrex::Real tau = tort_solver.value();
-        bool dir_converged = tort_solver.getSolverConverged();
+        amrex::Real tau = 0.0;
+        bool dir_converged = false;
+        if (OpenImpala::isMLMGSolverString(solver_str)) {
+            OpenImpala::TortuosityMLMG tort_solver(geom_tort, ba, dm, mf_phase, volume_fraction,
+                                                   phase_id, dir, results_path.string(), vlo, vhi,
+                                                   verbose, write_plotfiles);
+            tau = tort_solver.value();
+            dir_converged = tort_solver.getSolverConverged();
+        } else {
+            auto solver_type_enum = OpenImpala::parseSolverType(solver_str);
+            OpenImpala::TortuosityHypre tort_solver(
+                geom_tort, ba, dm, mf_phase, volume_fraction, phase_id, dir, solver_type_enum,
+                results_path.string(), vlo, vhi, verbose, write_plotfiles);
+            tau = tort_solver.value();
+            dir_converged = tort_solver.getSolverConverged();
+        }
         amrex::Real D_eff_ratio =
             (tau > 0.0 && !std::isnan(tau) && !std::isinf(tau)) ? volume_fraction / tau : 0.0;
 
@@ -796,7 +833,11 @@ int main(int argc, char* argv[]) {
             rev_config.box_size = main_box_size;
             rev_config.verbose = rev_verbose;
             rev_config.write_plotfiles = (rev_write_plotfiles != 0);
-            rev_config.solver_type = OpenImpala::parseSolverType(rev_solver_str);
+            if (OpenImpala::isMLMGSolverString(rev_solver_str)) {
+                rev_config.use_mlmg = true;
+            } else {
+                rev_config.solver_type = OpenImpala::parseSolverType(rev_solver_str);
+            }
             rev_config.results_path = main_results_path;
             rev_config.csv_filename = rev_results_filename;
 
@@ -811,10 +852,13 @@ int main(int argc, char* argv[]) {
             }
 
             if (main_calc_method == "homogenization") {
+                const auto homog_solver_type = OpenImpala::isMLMGSolverString(main_solver_str)
+                                                   ? OpenImpala::SolverType::FlexGMRES
+                                                   : OpenImpala::parseSolverType(main_solver_str);
                 runHomogenization(img.geom, img.ba, img.dm, img.mf_phase, img.domain_box,
-                                  main_phase_id, OpenImpala::parseSolverType(main_solver_str),
-                                  main_solver_str, main_results_path, physics_config, main_filename,
-                                  main_verbose, (main_write_plotfile != 0));
+                                  main_phase_id, homog_solver_type, main_solver_str,
+                                  main_results_path, physics_config, main_filename, main_verbose,
+                                  (main_write_plotfile != 0));
             } else if (main_calc_method == "flow_through") {
                 runFlowThrough(img.geom, img.ba, img.dm, img.mf_phase, img.domain_box,
                                main_phase_id, main_solver_str, main_results_path, physics_config,
