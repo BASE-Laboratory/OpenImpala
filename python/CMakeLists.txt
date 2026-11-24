@@ -67,19 +67,24 @@ target_include_directories(_core PRIVATE
 # Compile with C++17 to match the rest of the project
 target_compile_features(_core PRIVATE cxx_std_17)
 
-# Drop unused DT_NEEDED libraries (e.g. deprecated libmpi_cxx.so injected by OpenMPI 4's mpicxx wrapper)
-target_link_options(_core PRIVATE $<$<LINK_LANGUAGE:CXX>:-Wl,--as-needed>)
-
-# Set ELF DT_RUNPATH (--enable-new-dtags) so pip/conda-installed OpenMPI in
-# <env>/lib ($ORIGIN/../../..) is discovered automatically without LD_LIBRARY_PATH,
-# while HPC `module load openmpi` (LD_LIBRARY_PATH) always takes precedence.
+# Drop unused DT_NEEDED libraries (e.g. deprecated libmpi_cxx.so.40 injected by OpenMPI 4's
+# FindMPI / mpicxx wrapper) and emit ELF DT_RUNPATH (--enable-new-dtags) so pip/conda OpenMPI
+# in <env>/lib ($ORIGIN/../../..) is discovered automatically while LD_LIBRARY_PATH takes precedence.
+# Note: when GPU_BACKEND=CUDA and AMReX_GPU_RDC=OFF, CMake sets LINK_LANGUAGE=CUDA yet invokes
+# the host C++ linker (g++) directly, which expects -Wl,... rather than nvcc's -Xlinker=...
 if(UNIX AND NOT APPLE)
     set_target_properties(_core PROPERTIES
         INSTALL_RPATH "$ORIGIN/../../..;$ORIGIN/../../../openmpi"
     )
-    if(NOT GPU_BACKEND STREQUAL "CUDA")
+    if(GPU_BACKEND STREQUAL "CUDA" AND AMReX_GPU_RDC)
         target_link_options(_core PRIVATE
-            $<$<LINK_LANGUAGE:CXX>:-Wl,--enable-new-dtags>
+            -Xlinker=--as-needed
+            -Xlinker=--enable-new-dtags
+        )
+    else()
+        target_link_options(_core PRIVATE
+            -Wl,--as-needed
+            -Wl,--enable-new-dtags
         )
     endif()
 endif()
