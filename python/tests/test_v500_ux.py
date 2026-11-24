@@ -106,13 +106,21 @@ class TestV500ImportFallbackAndRpath:
                 "openimpala-5.0.0.dist-info/RECORD,,\n",
             )
 
-        state = {"rpath": "$ORIGIN/../openimpala.libs"}
+        state = {
+            "rpath": "$ORIGIN/../openimpala.libs",
+            "needed": ["libmpi.so.40", "libmpi_cxx.so.40", "libc.so.6"],
+        }
 
         def fake_check_output(cmd, text=True):
+            if cmd[:2] == ["patchelf", "--print-needed"]:
+                return "\n".join(state["needed"]) + "\n"
             assert cmd[:2] == ["patchelf", "--print-rpath"]
             return state["rpath"] + "\n"
 
         def fake_check_call(cmd):
+            if cmd[:2] == ["patchelf", "--remove-needed"]:
+                state["needed"].remove(cmd[2])
+                return
             assert cmd[:2] == ["patchelf", "--set-rpath"]
             state["rpath"] = cmd[2]
             Path(cmd[3]).write_bytes(orig_bytes + b"_PATCHED")
@@ -121,6 +129,8 @@ class TestV500ImportFallbackAndRpath:
         monkeypatch.setattr(mod.subprocess, "check_call", fake_check_call)
 
         assert mod.main([str(whl_path)]) == 0
+        assert "libmpi_cxx.so.40" not in state["needed"]
+        assert "libmpi.so.40" in state["needed"]
         assert "$ORIGIN/../../.." in state["rpath"]
         assert "$ORIGIN/../../../openmpi" in state["rpath"]
 
