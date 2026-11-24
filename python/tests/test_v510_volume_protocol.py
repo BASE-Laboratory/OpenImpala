@@ -252,16 +252,14 @@ class TestBasecoatAndOmeZarrContract:
             assert oi.volume_fraction(lazy_img, phase=1).fraction == pytest.approx(0.50)
 
     def test_read_image_zarr_label_key_preserves_multiphase_ids(self, tmp_path: Path):
-        zarr = pytest.importorskip("zarr")
+        pytest.importorskip("zarr")
 
         store_path = tmp_path / "three_phase.ome.zarr"
-        root = zarr.open_group(str(store_path), mode="w")
-        root.create_dataset("0", data=np.zeros((6, 6, 6), dtype=np.float32), chunks=(6, 6, 6))
+        oi.write_zarr_volume(store_path, np.zeros((6, 6, 6), dtype=np.float32), chunks=(6, 6, 6))
         seg3 = np.zeros((6, 6, 6), dtype=np.uint8)
         seg3[:, :, 2:4] = 1
         seg3[:, :, 4:] = 2
-        lbl = root.create_group("labels").create_group("phase")
-        lbl.create_dataset("0", data=seg3, chunks=(6, 6, 6))
+        oi.write_zarr_volume(store_path / "labels" / "phase", seg3, chunks=(6, 6, 6))
 
         with oi.Session():
             _, img = oi.read_image(store_path)
@@ -285,9 +283,9 @@ class TestEffectiveDiffusivityMLMG:
             assert res_mlmg.tensor[2, 2] == pytest.approx(0.325, abs=1e-5)
             assert res_mlmg.tensor[1, 1] == pytest.approx(1.0 / 7.75, abs=1e-4)
 
-            # 2. Random 3-D blobs with isolated pockets + parity against flexgmres
+            # 2. Random 32^3 3-D blobs with 44 isolated 1- and 2-voxel pockets + HYPRE parity
             blobs = oi.synthetic.gaussian_blobs(
-                16, porosity=0.52, blobiness=1.2, pore_value=0, solid_value=1, seed=19
+                32, porosity=0.52, blobiness=1.2, pore_value=0, solid_value=1, seed=42
             )
             deff_auto = oi.effective_diffusivity(blobs, phase=0)  # defaults to solver='auto' (mlmg)
             assert deff_auto.solver_converged

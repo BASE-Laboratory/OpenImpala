@@ -218,14 +218,19 @@ bool EffectiveDiffusivityMLMG::solve() {
 
     const amrex::Real length_k = m_geom.ProbLength(idir);
     const amrex::Real d_scale = (m_max_diff_coeff > 0.0) ? m_max_diff_coeff : 1.0;
-    op.setScalars(d_scale / (length_k * length_k), 1.0);
+    const amrex::Real alpha_inactive = d_scale / (length_k * length_k);
+    const amrex::Real pin_diag = d_scale * (1.0 / (m_dx[0] * m_dx[0]) + 1.0 / (m_dx[1] * m_dx[1]) +
+                                            1.0 / (m_dx[2] * m_dx[2]));
+    const amrex::Real pinned_acoef = pin_diag / alpha_inactive;
+    op.setScalars(alpha_inactive, 1.0);
 
     // Exact SPD rank-1 component pin + inactive decoupling:
-    // - CELL_INACTIVE: acoef = 1, bcoefs = 0, rhs = 0  =>  chi = 0
-    // - CELL_PINNED (1 cell per periodic component C_m): acoef = 1 while retaining all
-    //   physical active-neighbour bcoefs and conservative rhs. Since sum_{x in C_m} rhs(x) == 0,
-    //   summing rows over C_m gives alpha * chi(x_p) == 0 => chi(x_p) == 0 identically
-    //   without perturbing -div(B grad chi) = rhs anywhere!
+    // - CELL_INACTIVE: alpha * acoef = d_scale / L_k^2, bcoefs = 0, rhs = 0  =>  chi = 0
+    // - CELL_PINNED (1 cell x_p per periodic component C_m): alpha * acoef = pin_diag (~3 D / h^2,
+    //   matching the local fine-grid stencil scale so small isolated pockets are O(1) conditioned)
+    //   while retaining all physical active-neighbour bcoefs and conservative rhs. Since
+    //   sum_{x in C_m} rhs(x) == 0, summing rows over C_m gives pin_diag * chi(x_p) == 0 =>
+    //   chi(x_p) == 0 identically without perturbing -div(B grad chi) = rhs anywhere!
     // - CELL_ACTIVE: acoef = 0
     amrex::MultiFab acoef(m_ba, m_dm, 1, 0);
 #ifdef AMREX_USE_OMP
@@ -235,7 +240,14 @@ bool EffectiveDiffusivityMLMG::solve() {
         const auto a = acoef.array(mfi);
         const auto ct = m_mf_cell_type.const_array(mfi);
         amrex::ParallelFor(mfi.tilebox(), [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-            a(i, j, k, 0) = (ct(i, j, k, 0) == CELL_ACTIVE) ? 0.0 : 1.0;
+            const int cell_state = ct(i, j, k, 0);
+            if (cell_state == CELL_ACTIVE) {
+                a(i, j, k, 0) = 0.0;
+            } else if (cell_state == CELL_PINNED) {
+                a(i, j, k, 0) = pinned_acoef;
+            } else {
+                a(i, j, k, 0) = 1.0;
+            }
         });
     }
     op.setACoeffs(0, acoef);

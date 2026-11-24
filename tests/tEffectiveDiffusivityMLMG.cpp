@@ -57,18 +57,15 @@ void fillHeterogeneousWithIsolatedPocket(amrex::iMultiFab& mf_phase, int n) {
         const amrex::Box& bx = mfi.tilebox();
         const auto arr = mf_phase.array(mfi);
         amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-            // Solid block in [3, 12]^3 enclosing an isolated active 2x2x2 pocket at [7, 8]^3,
-            // plus asymmetric solid pillars to produce non-trivial 3-D tortuous pathways.
+            // Solid block in [3, 12]^3 enclosing multiple isolated pockets (2x2x2 cube,
+            // 2-voxel Y-dimer, and 3-voxel Z-trimer), plus asymmetric solid pillars.
             const bool in_shell = (i >= 3 && i <= 12 && j >= 3 && j <= 12 && k >= 3 && k <= 12);
-            const bool in_pocket = (i >= 7 && i <= 8 && j >= 7 && j <= 8 && k >= 7 && k <= 8);
+            const bool in_pocket_cube = (i >= 7 && i <= 8 && j >= 7 && j <= 8 && k >= 7 && k <= 8);
+            const bool in_pocket_dimer = (i == 5 && (j == 5 || j == 6) && k == 5);
+            const bool in_pocket_trimer = (i == 10 && j == 5 && (k >= 9 && k <= 11));
+            const bool in_pocket = in_pocket_cube || in_pocket_dimer || in_pocket_trimer;
             const bool in_pillar = ((i + 2 * j) % n < 3) && (k % 5 == 1);
-            if (in_pocket) {
-                arr(i, j, k, 0) = 1;
-            } else if (in_shell || in_pillar) {
-                arr(i, j, k, 0) = 0;
-            } else {
-                arr(i, j, k, 0) = 1;
-            }
+            arr(i, j, k, 0) = (!in_pocket && (in_shell || in_pillar)) ? 0 : 1;
         });
     }
 }

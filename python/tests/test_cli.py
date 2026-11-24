@@ -322,38 +322,22 @@ def test_build_info_cuda_gpuless_login_node_reports_pure_python(monkeypatch):
 
 
 def test_cli_ome_zarr_label_key(tmp_path, capsys):
-    zarr = pytest.importorskip("zarr")
+    pytest.importorskip("zarr")
     from openimpala.cli import main
 
     store_path = tmp_path / "sample.ome.zarr"
-    root = zarr.open_group(str(store_path), mode="w")
     gray = np.linspace(0.0, 1.0, 8 * 8 * 8, dtype=np.float32).reshape((8, 8, 8))
-    root.create_dataset("0", data=gray, chunks=(8, 8, 8))
-    ms = [
-        {
-            "version": "0.4",
-            "axes": [
-                {"name": "z", "type": "space", "unit": "micrometer"},
-                {"name": "y", "type": "space", "unit": "micrometer"},
-                {"name": "x", "type": "space", "unit": "micrometer"},
-            ],
-            "datasets": [
-                {
-                    "path": "0",
-                    "coordinateTransformations": [{"type": "scale", "scale": [0.5, 0.5, 0.5]}],
-                }
-            ],
-        }
-    ]
-    root.attrs["multiscales"] = ms
+    oi.write_zarr_volume(store_path, gray, voxel_size=(0.5, 0.5, 0.5), chunks=(8, 8, 8))
 
-    labels_grp = root.create_group("labels")
     for key, x_cut in (("phase", 4), ("phase_lower", 2), ("phase_upper", 6)):
         seg = np.zeros((8, 8, 8), dtype=np.uint8)
         seg[:, :, :x_cut] = 1
-        sub = labels_grp.create_group(key)
-        sub.create_dataset("0", data=seg, chunks=(8, 8, 8))
-        sub.attrs["multiscales"] = ms
+        oi.write_zarr_volume(
+            store_path / "labels" / key,
+            seg,
+            voxel_size=(0.5, 0.5, 0.5),
+            chunks=(8, 8, 8),
+        )
 
     # Default CLI call auto-selects labels/phase (VF == 0.5)
     assert main(["vf", str(store_path), "--phase", "1"]) == 0

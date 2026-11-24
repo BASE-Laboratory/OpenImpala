@@ -905,6 +905,21 @@ def _resolve_zarr_multiscales(node: Any) -> Any:
     return multiscales
 
 
+def _open_zarr_label_subnode(zarr: Any, target: Path, node: Any, label_key: str) -> Any:
+    """Open ``labels/<label_key>`` via Zarr group membership or directory fallback."""
+    if hasattr(node, "keys") and "labels" in node:
+        labels_grp = node["labels"]
+        if hasattr(labels_grp, "keys") and label_key in labels_grp:
+            return labels_grp[label_key]
+    cand_dir = target / "labels" / label_key
+    if cand_dir.is_dir():
+        try:
+            return zarr.open(str(cand_dir), mode="r")
+        except Exception:
+            return None
+    return None
+
+
 def _peek_zarr_default_label_key(
     path: Union[str, os.PathLike],
     *,
@@ -926,10 +941,7 @@ def _peek_zarr_default_label_key(
         return None
     if hasattr(node, "shape") and hasattr(node, "dtype"):
         return None
-    if not hasattr(node, "keys") or "labels" not in node:
-        return None
-    labels_grp = node["labels"]
-    if not hasattr(labels_grp, "keys") or "phase" not in labels_grp:
+    if _open_zarr_label_subnode(zarr, target, node, "phase") is None:
         return None
 
     root_arr = None
@@ -975,12 +987,10 @@ def _try_zarr_spacing_in_metres(
         return None
 
     if label_key is not None and array_path is None:
-        if not hasattr(node, "keys") or "labels" not in node:
+        sub_node = _open_zarr_label_subnode(zarr, target, node, label_key)
+        if sub_node is None:
             return None
-        labels_grp = node["labels"]
-        if not hasattr(labels_grp, "keys") or label_key not in labels_grp:
-            return None
-        node = labels_grp[label_key]
+        node = sub_node
 
     if hasattr(node, "shape") and hasattr(node, "dtype"):
         return None
@@ -1082,15 +1092,20 @@ def read_zarr_volume(
 
     node = zarr.open(str(target), mode="r")
     if label_key is not None and array_path is None:
-        if not hasattr(node, "keys") or "labels" not in node:
-            raise KeyError(f"Zarr store '{target}' does not contain a 'labels' group.")
-        labels_grp = node["labels"]
-        if label_key not in labels_grp:
-            avail = list(labels_grp.keys()) if hasattr(labels_grp, "keys") else []
+        sub_node = _open_zarr_label_subnode(zarr, target, node, label_key)
+        if sub_node is None:
+            labels_dir = target / "labels"
+            if not (hasattr(node, "keys") and "labels" in node) and not labels_dir.is_dir():
+                raise KeyError(f"Zarr store '{target}' does not contain a 'labels' group.")
+            avail: list[str] = []
+            if hasattr(node, "keys") and "labels" in node and hasattr(node["labels"], "keys"):
+                avail = list(node["labels"].keys())
+            elif labels_dir.is_dir():
+                avail = sorted(p.name for p in labels_dir.iterdir() if p.is_dir())
             raise KeyError(
                 f"Label '{label_key}' not found in '{target}/labels' (available: {avail})."
             )
-        node = labels_grp[label_key]
+        node = sub_node
 
     meta_vz: Optional[tuple[float, float, float]] = None
     axes_meta: Sequence[Any] = ()
