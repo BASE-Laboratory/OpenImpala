@@ -659,13 +659,11 @@ def _unwrap_external_volume(
 def _read_zarr_for_phase_solver(
     p: Path,
 ) -> tuple[np.ndarray, Optional[tuple[float, float, float]]]:
-    """Read segmented phase IDs from *p*, preferring ``labels/phase`` when root ``0`` is float grayscale."""
-    from ._io import read_zarr_volume
+    """Read segmented phase IDs from *p*, selecting ``labels/phase`` lazily when root ``0`` is float grayscale."""
+    from ._io import _peek_zarr_default_label_key, read_zarr_volume
 
-    zarr_arr, meta_vz = read_zarr_volume(p, threshold=None)
-    if np.issubdtype(zarr_arr.dtype, np.floating) and (p / "labels" / "phase").is_dir():
-        return read_zarr_volume(p, label_key="phase", threshold=None)
-    return zarr_arr, meta_vz
+    default_label_key = _peek_zarr_default_label_key(p)
+    return read_zarr_volume(p, label_key=default_label_key, threshold=None)
 
 
 def _resolve_pure_input(
@@ -1125,17 +1123,21 @@ def effective_diffusivity(
     *,
     voxel_size: Optional[VoxelSizeArg] = None,
     phase_diffusivities: Optional[Mapping[int, float]] = None,
-    solver: Union[str, "SolverType"] = "flexgmres",
+    solver: Union[str, "SolverType"] = "auto",
     return_fields: bool = False,
     write_plotfile: bool = False,
     max_grid_size: Union[int, str] = "auto",
     results_path: str = ".",
     verbose: int = 0,
+    mlmg_eps: Optional[float] = None,
+    mlmg_maxiter: Optional[int] = None,
+    mlmg_max_coarsening_level: Optional[int] = None,
 ) -> EffectiveDiffusivityResult:
     """Compute the full 3x3 homogenised effective-diffusivity tensor ``D_eff``.
 
     Solves the three periodic homogenisation cell problems in ``x``, ``y``, ``z``
-    and returns ``EffectiveDiffusivityResult`` with ``tensor`` ordered ``(x, y, z)``.
+    (defaulting to matrix-free AMReX ``MLMG`` across CPU, MPI, and CUDA GPUs) and
+    returns ``EffectiveDiffusivityResult`` with ``tensor`` ordered ``(x, y, z)``.
     """
     phase_map = _normalize_phase_diffusivities(phase_diffusivities)
     if phase is None and not phase_map:
@@ -1196,7 +1198,13 @@ def effective_diffusivity(
         )
 
     _core = _get_core()
-    st = _parse_hypre_solver(solver)
+    parsed_solver = _parse_solver(solver)
+    use_mlmg = parsed_solver == "mlmg"
+    hypre_st = _core.SolverType.FlexGMRES if use_mlmg else parsed_solver
+    eff_eps = float(mlmg_eps) if mlmg_eps is not None else 1.0e-8
+    eff_maxiter = int(mlmg_maxiter) if mlmg_maxiter is not None else 200
+    eff_coarsen = int(mlmg_max_coarsening_level) if mlmg_max_coarsening_level is not None else 30
+
     img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
     if write_plotfile:
         if _core.is_io_rank():
@@ -1206,16 +1214,21 @@ def effective_diffusivity(
     raw = _core.compute_effective_diffusivity_tensor(
         img,
         phase_id=eff_phase,
-        solver_type=st,
+        solver_type=hypre_st,
         results_path=results_path,
         verbose=verbose,
         write_plotfile=bool(write_plotfile),
         phase_coeffs=phase_map,
         return_chi=return_fields,
+        use_mlmg=use_mlmg,
+        mlmg_eps=eff_eps,
+        mlmg_maxiter=eff_maxiter,
+        mlmg_max_coarsening_level=eff_coarsen,
     )
     if not raw["converged"]:
+        solver_label = "MLMG" if use_mlmg else "HYPRE"
         raise ConvergenceError(
-            f"Effective diffusivity HYPRE cell-problem solver failed to converge "
+            f"Effective diffusivity {solver_label} cell-problem solver failed to converge "
             f"(iterations={raw['iterations']}, residuals={raw['residuals']})"
         )
     plt_paths_cpp: Optional[dict[str, str]] = None
@@ -1459,10 +1472,13 @@ def rev_study(
     *,
     num_samples: int = 3,
     voxel_size: Optional[VoxelSizeArg] = None,
-    solver: Union[str, "SolverType"] = "flexgmres",
+    solver: Union[str, "SolverType"] = "auto",
     csv_path: Optional[str] = None,
     max_grid_size: Union[int, str] = "auto",
     verbose: int = 0,
+    mlmg_eps: Optional[float] = None,
+    mlmg_maxiter: Optional[int] = None,
+    mlmg_max_coarsening_level: Optional[int] = None,
 ) -> REVStudyResult:
     """Run a Representative Elementary Volume (REV) convergence study."""
     if phase is None:
@@ -1492,7 +1508,13 @@ def rev_study(
         return _summarize_rev_records(records, csv_path)
 
     _core = _get_core()
-    st = _parse_hypre_solver(solver)
+    parsed_solver = _parse_solver(solver)
+    use_mlmg = parsed_solver == "mlmg"
+    hypre_st = _core.SolverType.FlexGMRES if use_mlmg else parsed_solver
+    eff_eps = float(mlmg_eps) if mlmg_eps is not None else 1.0e-8
+    eff_maxiter = int(mlmg_maxiter) if mlmg_maxiter is not None else 200
+    eff_coarsen = int(mlmg_max_coarsening_level) if mlmg_max_coarsening_level is not None else 30
+
     img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
     box_sz = 32 if isinstance(max_grid_size, str) else int(max_grid_size)
 
@@ -1542,11 +1564,15 @@ def rev_study(
             num_samples=num_samples,
             phase_id=eff_phase,
             box_size=box_sz,
-            solver_type=st,
+            solver_type=hypre_st,
             results_path=str(target_p.parent),
             csv_filename=target_p.name,
             verbose=verbose,
             write_plotfiles=False,
+            use_mlmg=use_mlmg,
+            mlmg_eps=eff_eps,
+            mlmg_maxiter=eff_maxiter,
+            mlmg_max_coarsening_level=eff_coarsen,
         )
         records = _parse_csv_text(csv_content)
         return _summarize_rev_records(records, str(target_p))
@@ -1558,11 +1584,15 @@ def rev_study(
             num_samples=num_samples,
             phase_id=eff_phase,
             box_size=box_sz,
-            solver_type=st,
+            solver_type=hypre_st,
             results_path=tmpdir,
             csv_filename="rev_study_Deff.csv",
             verbose=verbose,
             write_plotfiles=False,
+            use_mlmg=use_mlmg,
+            mlmg_eps=eff_eps,
+            mlmg_maxiter=eff_maxiter,
+            mlmg_max_coarsening_level=eff_coarsen,
         )
         records = _parse_csv_text(csv_content)
     return _summarize_rev_records(records, None)
@@ -1596,22 +1626,46 @@ def _stage_electrochem_input(
     """Stage *data* once for multi-property electrochemistry workflows.
 
     Returns ``(staged_img, (nz, ny, nx), (dz, dy, dx), has_physical_voxel_size)``.
+    For OME-Zarr store paths with calibrated spatial units (e.g. ``'micrometer'``),
+    converts physical voxel sizes to SI metres (``'m'``) when *voxel_size* is ``None``
+    so ``[m]``-denominated PyBaMM / BPX outputs match in-memory ``VolumeProtocol`` inputs.
     """
     _ensure_initialized()
+    eff_voxel_size = voxel_size
+    zarr_calibrated_m = False
+    if eff_voxel_size is None and isinstance(data, (str, os.PathLike)):
+        p = Path(data)
+        if _is_zarr_path(p):
+            from ._io import _peek_zarr_default_label_key, _try_zarr_spacing_in_metres
+
+            lbl = _peek_zarr_default_label_key(p)
+            vz_m = _try_zarr_spacing_in_metres(p, label_key=lbl)
+            if vz_m is not None:
+                eff_voxel_size = vz_m
+                zarr_calibrated_m = True
+
     if _is_pure_python():
         from ._io import PureVoxelImage
 
-        arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
+        arr, vz = _resolve_pure_input(data, voxel_size=eff_voxel_size)
         staged = PureVoxelImage(arr, dx=float(vz[2]), dy=float(vz[1]), dz=float(vz[0]))
         nz, ny, nx = (int(arr.shape[0]), int(arr.shape[1]), int(arr.shape[2]))
-        has_phys = (voxel_size is not None) or (tuple(vz) != (1.0, 1.0, 1.0))
+        has_phys = (
+            (voxel_size is not None)
+            or zarr_calibrated_m
+            or (tuple(vz) != (1.0, 1.0, 1.0))
+        )
         return staged, (nz, ny, nx), tuple(float(v) for v in vz), has_phys
 
-    img = _numpy_to_voxelimage(data, max_grid_size=max_grid_size, voxel_size=voxel_size)
+    img = _numpy_to_voxelimage(data, max_grid_size=max_grid_size, voxel_size=eff_voxel_size)
     nz, ny, nx = (int(img.shape[0]), int(img.shape[1]), int(img.shape[2]))
     dx, dy, dz = img.cell_size_xyz
     vz_zyx = (float(dz), float(dy), float(dx))
-    has_phys = (voxel_size is not None) or (vz_zyx != (1.0, 1.0, 1.0))
+    has_phys = (
+        (voxel_size is not None)
+        or zarr_calibrated_m
+        or (vz_zyx != (1.0, 1.0, 1.0))
+    )
     return img, (nz, ny, nx), vz_zyx, has_phys
 
 
@@ -1776,12 +1830,7 @@ def export_bpx_json(
     }
 
     if compute_deff_tensor:
-        hypre_solver = (
-            "flexgmres"
-            if isinstance(solver, str) and solver.strip().lower() in ("auto", "mlmg")
-            else solver
-        )
-        deff_res = effective_diffusivity(staged, phase=electrolyte_phase, solver=hypre_solver)
+        deff_res = effective_diffusivity(staged, phase=electrolyte_phase, solver=solver)
         labels = ("X", "Y", "Z")
         tensor_obj: dict[str, float] = {}
         for r_i in range(3):
@@ -2136,6 +2185,7 @@ def read_image(
     file_format: Optional[str] = None,
     hdf5_dataset: str = "/data",
     zarr_array_path: Optional[str] = None,
+    zarr_label_key: Optional[str] = None,
     zarr_level: int = 0,
     raw_width: int = 0,
     raw_height: int = 0,
@@ -2152,8 +2202,10 @@ def read_image(
 
     *threshold* may be a numeric cutoff or ``'otsu'`` to automatically determine
     the optimal global threshold via Otsu's between-class variance method.
-    Supports TIFF, HDF5, OME-Zarr (``.zarr``), RAW, DAT, and NPY volumes across
-    both compiled C++ and pure-Python backends.
+    For OME-Zarr (``.ome.zarr`` / ``.zarr``) stores, *zarr_label_key* selects a
+    pre-segmented label group under ``labels/<zarr_label_key>`` (and defaults
+    automatically to ``'phase'`` when root ``0`` is floating-point grayscale and
+    ``labels/phase`` exists), preserving discrete integer phase IDs directly.
     """
     _ensure_initialized()
     path_str = os.fspath(path)
@@ -2170,6 +2222,8 @@ def read_image(
     if _is_pure_python() or fmt in ("npy", "zarr"):
         from ._io import (
             PureReader,
+            PureVoxelImage,
+            _peek_zarr_default_label_key,
             read_dat_volume,
             read_hdf5_volume,
             read_raw_volume,
@@ -2178,6 +2232,7 @@ def read_image(
         )
 
         meta_vz: Optional[tuple[float, float, float]] = None
+        eff_label_key: Optional[str] = None
         if fmt == "tiff":
             raw_vol = read_tiff_volume(path_str)
             reader = PureReader(raw_vol, kind="TiffReader")
@@ -2196,14 +2251,32 @@ def read_image(
             raw_vol = np.load(path_str)
             reader = PureReader(raw_vol, kind="NpyReader")
         elif fmt == "zarr":
+            eff_label_key = zarr_label_key
+            if (
+                eff_label_key is None
+                and zarr_array_path is None
+                and not (isinstance(threshold, str) and threshold.strip().lower() == "otsu")
+            ):
+                eff_label_key = _peek_zarr_default_label_key(path_str, level=zarr_level)
             raw_vol, meta_vz = read_zarr_volume(
-                path_str, array_path=zarr_array_path, level=zarr_level, threshold=None
+                path_str,
+                array_path=zarr_array_path,
+                label_key=eff_label_key,
+                level=zarr_level,
+                threshold=None,
             )
             reader = PureReader(raw_vol, kind="ZarrReader")
         else:
             raise ValueError(f"Unknown file_format '{fmt}'")
 
-        pure_img = reader.threshold(threshold, v_true, v_false)
+        if (
+            fmt == "zarr"
+            and eff_label_key is not None
+            and np.issubdtype(raw_vol.dtype, np.integer)
+        ):
+            pure_img = PureVoxelImage(np.ascontiguousarray(raw_vol, dtype=np.int32))
+        else:
+            pure_img = reader.threshold(threshold, v_true, v_false)
         eff_vz = voxel_size if voxel_size is not None else meta_vz
         if eff_vz is not None:
             dz, dy, dx = _normalize_voxel_size(eff_vz)

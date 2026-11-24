@@ -226,13 +226,18 @@ void init_props(py::module_& m) {
         [](std::shared_ptr<VoxelImage> img, const std::vector<int>& sizes, int num_samples,
            int phase_id, int box_size, OpenImpala::SolverType solver_type,
            const std::string& results_path, const std::string& csv_filename, int verbose,
-           bool write_plotfiles) {
+           bool write_plotfiles, bool use_mlmg, amrex::Real mlmg_eps, int mlmg_maxiter,
+           int mlmg_max_coarsening_level) {
             REVConfig cfg;
             cfg.sizes = sizes;
             cfg.num_samples = num_samples;
             cfg.phase_id = phase_id;
             cfg.box_size = box_size;
             cfg.solver_type = solver_type;
+            cfg.use_mlmg = use_mlmg;
+            cfg.mlmg_eps = mlmg_eps;
+            cfg.mlmg_maxiter = mlmg_maxiter;
+            cfg.mlmg_max_coarsening_level = mlmg_max_coarsening_level;
             cfg.results_path = std::filesystem::path(results_path);
             cfg.csv_filename = csv_filename;
             cfg.verbose = verbose;
@@ -267,7 +272,9 @@ void init_props(py::module_& m) {
         py::arg("img"), py::arg("sizes"), py::arg("num_samples") = 3, py::arg("phase_id") = 1,
         py::arg("box_size") = 32, py::arg("solver_type") = OpenImpala::SolverType::FlexGMRES,
         py::arg("results_path") = ".", py::arg("csv_filename") = "rev_study_Deff.csv",
-        py::arg("verbose") = 0, py::arg("write_plotfiles") = false,
+        py::arg("verbose") = 0, py::arg("write_plotfiles") = false, py::arg("use_mlmg") = false,
+        py::arg("mlmg_eps") = 1.0e-8, py::arg("mlmg_maxiter") = 200,
+        py::arg("mlmg_max_coarsening_level") = 30,
         "Run a Representative Elementary Volume (REV) convergence study and return "
         "(csv_path, csv_content).");
 }

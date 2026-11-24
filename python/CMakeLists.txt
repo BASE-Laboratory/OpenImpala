@@ -77,10 +77,11 @@ if(UNIX AND NOT APPLE)
     set_target_properties(_core PROPERTIES
         INSTALL_RPATH "$ORIGIN/../../..;$ORIGIN/../../../openmpi"
     )
-    target_link_options(_core PRIVATE
-        $<$<LINK_LANGUAGE:CXX>:-Wl,--enable-new-dtags>
-        $<$<LINK_LANGUAGE:CUDA>:-Xlinker=--enable-new-dtags>
-    )
+    if(NOT GPU_BACKEND STREQUAL "CUDA")
+        target_link_options(_core PRIVATE
+            $<$<LINK_LANGUAGE:CXX>:-Wl,--enable-new-dtags>
+        )
+    endif()
 endif()
 
 # --- Place the compiled extension directly into the Python package ---
@@ -100,6 +101,7 @@ install(FILES
     openimpala/py.typed
     openimpala/session.py
     openimpala/exceptions.py
+    openimpala/protocol.py
     openimpala/facade.py
     openimpala/cli.py
     openimpala/_solver.py
@@ -153,6 +155,8 @@ if(BUILD_TESTING)
             "${PYTHON_TEST_DIR}/test_v470_ecosystem.py")
         openimpala_add_pytest(pytest_v500_ux
             "${PYTHON_TEST_DIR}/test_v500_ux.py")
+        openimpala_add_pytest(pytest_v510_volume_protocol
+            "${PYTHON_TEST_DIR}/test_v510_volume_protocol.py")
 
         # --- Tests requiring _core module ---
         openimpala_add_pytest(pytest_enums

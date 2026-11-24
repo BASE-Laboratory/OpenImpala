@@ -254,7 +254,7 @@ public:
 
 private:
 #ifndef OPENIMPALA_VERSION_STRING
-#define OPENIMPALA_VERSION_STRING "5.0.0"
+#define OPENIMPALA_VERSION_STRING "5.1.0"
 #endif
     static constexpr const char* OPENIMPALA_VERSION = OPENIMPALA_VERSION_STRING;
 

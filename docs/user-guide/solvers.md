@@ -4,17 +4,18 @@ OpenImpala provides two compiled C++ multigrid solver families—matrix-free **A
 
 ## AMReX MLMG (`solver="auto"` or `"mlmg"`)
 
-By default, `oi.tortuosity(..., solver="auto")` selects AMReX's matrix-free geometric multigrid solver (`MLABecLaplacian` + V-cycle multigrid):
+By default, `oi.tortuosity(..., solver="auto")`, `oi.effective_diffusivity(..., solver="auto")`, and `oi.rev_study(..., solver="auto")` select AMReX's matrix-free geometric multigrid solver (`MLABecLaplacian` + `GMRESMLMG` / V-cycle multigrid):
 
-- **Matrix-free**: evaluates the 7-point harmonic-face stencil on the fly without assembling an explicit 7-band sparse matrix or storing Krylov subspace basis vectors.
+- **Matrix-free**: evaluates the 7-point harmonic-face stencil on the fly without assembling an explicit 7-band sparse matrix or storing large HYPRE structured hierarchies.
 - **3.2×–4.4× lower memory footprint than FlexGMRES+PFMG/SMG**: requires roughly **~304–319 bytes per voxel** across the full multigrid hierarchy (including 3-axis face conductances, ghost halos, and V-cycle levels), compared to **~1,016 bytes per voxel** for HYPRE `FlexGMRES + PFMG` and **~1,390 bytes per voxel** for `FlexGMRES + SMG`.
-- **CPU + CUDA native**: executes identical AMReX `ParallelFor` kernels across OpenMP threads and NVIDIA GPUs with grid-independent V-cycle counts ($11$–$18$ iterations from $32^3$ to $256^3$).
+- **CPU + MPI + CUDA native**: executes identical AMReX `ParallelFor` kernels across OpenMP threads, MPI ranks, and NVIDIA GPUs—including full $3\times 3$ periodic homogenisation on `openimpala-cuda` with exact per-component SPD nullspace pinning.
 
 ```python
 import openimpala as oi
 
 vol = oi.datasets.two_phase_cubic()
 res = oi.tortuosity(vol, phase=1, direction="z", solver="mlmg", mlmg_eps=1e-9)
+deff = oi.effective_diffusivity(vol, phase=1, solver="mlmg")
 ```
 
 ### Measured Memory & Runtime Comparison
@@ -31,13 +32,13 @@ Measured on 3D Gaussian random porous media ($\phi = 0.50$, two `x86_64` OpenMP 
 
 ## HYPRE Structured Solvers
 
-For extreme diffusivity contrasts ($\kappa \ll 10^{-2}$ in multi-phase media) or periodic homogenisation cell problems (`oi.effective_diffusivity()`), OpenImpala dispatches to [HYPRE](https://computing.llnl.gov/projects/hypre-scalable-linear-solvers-multigrid-methods)'s structured-grid Krylov solvers preconditioned by Semicoarsening Multigrid (`SMG`) or Pointwise Semicoarsening Multigrid (`PFMG`):
+For extreme diffusivity contrasts ($\kappa \ll 10^{-2}$ in multi-phase media) or explicit cross-verification on CPU/MPI clusters, OpenImpala also dispatches to [HYPRE](https://computing.llnl.gov/projects/hypre-scalable-linear-solvers-multigrid-methods)'s structured-grid Krylov solvers preconditioned by Semicoarsening Multigrid (`SMG`) or Pointwise Semicoarsening Multigrid (`PFMG`):
 
 | Python `solver=` | Algorithm | Preconditioner | Recommended Use Case |
 |------------------|-----------|----------------|----------------------|
-| `"mlmg"` / `"auto"` | AMReX geometric multigrid | Native V-cycle | Default fast path for `tortuosity()` (lowest memory) |
-| `"pcg"` | Conjugate Gradient | `"smg"` or `"pfmg"` | SPD flow-through diffusion on large MPI decompositions |
-| `"flexgmres"` | Flexible GMRES | `"smg"` or `"pfmg"` | Default for `effective_diffusivity()` and high-contrast multi-phase |
+| `"mlmg"` / `"auto"` | AMReX geometric multigrid | Native V-cycle (`GMRESMLMG`) | Default fast path for `tortuosity()`, `effective_diffusivity()`, and `rev_study()` (CPU & CUDA) |
+| `"pcg"` | Conjugate Gradient | `"smg"` or `"pfmg"` | SPD diffusion / homogenisation on CPU MPI decompositions |
+| `"flexgmres"` | Flexible GMRES | `"smg"` or `"pfmg"` | High-contrast multi-phase transport and HYPRE periodic reference |
 | `"bicgstab"` | BiCGSTAB | `"smg"` or `"pfmg"` | Alternative Krylov solver when GMRES memory grows |
 | `"gmres"` | GMRES | `"smg"` or `"pfmg"` | General structured linear systems |
 | `"pfmg"` | Standalone PFMG | — | Fast pointwise multigrid on large regular grids |
@@ -57,17 +58,20 @@ res = oi.tortuosity(
 
 ## Periodic Cell-Problem Solver (`oi.effective_diffusivity`)
 
-`oi.effective_diffusivity()` solves three periodic cell problems using HYPRE (`solver="flexgmres"` by default with `PFMG` preconditioning on the periodic structured grid):
+`oi.effective_diffusivity()` solves three periodic cell problems using matrix-free `EffectiveDiffusivityMLMG` (`solver="auto"` / `"mlmg"`, sharing a single connected-component nullspace pin across $X$, $Y$, and $Z$), or HYPRE structured solvers (`solver="flexgmres" | "pcg" | ...` on CPU):
 
 ```python
-deff = oi.effective_diffusivity(vol, phase=1, solver="flexgmres")
+deff_mlmg = oi.effective_diffusivity(vol, phase=1)                      # default: matrix-free MLMG (CPU + CUDA)
+deff_hypre = oi.effective_diffusivity(vol, phase=1, solver="flexgmres") # explicit HYPRE reference
 ```
 
 ## Convergence Tolerances in C++ Input Files
 
-When running the standalone C++ `Diffusion` executable or tuning HYPRE via `ParmParse`:
+When running the standalone C++ `Diffusion` executable or tuning solvers via `ParmParse`:
 
 ```ini
-hypre.eps     = 1.0e-9    # Relative residual convergence tolerance
-hypre.maxiter = 500       # Maximum Krylov iterations
+mlmg.eps      = 1.0e-8    # Matrix-free AMReX MLMG relative residual tolerance
+mlmg.maxiter  = 200       # Maximum outer iterations / V-cycles
+hypre.eps     = 1.0e-9    # HYPRE relative residual convergence tolerance
+hypre.maxiter = 500       # HYPRE maximum Krylov iterations
 ```

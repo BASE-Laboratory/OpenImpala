@@ -18,6 +18,14 @@
 
 namespace OpenImpala {
 
+/** @brief Return true when solver_str selects the matrix-free AMReX MLMG solver ("mlmg" or "auto").
+ */
+inline bool isMLMGSolverString(const std::string& solver_str) {
+    std::string s = solver_str;
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+    return (s == "mlmg" || s == "auto");
+}
+
 /** @brief Convert a case-insensitive solver name to SolverType.
  *  @param solver_str  Solver name (e.g. "FlexGMRES", "pcg", "BiCGSTAB").
  *  @return Corresponding SolverType enum value.

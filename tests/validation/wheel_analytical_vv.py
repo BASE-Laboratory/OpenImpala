@@ -84,13 +84,10 @@ def _run_analytical_suite(grid_n: int = 32) -> dict:
     )
 
     info = oi.build_info()
-    # HYPRE 2.31 CUDA Struct periodic solver is skipped on GPU builds; test on CPU & pure-Python
-    tensor_list = None
-    if info["backend"] != "cpp-cuda":
-        deff_blobs = oi.effective_diffusivity(blobs, phase=0)
-        assert deff_blobs.tensor.shape == (3, 3)
-        assert np.allclose(deff_blobs.tensor, deff_blobs.tensor.T, atol=1e-5)
-        tensor_list = deff_blobs.tensor.tolist()
+    deff_blobs = oi.effective_diffusivity(blobs, phase=0)
+    assert deff_blobs.tensor.shape == (3, 3)
+    assert np.allclose(deff_blobs.tensor, deff_blobs.tensor.T, atol=1e-5)
+    tensor_list = deff_blobs.tensor.tolist()
 
     return {
         "backend": info["backend"],

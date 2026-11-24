@@ -79,6 +79,11 @@ def _build_parser() -> argparse.ArgumentParser:
             default="/data",
             help="HDF5 dataset path when reading .h5/.hdf5 files (default: /data)",
         )
+        subparser.add_argument(
+            "--label-key",
+            default=None,
+            help="OME-Zarr label group name under labels/<key> (e.g. phase, phase_lower, phase_upper)",
+        )
 
     # --- analyze ---
     p_analyze = sub.add_parser("analyze", help="Full analysis pipeline")
@@ -231,6 +236,7 @@ def _cmd_vf(args: argparse.Namespace) -> int:
         threshold=args.threshold,
         dark_is_pore=args.dark_is_pore,
         hdf5_dataset=args.hdf5_dataset,
+        zarr_label_key=args.label_key,
         max_grid_size=args.max_grid_size,
     )
     vf_res = oi.volume_fraction(img, phase=args.phase)
@@ -253,6 +259,7 @@ def _cmd_percolation(args: argparse.Namespace) -> int:
         threshold=args.threshold,
         dark_is_pore=args.dark_is_pore,
         hdf5_dataset=args.hdf5_dataset,
+        zarr_label_key=args.label_key,
         max_grid_size=args.max_grid_size,
     )
     pc_res = oi.percolation_check(
@@ -304,6 +311,7 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         threshold=args.threshold,
         dark_is_pore=args.dark_is_pore,
         hdf5_dataset=args.hdf5_dataset,
+        zarr_label_key=args.label_key,
         voxel_size=vz,
         max_grid_size=args.max_grid_size,
     )
@@ -362,9 +370,8 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         result["flux_out"] = tau_res.flux_out
 
     if getattr(args, "deff", False):
-        hypre_solver = "flexgmres" if args.solver in ("auto", "mlmg") else args.solver
         deff_res = oi.effective_diffusivity(
-            img, phase=args.phase, solver=hypre_solver, verbose=args.verbose
+            img, phase=args.phase, solver=args.solver, verbose=args.verbose
         )
         result["deff_tensor"] = deff_res.tensor.tolist()
         result["deff_diagonal"] = list(deff_res.diagonal)
