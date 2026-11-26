@@ -4,6 +4,7 @@
 
 #include "EffectiveDiffusivityMLMG.H"
 #include "PeriodicComponentPin.H"
+#include "SingleLevelGMRESMLMG.H"
 #include "SolverConfig.H"
 
 #include <algorithm>
@@ -455,14 +456,14 @@ bool EffectiveDiffusivityMLMG::solveFloat32() {
     float abs_res = -1.0f;
     try {
         if (m_use_gmres) {
-            amrex::GMRESMLMGT<amrex::fMultiFab> gmres_f(mlmg_f);
+            SingleLevelGMRESMLMG gmres_f(mlmg_f, m_ba, m_dm);
             gmres_f.getGMRES().setRestartLength(m_gmres_restart);
             gmres_f.setMaxIters(m_maxiter);
             if (m_verbose > 1) {
                 gmres_f.setVerbose(m_verbose - 1);
             }
             gmres_f.getGMRES().setVerbose(m_verbose);
-            gmres_f.solve({&chi_nd_f}, {&rhs_f}, eps_f, tol_abs_2);
+            gmres_f.solve(chi_nd_f, rhs_f, eps_f, tol_abs_2);
             abs_res = gmres_f.getResidualNorm();
             m_num_iterations = gmres_f.getNumIters();
             m_converged = (gmres_f.getGMRES().getStatus() == 0);
@@ -651,9 +652,9 @@ bool EffectiveDiffusivityMLMG::solveMixed() {
     mlmg_f.setBottomVerbose(0);
     mlmg_f.setThrowException(true);
 
-    std::unique_ptr<amrex::GMRESMLMGT<amrex::fMultiFab>> gmres_f;
+    std::unique_ptr<SingleLevelGMRESMLMG> gmres_f;
     if (m_use_gmres) {
-        gmres_f = std::make_unique<amrex::GMRESMLMGT<amrex::fMultiFab>>(mlmg_f);
+        gmres_f = std::make_unique<SingleLevelGMRESMLMG>(mlmg_f, m_ba, m_dm);
         gmres_f->getGMRES().setRestartLength(m_gmres_restart);
         gmres_f->setMaxIters(std::min(m_maxiter, 60));
         gmres_f->setVerbose(m_verbose > 1 ? m_verbose - 1 : 0);
@@ -703,7 +704,7 @@ bool EffectiveDiffusivityMLMG::solveMixed() {
             if (m_use_gmres) {
                 const int rem = std::max(1, m_maxiter - total_iters);
                 gmres_f->setMaxIters(std::min(rem, 60));
-                gmres_f->solve({&cor_f}, {&rhs_f}, inner_rel_tol, 0.0f);
+                gmres_f->solve(cor_f, rhs_f, inner_rel_tol, 0.0f);
                 total_iters += gmres_f->getNumIters();
             } else {
                 const int rem = std::max(1, m_maxiter - total_iters);

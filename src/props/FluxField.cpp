@@ -142,19 +142,18 @@ FluxStats computeTortuosityFluxStats(const amrex::Geometry& geom, const amrex::M
         reduce_op;
     amrex::ReduceData<amrex::Real, amrex::Real, amrex::Real, long> reduce_data(reduce_op);
 
+    using ReduceTuple = amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, long>;
     for (amrex::MFIter mfi(mf_flux); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();
         const auto flux_arr = mf_flux.const_array(mfi, 3);
         const auto mask_arr = mf_active_mask.const_array(mfi, 0);
-        reduce_op.eval(bx, reduce_data,
-                       [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                       -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, long> {
-                           if (mask_arr(i, j, k) == 1) {
-                               const amrex::Real mag = flux_arr(i, j, k);
-                               return {mag, mag * mag, mag, 1L};
-                           }
-                           return {0.0, 0.0, 0.0, 0L};
-                       });
+        reduce_op.eval(bx, reduce_data, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            if (mask_arr(i, j, k) == 1) {
+                const amrex::Real mag = flux_arr(i, j, k);
+                return ReduceTuple{mag, mag * mag, mag, 1L};
+            }
+            return ReduceTuple{0.0, 0.0, 0.0, 0L};
+        });
     }
 
     auto rv = reduce_data.value();

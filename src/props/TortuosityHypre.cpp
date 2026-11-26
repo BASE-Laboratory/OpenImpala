@@ -1326,7 +1326,7 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
             flux_reduce_op.eval(
                 lobox_face, flux_reduce_data,
                 [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
+                    -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
                     amrex::Real fxin = 0.0, cells_in = 0.0;
                     if (mask(i, j, k) == cell_active) {
                         cells_in = 1.0;
@@ -1351,7 +1351,7 @@ void OpenImpala::TortuosityHypre::global_fluxes() {
             flux_reduce_op.eval(
                 hibox_face, flux_reduce_data,
                 [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
+                    -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
                     amrex::Real fxout = 0.0, cells_out = 0.0;
                     if (mask(i, j, k) == cell_active) {
                         cells_out = 1.0;
