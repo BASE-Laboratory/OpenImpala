@@ -1,6 +1,6 @@
 # Changelog
 
-## v5.1.0 (Unreleased)
+## v5.1.0 (2026-11-26)
 
 Matrix-free 3×3 periodic homogenisation (`EffectiveDiffusivityMLMG`) across CPU, MPI,
 and CUDA GPUs, plus `BASE-Laboratory` Layer 3 `VolumeProtocol` and `.ome.zarr` polish.
