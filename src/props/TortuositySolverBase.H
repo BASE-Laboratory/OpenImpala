@@ -26,6 +26,7 @@
 #include <AMReX_Vector.H>
 #include <AMReX_iMultiFab.H>
 
+#include "FluxField.H"
 #include "Tortuosity.H"
 
 namespace OpenImpala {
@@ -148,6 +149,11 @@ public:
     // --- Post-solve analysis ---
     void globalFluxes();
     void computePlaneFluxes(const amrex::MultiFab& mf_soln);
+    void computeCellFluxField(amrex::MultiFab& mf_flux) const;
+    FluxStats computeFluxStats(int num_bins = 16) const;
+    void setWriteFluxField(bool enable) {
+        m_write_flux_in_plotfile = enable;
+    }
     void writeSolutionPlotfile(const std::string& label);
 
 protected:
@@ -170,6 +176,7 @@ protected:
     amrex::Real m_vhi;
     const amrex::Real m_vf; ///< Original total VF (reference)
     bool m_write_plotfile;
+    bool m_write_flux_in_plotfile = false;
     int m_verbose;
 
     // --- Multi-phase configuration ---

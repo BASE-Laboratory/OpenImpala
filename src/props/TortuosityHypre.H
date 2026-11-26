@@ -23,6 +23,7 @@
 #include <HYPRE_struct_ls.h> // Struct interface header (should provide HYPRE_Int)
 
 #include "BoundaryCondition.H"
+#include "FluxField.H"
 #include "HypreStructSolver.H"
 #include "Tortuosity.H" // Defines OpenImpala::Tortuosity and OpenImpala::Direction
 
@@ -181,6 +182,11 @@ public:
     void getCellTypes(amrex::MultiFab& phi, int ncomp = 1); // Not implemented
     void global_fluxes();
     void computePlaneFluxes(const amrex::MultiFab& mf_soln);
+    void computeCellFluxField(amrex::MultiFab& mf_flux) const;
+    FluxStats computeFluxStats(int num_bins = 16) const;
+    void setWriteFluxField(bool enable) {
+        m_write_flux_in_plotfile = enable;
+    }
 
 private:
     // --- Member Variables ---
@@ -192,6 +198,7 @@ private:
     amrex::Real m_vhi;
     const amrex::Real m_vf; // Original total VF (kept for reference if needed)
     bool m_write_plotfile;
+    bool m_write_flux_in_plotfile = false;
 
     // Preconditioner for Krylov solvers (ignored for standalone SMG/PFMG/Jacobi)
     PrecondType m_precond_type = PrecondType::SMG;

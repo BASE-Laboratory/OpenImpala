@@ -52,7 +52,8 @@ public:
                              amrex::Real eps = 1.0e-8, int maxiter = 200,
                              int max_coarsening_level = 30,
                              const std::map<int, amrex::Real>& phase_coeffs = {},
-                             const amrex::iMultiFab* precomputed_cell_type = nullptr);
+                             const amrex::iMultiFab* precomputed_cell_type = nullptr,
+                             MLMGPrecision precision = MLMGPrecision::Float64);
 
     ~EffectiveDiffusivityMLMG() = default;
 
@@ -85,12 +86,18 @@ public:
     amrex::Real getFinalRelativeResidualNorm() const {
         return m_final_res_norm;
     }
+    MLMGPrecision getPrecision() const {
+        return m_precision;
+    }
 
     // Public for CUDA __device__ lambda compatibility (CUDA Programming Guide §I.4.1)
     void initializeDiffCoeff();
     void generateActiveMask();
     long countActiveCells() const;
     void writeChiPlotfile() const;
+    bool solveFloat64();
+    bool solveFloat32();
+    bool solveMixed();
 
 private:
     amrex::Geometry m_geom;
@@ -109,6 +116,7 @@ private:
     int m_max_coarsening_level = 30;
     bool m_use_gmres = true;
     int m_gmres_restart = 24;
+    MLMGPrecision m_precision = MLMGPrecision::Float64;
     amrex::Real m_max_diff_coeff = 1.0;
     long m_num_active_cells = 0;
 

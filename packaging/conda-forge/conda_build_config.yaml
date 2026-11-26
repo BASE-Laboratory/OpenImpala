@@ -1,0 +1,20 @@
+c_compiler:
+  - gcc        # [linux]
+  - clang      # [osx]
+cxx_compiler:
+  - gxx        # [linux]
+  - clangxx    # [osx]
+mpi:
+  - openmpi
+  - mpich
+python:
+  - 3.10.* *_cpython
+  - 3.11.* *_cpython
+  - 3.12.* *_cpython
+numpy:
+  - 1.26
+  - 1.26
+  - 1.26
+zip_keys:
+  - python
+  - numpy

@@ -74,6 +74,12 @@ void init_config(py::module_& m) {
         .def("set_volume_fraction", &ResultsJSON::setVolumeFraction, py::arg("vf"))
         .def("add_direction_result", &ResultsJSON::addDirectionResult, py::arg("dir"),
              py::arg("D_eff_ratio"))
+        .def("set_direction_flux_stats", &ResultsJSON::setDirectionFluxStats, py::arg("dir"),
+             py::arg("mean_mag"), py::arg("max_mag"), py::arg("std_mag"),
+             py::arg("hist_edges") = std::vector<Real>{},
+             py::arg("hist_counts") = std::vector<long long>{})
+        .def("set_active_specific_surface_area", &ResultsJSON::setActiveSpecificSurfaceArea,
+             py::arg("ssa_active"), py::arg("ssa_active_raw"), py::arg("direction"))
         .def("set_bpx_electrode", &ResultsJSON::setBPXElectrode, py::arg("electrode"))
 
         // Return JSON as a Python string (user can json.loads() it)

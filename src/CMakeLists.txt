@@ -43,6 +43,7 @@ set(PROPS_SOURCES
     props/EffectiveDiffusivityHypre.cpp
     props/EffectiveDiffusivityMLMG.cpp
     props/FloodFill.cpp
+    props/FluxField.cpp
     props/HypreStructSolver.cpp
     props/ParticleSizeDistribution.cpp
     props/PercolationCheck.cpp

@@ -376,6 +376,7 @@ def __getattr__(name):
         "SolverType",
         "PrecondType",
         "EffDiffSolverType",
+        "MLMGPrecision",
         "PhysicsType",
     }
     _FACADE_ATTRS = {
@@ -463,6 +464,7 @@ __all__ = [
     "SolverType",
     "PrecondType",
     "EffDiffSolverType",
+    "MLMGPrecision",
     "PhysicsType",
     "Session",
     "VolumeProtocol",

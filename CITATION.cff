@@ -11,7 +11,7 @@ authors:
 repository-code: "https://github.com/BASE-Laboratory/OpenImpala"
 url: "https://base-laboratory.github.io/OpenImpala/"
 license: BSD-3-Clause
-version: 5.1.0
+version: 5.2.0
 date-released: "2026-11-26"
 keywords:
   - porous media

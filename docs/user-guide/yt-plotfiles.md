@@ -46,9 +46,11 @@ OpenImpala writes BoxLib `HyperCLaw-V1.1` plotfile directories containing a `Hea
 
 | Solver | Plotfile Directory (`idir = 0, 1, 2` for `x, y, z`) | Stored `boxlib` Fields |
 |--------|------------------------------------------------------|------------------------|
-| `tortuosity(..., solver="mlmg")` | `<results_path>/tortuosity_mlmg_<idir>/` | `"solution_potential"`, `"phase_id"`, `"active_mask"` |
-| `tortuosity(..., solver="pcg" \| "flexgmres" \| ...)` | `<results_path>/tortuosity_solution_<idir>/` | `"solution_potential"`, `"phase_id"`, `"active_mask"` |
+| `tortuosity(..., solver="mlmg")` | `<results_path>/tortuosity_mlmg_<idir>/` | `"solution_potential"`, `"phase_id"`, `"active_mask"` (+ `"flux_x"`, `"flux_y"`, `"flux_z"`, `"flux_magnitude"` when `return_flux=True` or `post_process.write_flux_field = true`) |
+| `tortuosity(..., solver="pcg" \| "flexgmres" \| ...)` | `<results_path>/tortuosity_solution_<idir>/` | `"solution_potential"`, `"phase_id"`, `"active_mask"` (+ `"flux_x"`, `"flux_y"`, `"flux_z"`, `"flux_magnitude"` when `return_flux=True` or `post_process.write_flux_field = true`) |
 | `effective_diffusivity(...)` | `<results_path>/effdiff_chi_dir<idir>/` | `"chi_k"`, `"active_mask_from_solver"` |
+
+On Lustre or GPFS parallel filesystems, pass `plotfile_nfiles=64` (or `plotfile.nfiles = 64` in C++) to control `VisMF` file striping across MPI ranks.
 
 ## Lazy Slicing and 1D Profiles with `yt`
 

@@ -85,8 +85,8 @@ void calculateDeffTensor(amrex::Real Deff_tensor[AMREX_SPACEDIM][AMREX_SPACEDIM]
         reduce_op.eval(
             bx, reduce_data,
             [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real, amrex::Real,
-                                   amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
+            -> amrex::GpuTuple<amrex::Real, amrex::Real, amrex::Real, amrex::Real, amrex::Real,
+                               amrex::Real, amrex::Real, amrex::Real, amrex::Real> {
                 if (mask_arr(i, j, k, 0) != 1) {
                     return {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
                 }

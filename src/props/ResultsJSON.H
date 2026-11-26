@@ -114,6 +114,28 @@ public:
         m_has_ssa_raw = true;
     }
 
+    /// Set electrochemically active (percolating) specific surface area.
+    void setActiveSpecificSurfaceArea(Real ssa_active, Real ssa_active_raw,
+                                      const std::string& direction) {
+        m_ssa_active = ssa_active;
+        m_ssa_active_raw = ssa_active_raw;
+        m_ssa_active_dir = direction;
+        m_has_ssa_active = true;
+    }
+
+    /// Set summary statistics of the local 3-D diffusive flux magnitude for a direction.
+    void setDirectionFluxStats(const std::string& dir, Real mean_mag, Real max_mag, Real std_mag,
+                               const std::vector<Real>& hist_edges = {},
+                               const std::vector<long long>& hist_counts = {}) {
+        DirectionFluxStats fs;
+        fs.mean_magnitude = mean_mag;
+        fs.max_magnitude = max_mag;
+        fs.std_magnitude = std_mag;
+        fs.histogram_edges = hist_edges;
+        fs.histogram_counts = hist_counts;
+        m_flux_stats[dir] = std::move(fs);
+    }
+
     /// Set multi-phase volume fractions (phase_id -> VF).
     void setMultiPhaseVolumeFractions(const std::map<int, Real>& phase_vfs) {
         m_phase_vfs = phase_vfs;
@@ -202,6 +224,17 @@ public:
             if (m_physics.type == PhysicsType::ElectricalConductivity) {
                 dir_obj["formation_factor"] = m_physics.formationFactor(ratio);
             }
+            auto fs_it = m_flux_stats.find(dir);
+            if (fs_it != m_flux_stats.end()) {
+                auto& fobj = dir_obj["flux_stats"];
+                fobj["mean_magnitude"] = fs_it->second.mean_magnitude;
+                fobj["max_magnitude"] = fs_it->second.max_magnitude;
+                fobj["std_magnitude"] = fs_it->second.std_magnitude;
+                if (!fs_it->second.histogram_edges.empty()) {
+                    fobj["histogram_edges"] = fs_it->second.histogram_edges;
+                    fobj["histogram_counts"] = fs_it->second.histogram_counts;
+                }
+            }
         }
 
         // D_eff tensor (from homogenization)
@@ -254,9 +287,17 @@ public:
 
 private:
 #ifndef OPENIMPALA_VERSION_STRING
-#define OPENIMPALA_VERSION_STRING "5.1.0"
+#define OPENIMPALA_VERSION_STRING "5.2.0"
 #endif
     static constexpr const char* OPENIMPALA_VERSION = OPENIMPALA_VERSION_STRING;
+
+    struct DirectionFluxStats {
+        Real mean_magnitude = 0.0;
+        Real max_magnitude = 0.0;
+        Real std_magnitude = 0.0;
+        std::vector<Real> histogram_edges;
+        std::vector<long long> histogram_counts;
+    };
 
     // Physics configuration
     PhysicsConfig m_physics;
@@ -280,6 +321,7 @@ private:
     // Results
     Real m_volume_fraction = 0.0;
     std::map<std::string, Real> m_deff_ratios;
+    std::map<std::string, DirectionFluxStats> m_flux_stats;
 
     // BPX electrode type (empty = no BPX fragment)
     std::string m_bpx_electrode;
@@ -289,6 +331,10 @@ private:
     bool m_has_ssa = false;
     Real m_ssa_raw = 0.0;
     bool m_has_ssa_raw = false;
+    Real m_ssa_active = 0.0;
+    Real m_ssa_active_raw = 0.0;
+    std::string m_ssa_active_dir;
+    bool m_has_ssa_active = false;
     std::map<int, Real> m_phase_vfs;
     Real m_macro_thickness = 0.0;
     Real m_macro_cross_section = 0.0;
@@ -309,8 +355,8 @@ private:
 
     // --- Build microstructure parameters block ---
     void buildMicrostructureBlock(nlohmann::ordered_json& oi) const {
-        if (!m_has_ssa && !m_has_ssa_raw && m_phase_vfs.empty() && !m_has_macro &&
-            m_tt_profiles.empty() && !m_has_solid_bruggeman && !m_has_psd) {
+        if (!m_has_ssa && !m_has_ssa_raw && !m_has_ssa_active && m_phase_vfs.empty() &&
+            !m_has_macro && m_tt_profiles.empty() && !m_has_solid_bruggeman && !m_has_psd) {
             return;
         }
 
@@ -321,6 +367,13 @@ private:
         }
         if (m_has_ssa_raw) {
             ms["specific_surface_area_raw"] = m_ssa_raw;
+        }
+        if (m_has_ssa_active) {
+            ms["active_specific_surface_area"] = m_ssa_active;
+            ms["active_specific_surface_area_raw"] = m_ssa_active_raw;
+            if (!m_ssa_active_dir.empty()) {
+                ms["active_ssa_direction"] = m_ssa_active_dir;
+            }
         }
 
         if (!m_phase_vfs.empty()) {

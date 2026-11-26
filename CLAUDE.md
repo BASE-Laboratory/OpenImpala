@@ -154,7 +154,7 @@ make -j$(nproc) && ctest --output-on-failure
 |------|---------|
 | `TiffReader.H/cpp` | Reads single/multi-directory TIFFs and TIFF sequences |
 | `HDF5Reader.H/cpp` | Reads HDF5 datasets with parallel I/O |
-| `RawReader.H/cpp` | Reads flat binary files (UINT8, INT16, FLOAT32, etc.) |
+| `RawReader.H/cpp` | Collective MPI-IO subarray streaming for flat binary files (`UINT8`, `INT16`, `FLOAT32`, …) |
 | `DatReader.H/cpp` | Reads legacy DAT binary format |
 | `CathodeWrite.H/cpp` | Output struct for battery electrode parameters |
 
@@ -162,30 +162,31 @@ make -j$(nproc) && ctest --output-on-failure
 | File | Purpose |
 |------|---------|
 | `Diffusion.cpp` | **Main application entry point** — orchestrates full pipeline |
-| `Tortuosity.H` | Base interface + enums (Direction, CellType, SolverType) |
+| `Tortuosity.H` | Base interface + enums (`Direction`, `CellType`, `SolverType`, `MLMGPrecision`) |
 | `TortuositySolverBase.H/cpp` | Shared solver setup + flux/τ post-processing (base class) |
 | `TortuosityHypre.H/cpp` | HYPRE structured-grid tortuosity solver |
-| `TortuosityMLMG.H/cpp` | Matrix-free AMReX MLMG tortuosity solver (masked voxel faces, GPU-native) |
+| `TortuosityMLMG.H/cpp` | Matrix-free AMReX MLMG tortuosity solver (`float64`/`float32`/`mixed`, GPU-native) |
 | `TortuosityDirect.H/cpp` | Legacy iterative tortuosity solver (Forward Euler) |
 | `TortuosityKernels.H` | C++ hot-path kernels (isolated-cell removal, face flux, flux integration) |
+| `FluxField.H/cpp` | Cell-centred 3D diffusive flux vector/magnitude & `FluxStats` reductions |
 | `HypreStructSolver.H/cpp` | HYPRE lifecycle/infrastructure shared by HYPRE solvers |
-| `EffectiveDiffusivityMLMG.H/cpp` | Matrix-free AMReX MLMG periodic cell-problem solver (CPU/MPI/CUDA) |
+| `EffectiveDiffusivityMLMG.H/cpp` | Matrix-free AMReX MLMG periodic cell-problem solver (`float64`/`float32`/`mixed`, CPU/MPI/CUDA) |
 | `EffectiveDiffusivityHypre.H/cpp` | HYPRE structured-grid periodic cell-problem solver |
 | `PeriodicComponentPin.H/cpp` | Periodic connected-component BFS + MPI/CUDA nullspace pinning |
 | `DeffTensor.H/cpp` | Assembles 3×3 D_eff tensor from χ gradients |
 | `VolumeFraction.H/cpp` | Phase volume fraction calculator |
-| `PercolationCheck.H/cpp` | Flood-fill percolation connectivity check |
+| `PercolationCheck.H/cpp` | Flood-fill percolation connectivity check + participating `activeMask()` |
 | `FloodFill.H/cpp` | GPU-parallel flood-fill (used by percolation/components/mask) |
 | `ConnectedComponents.H/cpp` | Labels contiguous regions of a phase |
-| `SpecificSurfaceArea.H/cpp` | Interface area via Cauchy–Crofton stereology |
+| `SpecificSurfaceArea.H/cpp` | Total and percolation-filtered active interface area via Cauchy–Crofton stereology |
 | `ParticleSizeDistribution.H/cpp` | Equivalent-sphere radii from components |
 | `ThroughThicknessProfile.H/cpp` | Per-slice volume fraction along a direction |
-| `REVStudy.H/cpp` | Representative Elementary Volume convergence study |
+| `REVStudy.H/cpp` | Representative Elementary Volume convergence study with deterministic CSV resume |
 | `PhysicsConfig.H` | Physics type mapping (diffusion ↔ conductivity ↔ thermal) |
-| `SolverConfig.H` | String↔enum parsing (solver type, direction) |
+| `SolverConfig.H` | String↔enum parsing (solver type, direction, MLMG precision) |
 | `BoundaryCondition.H` | BC enums/abstraction (Dirichlet/Neumann/Periodic) |
 | `MacroGeometry.H` | Electrode thickness / cross-section / volume helpers |
-| `ResultsJSON.H` | Structured JSON output (BPX/BattINFO compatible) |
+| `ResultsJSON.H` | Structured JSON output (BPX/BattINFO compatible, `flux_stats`, active SSA) |
 
 > **Note:** The HYPRE/MLMG matrix-fill and flux kernels were historically
 > Fortran 90 (`*_F.H` ↔ `*.F90`) but have been migrated to native C++ in
@@ -212,6 +213,7 @@ make -j$(nproc) && ctest --output-on-failure
 | `tTortuosity.cpp` | Tortuosity on real TIFF data |
 | `tEffectiveDiffusivity.cpp` | D_eff tensor on real TIFF data |
 | `tEffectiveDiffusivityMLMG.cpp` | Matrix-free periodic homogenisation MLMG parity & multi-phase tests |
+| `tV52FluxAndPrecision.cpp` | 3D flux fields, active SSA, float32/mixed MLMG, collective RawReader MPI-IO & REV resume |
 | `tVolumeFraction.cpp` | Volume fraction validation |
 | `tPercolationCheck.cpp` | Flood-fill connectivity check |
 | `tTortuosityMLMG.cpp` | Matrix-free MLMG solver (directional/geometry variants) |

@@ -27,6 +27,7 @@
 #include <AMReX_MFIter.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_RealBox.H>
+#include <AMReX_VisMF.H>
 #include <AMReX_iMultiFab.H>
 
 #ifdef AMREX_USE_MPI
@@ -447,6 +448,18 @@ PYBIND11_MODULE(_core, m) {
           "Return True on the AMReX I/O processor (or when AMReX is not initialised).");
     m.def("mpi_bcast_double", &mpi_bcast_double, py::arg("val"),
           "Broadcast a scalar double from the AMReX I/O processor to all MPI ranks.");
+    m.def(
+        "set_plotfile_nfiles",
+        [](int nfiles) {
+            if (nfiles <= 0) {
+                throw std::invalid_argument("nfiles must be positive");
+            }
+            amrex::VisMF::SetNOutFiles(nfiles);
+        },
+        py::arg("nfiles"), "Set the number of parallel output files written per AMReX plotfile.");
+    m.def(
+        "get_plotfile_nfiles", []() { return amrex::VisMF::GetNOutFiles(); },
+        "Return the current number of parallel output files written per AMReX plotfile.");
     m.def("build_info", &build_info,
           "Return a dict of compile-time feature flags (cuda, openmp, mpi, tiny_profile, "
           "hypre_cuda) plus runtime GPU device count.  Use this to verify which wheel "

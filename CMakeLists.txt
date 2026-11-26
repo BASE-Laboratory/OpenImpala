@@ -20,7 +20,7 @@ cmake_minimum_required(VERSION 3.18)
 # Falls back to OPENIMPALA_FALLBACK_VERSION when building outside a Git
 # repository or when no tag is reachable (e.g. shallow clone without --tags).
 # ---------------------------------------------------------------------------
-set(OPENIMPALA_FALLBACK_VERSION "5.1.0")
+set(OPENIMPALA_FALLBACK_VERSION "5.2.0")
 
 find_package(Git QUIET)
 if(GIT_FOUND)
@@ -37,9 +37,9 @@ if(GIT_FOUND)
     endif()
 endif()
 
-if(NOT _detected_version)
+if(NOT _detected_version OR _detected_version VERSION_LESS OPENIMPALA_FALLBACK_VERSION)
     set(_detected_version "${OPENIMPALA_FALLBACK_VERSION}")
-    message(STATUS "Git tag not found — using fallback version ${_detected_version}")
+    message(STATUS "Using OpenImpala version ${_detected_version}")
 else()
     message(STATUS "Version from Git tag: ${_detected_version}")
 endif()

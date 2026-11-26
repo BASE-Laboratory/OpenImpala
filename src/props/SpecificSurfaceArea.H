@@ -45,9 +45,15 @@ public:
      * @param boundary_padding Number of voxel layers to exclude from all domain
      *        faces (default 0). Both face counting and cell counting are
      *        restricted to the interior padded region.
+     * @param active_mask Optional percolating activity mask (>=1 ghost cell).
+     *        When non-null, only interfaces where the *active_phase* side has
+     *        ``active_mask != 0`` are counted (electrochemically active SSA).
+     * @param active_phase Phase ID whose connectivity is tested against
+     *        *active_mask* (defaults to *phase_a* when negative).
      */
     SpecificSurfaceArea(const amrex::Geometry& geom, const amrex::iMultiFab& fm, int phase_a = 0,
-                        int phase_b = 1, int comp = 0, int boundary_padding = 0);
+                        int phase_b = 1, int comp = 0, int boundary_padding = 0,
+                        const amrex::iMultiFab* active_mask = nullptr, int active_phase = -1);
 
     SpecificSurfaceArea(const SpecificSurfaceArea&) = delete;
     SpecificSurfaceArea& operator=(const SpecificSurfaceArea&) = delete;
@@ -124,6 +130,8 @@ private:
     int m_phase_b;
     int m_comp;
     int m_boundary_padding;
+    const amrex::iMultiFab* m_active_mask = nullptr;
+    int m_active_phase = -1;
 };
 
 } // namespace OpenImpala

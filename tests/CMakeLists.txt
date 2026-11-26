@@ -585,6 +585,26 @@ set_tests_properties(tTortuosityMLMG_channel PROPERTIES
 openimpala_add_test(tEffectiveDiffusivityMLMG  "${CMAKE_CURRENT_SOURCE_DIR}/tEffectiveDiffusivityMLMG.cpp")
 
 # ==============================================================================
+# v5.2.0 Flux, Active SSA, Mixed-Precision MLMG, Collective RawReader & REV Resume
+# ==============================================================================
+openimpala_add_test(tV52FluxAndPrecision  "${CMAKE_CURRENT_SOURCE_DIR}/tV52FluxAndPrecision.cpp")
+
+if(NOT GPU_BACKEND STREQUAL "CUDA")
+    add_test(
+        NAME tV52FluxAndPrecision_mpi2
+        COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                ${MPIEXEC_PREFLAGS}
+                $<TARGET_FILE:tV52FluxAndPrecision>
+                amrex.verbose=0
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+    set_tests_properties(tV52FluxAndPrecision_mpi2 PROPERTIES
+        ENVIRONMENT "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1;OMPI_MCA_rmaps_base_oversubscribe=1;OMP_NUM_THREADS=1"
+        TIMEOUT 300
+    )
+endif()
+
+# ==============================================================================
 # Unit Tests (Catch2 — fast, no MPI/AMReX required)
 # ==============================================================================
 add_subdirectory(unit)

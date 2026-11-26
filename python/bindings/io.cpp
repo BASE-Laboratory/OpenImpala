@@ -236,6 +236,8 @@ void init_io(py::module_& m) {
         .def_property_readonly("depth", &RawReader::depth)
         .def_property_readonly("is_read", &RawReader::isRead)
         .def_property_readonly("data_type", &RawReader::getDataType)
+        .def_property_readonly("has_full_buffer_allocated", &RawReader::hasFullBufferAllocated)
+        .def_static("parse_data_type", &RawReader::parseDataType, py::arg("type_str"))
 
         .def("get_value", &RawReader::getValue, py::arg("i"), py::arg("j"), py::arg("k"),
              "Retrieve a single voxel value (converted to float).")

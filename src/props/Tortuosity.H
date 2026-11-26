@@ -51,6 +51,13 @@ enum class SolverType {
     PFMG       /**< HYPRE_StructPFMG */
 };
 
+/** @brief Floating-point precision mode for AMReX matrix-free MLMG V-cycles. */
+enum class MLMGPrecision {
+    Float64 = 0, /**< Double-precision operator and multigrid V-cycles (default) */
+    Float32 = 1, /**< Single-precision operator and multigrid V-cycles (~2x lower RAM) */
+    Mixed = 2    /**< Single-precision multigrid V-cycles with outer double defect correction */
+};
+
 /**
  * @brief Abstract base class for computing the tortuosity of a structure.
  *

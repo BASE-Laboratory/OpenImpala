@@ -1,5 +1,19 @@
 # Changelog
 
+## v5.2.0 (2026-11-26)
+
+Local 3D diffusive flux fields, electrochemically active interfacial surface area,
+single- and mixed-precision `MLMG` V-cycles, collective MPI-IO `.raw` streaming,
+parallel checkpoint/restart, and `conda-forge` / `Spack` packaging recipes.
+
+- **3D cell-centred diffusive flux vector & magnitude (`Issue #34`)** — `tortuosity(..., return_flux=True)` and `tortuosity_all(..., return_flux=True)` populate `TortuosityResult.flux_field` `(Nz, Ny, Nx, 3)` ordered `(Jz, Jy, Jx)` and `TortuosityResult.flux_magnitude` `(Nz, Ny, Nx)` across `TortuosityMLMG`, `TortuosityHypre`, and the pure-Python solver; `write_plotfile=True` + `return_flux=True` (or C++ `post_process.write_flux_field = true`) exports 7-component AMReX plotfiles (`flux_x`, `flux_y`, `flux_z`, `flux_magnitude`), and `openimpala analyze --flux-stats` / `post_process.calc_flux_stats` write flux summary statistics and histograms to JSON
+- **Electrochemically active / participating interfacial SSA (`Issue #34`)** — `specific_surface_area(..., active_only=True, direction=..., active_phase=...)` and C++ `microstructure.compute_active_ssa = true` restrict Cauchy–Crofton interface counting to percolating voxels (`PercolationCheck::activeMask()`), excluding isolated and dead-end pockets
+- **Single- & mixed-precision `MLMG` solvers (`Issues #13, #30`)** — `TortuosityMLMG` and `EffectiveDiffusivityMLMG` gain `mlmg_precision="float64" | "float32" | "mixed"` (`mlmg.precision`, `openimpala analyze --precision`, and `estimate_memory(..., precision=)`), combining coordinate/diffusivity non-dimensionalised `amrex::fMultiFab` V-cycles (~185 B/voxel in `float32`, ~235 B/voxel in `mixed`) with outer `float64` fine-grid residual defect correction in `"mixed"` mode to match `float64` accuracy to `< 1e-6` even at nanometre SI voxel spacings
+- **Collective MPI-IO `.raw` streaming, parallel plotfiles & checkpoint/restart (`Issues #18, #32, #33`)** — `RawReader` streams per-rank 3D subarrays collectively via `MPI_File_read_all` + `MPI_Type_create_subarray` without allocating a full-volume host buffer (`ImageLoader` / `Diffusion` also gain `.raw` `ParmParse("raw")` support), `plotfile_nfiles=` / `plotfile.nfiles` controls `VisMF::SetNOutFiles` parallel plotfile concurrency, `rev_study(..., resume=True)` / `rev.resume` resumes interrupted REV CSV sweeps deterministically, and `Diffusion` supports `checkpoint.dir` / `checkpoint.restart`
+- **HPC & Conda packaging (`Issues #147, #220`)** — added `packaging/conda-forge/` feedstock recipe (`openmpi`, `amrex`, `hypre`, `hdf5`, `libtiff`), `packaging/spack/packages/openimpala/package.py` (`CudaPackage` with `+mpi`, `+openmp`, `+python`, `+cuda` variants), and `cmake/FindHYPRE.cmake` `include/hypre` discovery
+
+See the [v5.2.0 release notes](https://github.com/BASE-Laboratory/OpenImpala/releases/tag/v5.2.0).
+
 ## v5.1.0 (2026-11-26)
 
 Matrix-free 3×3 periodic homogenisation (`EffectiveDiffusivityMLMG`) across CPU, MPI,
@@ -9,6 +23,8 @@ and CUDA GPUs, plus `BASE-Laboratory` Layer 3 `VolumeProtocol` and `.ome.zarr` p
 - **Zero-dependency `VolumeProtocol` & `UnitCalibrationError`** — all high-level solvers accept calibrated `openimpala.VolumeProtocol` and `VolumeSet`-like containers (including `basecoat.Volume` and `basecoat.VolumeSet` with `labels["phase"]`) with zero runtime `basecoat` dependency, converting physical spacing to SI metres (`spacing_in("m")`) and raising `UnitCalibrationError` on uncalibrated volumes unless `voxel_size=` is supplied
 - **Lazy OME-Zarr `labels/<label_key>`, SI `[m]` safety & CLI `--label-key`** — phase solvers and `read_image(..., zarr_label_key=...)` inspect OME-Zarr metadata lazily without reading grayscale root chunks, `openimpala analyze / vf / percolation` gain `--label-key` (e.g. `phase`, `phase_lower`, `phase_upper`), and `to_pybamm_parameters()` / `export_bpx_json()` automatically convert calibrated OME-Zarr spatial units to SI metres
 - **CUDA wheel linker & packaging fixes** — fixed the `openimpala-cuda` host-linker flag under `AMReX_GPU_RDC=OFF` and ensured `openimpala/protocol.py` is installed in compiled wheels
+
+See the [v5.1.0 release notes](https://github.com/BASE-Laboratory/OpenImpala/releases/tag/v5.1.0).
 
 ## v5.0.0 (2026-11-20)
 

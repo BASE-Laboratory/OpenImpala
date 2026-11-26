@@ -65,13 +65,31 @@ deff_mlmg = oi.effective_diffusivity(vol, phase=1)                      # defaul
 deff_hypre = oi.effective_diffusivity(vol, phase=1, solver="flexgmres") # explicit HYPRE reference
 ```
 
+## Single- & Mixed-Precision MLMG (`mlmg_precision=`)
+
+On memory-bound GPU cards or $512^3$–$1024^3+$ tomograms, `TortuosityMLMG` and `EffectiveDiffusivityMLMG` support three floating-point precision modes via `mlmg_precision="float64" | "float32" | "mixed"` (with internal coordinate and diffusivity non-dimensionalisation so nanometre-scale SI voxel spacings never overflow `float32` norms):
+
+| `mlmg_precision=` | Multigrid Hierarchy | Outer Residual / Defect | Relative Error vs `float64` | Approx. Footprint |
+| :--- | :--- | :--- | :--- | ---: |
+| `"float64"` (default) | `double` (`MultiFab`) | `double` | Reference | ~310 B/vox |
+| `"mixed"` | `float` (`fMultiFab`) | `double` fine-level defect correction | $< 10^{-7}$ | ~235 B/vox |
+| `"float32"` | `float` (`fMultiFab`) | `float` | $\sim 10^{-5}$–$10^{-3}$ | ~185 B/vox |
+
+```python
+res_mix = oi.tortuosity(vol, phase=1, direction="z", solver="mlmg", mlmg_precision="mixed")
+deff_mix = oi.effective_diffusivity(vol, phase=1, solver="mlmg", mlmg_precision="mixed")
+est = oi.estimate_memory((512, 512, 512), solver="mlmg", precision="mixed", mpi_ranks=4)
+```
+
 ## Convergence Tolerances in C++ Input Files
 
 When running the standalone C++ `Diffusion` executable or tuning solvers via `ParmParse`:
 
 ```ini
-mlmg.eps      = 1.0e-8    # Matrix-free AMReX MLMG relative residual tolerance
-mlmg.maxiter  = 200       # Maximum outer iterations / V-cycles
-hypre.eps     = 1.0e-9    # HYPRE relative residual convergence tolerance
-hypre.maxiter = 500       # HYPRE maximum Krylov iterations
+mlmg.eps       = 1.0e-8    # Matrix-free AMReX MLMG relative residual tolerance
+mlmg.maxiter   = 200       # Maximum outer iterations / V-cycles
+mlmg.precision = float64   # float64, float32, or mixed
+hypre.eps      = 1.0e-9    # HYPRE relative residual convergence tolerance
+hypre.maxiter  = 500       # HYPRE maximum Krylov iterations
 ```
+

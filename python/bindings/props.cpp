@@ -63,14 +63,14 @@ void init_props(py::module_& m) {
     // =========================================================================
     // PercolationCheck
     // =========================================================================
-    py::class_<PercolationCheck>(
+    py::class_<PercolationCheck, std::shared_ptr<PercolationCheck>>(
         m, "PercolationCheck",
         "Parallel flood-fill connectivity check for a phase in a given direction.")
 
         .def(py::init([](std::shared_ptr<VoxelImage> img, int phase_id, OpenImpala::Direction dir,
                          int verbose) {
-                 return new PercolationCheck(img->geom, img->ba, img->dm, *(img->mf), phase_id, dir,
-                                             verbose);
+                 return std::make_shared<PercolationCheck>(img->geom, img->ba, img->dm, *(img->mf),
+                                                           phase_id, dir, verbose);
              }),
              py::arg("img"), py::arg("phase_id"), py::arg("dir"), py::arg("verbose") = 0,
              // keep VoxelImage alive while this object lives
@@ -85,6 +85,14 @@ void init_props(py::module_& m) {
             "active_volume_fraction", &PercolationCheck::activeVolumeFraction,
             "Volume fraction of the percolating (connected) subset of the phase.")
 
+        .def(
+            "active_mask",
+            [](const PercolationCheck& self) {
+                return OpenImpala::imultifab_to_numpy(self.activeMask(), self.getGeometry(), 0);
+            },
+            "Export the 3-D percolating activity mask (1 = active, 0 = inactive) as a "
+            "C-contiguous int32 NumPy array of shape (nz, ny, nx).")
+
         .def_static("direction_string", &PercolationCheck::directionString, py::arg("dir"),
                     "Convert a Direction enum value to its string label (\"X\", \"Y\", or \"Z\").");
 
@@ -96,12 +104,16 @@ void init_props(py::module_& m) {
         "Computes interfacial specific surface area between two phases in a VoxelImage.")
 
         .def(py::init([](std::shared_ptr<VoxelImage> img, int phase_a, int phase_b, int comp,
-                         int boundary_padding) {
+                         int boundary_padding, std::shared_ptr<PercolationCheck> percolation,
+                         int active_phase) {
+                 const amrex::iMultiFab* act_ptr =
+                     percolation ? &(percolation->activeMask()) : nullptr;
                  return new SpecificSurfaceArea(img->geom, *(img->mf), phase_a, phase_b, comp,
-                                                boundary_padding);
+                                                boundary_padding, act_ptr, active_phase);
              }),
              py::arg("img"), py::arg("phase_a") = 0, py::arg("phase_b") = 1, py::arg("comp") = 0,
-             py::arg("boundary_padding") = 0, py::keep_alive<1, 2>(),
+             py::arg("boundary_padding") = 0, py::arg("percolation") = nullptr,
+             py::arg("active_phase") = -1, py::keep_alive<1, 2>(), py::keep_alive<1, 7>(),
              "Create a specific surface area calculator between *phase_a* and *phase_b*.")
 
         .def(
@@ -227,7 +239,7 @@ void init_props(py::module_& m) {
            int phase_id, int box_size, OpenImpala::SolverType solver_type,
            const std::string& results_path, const std::string& csv_filename, int verbose,
            bool write_plotfiles, bool use_mlmg, amrex::Real mlmg_eps, int mlmg_maxiter,
-           int mlmg_max_coarsening_level) {
+           int mlmg_max_coarsening_level, OpenImpala::MLMGPrecision mlmg_precision, bool resume) {
             REVConfig cfg;
             cfg.sizes = sizes;
             cfg.num_samples = num_samples;
@@ -238,6 +250,8 @@ void init_props(py::module_& m) {
             cfg.mlmg_eps = mlmg_eps;
             cfg.mlmg_maxiter = mlmg_maxiter;
             cfg.mlmg_max_coarsening_level = mlmg_max_coarsening_level;
+            cfg.mlmg_precision = mlmg_precision;
+            cfg.resume = resume;
             cfg.results_path = std::filesystem::path(results_path);
             cfg.csv_filename = csv_filename;
             cfg.verbose = verbose;
@@ -275,6 +289,7 @@ void init_props(py::module_& m) {
         py::arg("verbose") = 0, py::arg("write_plotfiles") = false, py::arg("use_mlmg") = false,
         py::arg("mlmg_eps") = 1.0e-8, py::arg("mlmg_maxiter") = 200,
         py::arg("mlmg_max_coarsening_level") = 30,
+        py::arg("mlmg_precision") = OpenImpala::MLMGPrecision::Float64, py::arg("resume") = false,
         "Run a Representative Elementary Volume (REV) convergence study and return "
         "(csv_path, csv_content).");
 }
