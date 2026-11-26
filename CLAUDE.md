@@ -24,8 +24,9 @@ for linear solves.
 
     TiffReader.H/cpp     TortuosityHypre      ResultsJSON.H
     HDF5Reader.H/cpp     TortuosityMLMG        → BPX, BattINFO
-    RawReader.H/cpp      EffDiffusivityHypre   → JSON + text output
-    DatReader.H/cpp      VolumeFraction
+    RawReader.H/cpp      EffDiffusivityMLMG   → JSON + text output
+    DatReader.H/cpp      EffDiffusivityHypre
+                         VolumeFraction
                          PercolationCheck
                                │
                     ┌──────────▼──────────┐
@@ -49,8 +50,10 @@ grid. The readers are independent of the physics layer.
   HYPRE structured-grid Krylov solvers + SMG/PFMG multigrid preconditioners
 - `TortuosityMLMG` — Same PDE via AMReX's matrix-free MLMG geometric multigrid
   (masked face conductances with $1/L^2$-scaled isolated-voxel pin); ~3× less memory, fastest on GPU
-- `EffectiveDiffusivityHypre` — Solves cell problem ∇·(D∇χ) = -∇·(Dê) for
-  the effective diffusivity tensor via homogenization
+- `EffectiveDiffusivityMLMG` — Matrix-free AMReX `MLABecLaplacian` + `GMRESMLMG`
+  periodic cell-problem solver (`∇·(D∇χ) = -∇·(Dê)`) with shared `PeriodicComponentPin`
+  SPD nullspace pinning across CPU, MPI, and CUDA GPUs (default for `effective_diffusivity()` and `rev_study()`)
+- `EffectiveDiffusivityHypre` — Structured-grid HYPRE Krylov/multigrid periodic cell-problem solver
 - `PercolationCheck` — Flood-fill connectivity check (no solver needed)
 - `VolumeFraction` — Phase counting with MPI reduction
 - `TortuosityDirect` — Legacy iterative solver (Forward Euler, not HYPRE)
@@ -86,7 +89,7 @@ TIFF/HDF5/RAW/DAT file
     → PercolationCheck (is phase connected inlet→outlet?)
     → VolumeFraction (what fraction is this phase?)
     → TortuosityHypre / TortuosityMLMG  (flow_through)
-      or EffectiveDiffusivityHypre + DeffTensor  (homogenization)
+      or EffectiveDiffusivityMLMG / EffectiveDiffusivityHypre + DeffTensor  (homogenization)
       → C++ kernel fills system (harmonic mean face coefficients)
       → solve (HYPRE FlexGMRES/PCG/… or AMReX MLMG V-cycle)
       → Flux integration → D_eff, tortuosity
@@ -101,8 +104,8 @@ Inter-cell face diffusivities use the harmonic mean of adjacent cell values:
 D_face = 2 * D_left * D_right / (D_left + D_right)
 ```
 This is physically correct for series resistance and appears in the C++
-matrix-fill paths of `TortuosityHypre`, `TortuosityMLMG`, and
-`EffectiveDiffusivityHypre`.
+matrix-fill paths of `TortuosityHypre`, `TortuosityMLMG`,
+`EffectiveDiffusivityMLMG`, and `EffectiveDiffusivityHypre`.
 
 ### Tortuosity Definition
 ```
@@ -166,7 +169,9 @@ make -j$(nproc) && ctest --output-on-failure
 | `TortuosityDirect.H/cpp` | Legacy iterative tortuosity solver (Forward Euler) |
 | `TortuosityKernels.H` | C++ hot-path kernels (isolated-cell removal, face flux, flux integration) |
 | `HypreStructSolver.H/cpp` | HYPRE lifecycle/infrastructure shared by HYPRE solvers |
-| `EffectiveDiffusivityHypre.H/cpp` | Cell-problem solver for χ fields (homogenization) |
+| `EffectiveDiffusivityMLMG.H/cpp` | Matrix-free AMReX MLMG periodic cell-problem solver (CPU/MPI/CUDA) |
+| `EffectiveDiffusivityHypre.H/cpp` | HYPRE structured-grid periodic cell-problem solver |
+| `PeriodicComponentPin.H/cpp` | Periodic connected-component BFS + MPI/CUDA nullspace pinning |
 | `DeffTensor.H/cpp` | Assembles 3×3 D_eff tensor from χ gradients |
 | `VolumeFraction.H/cpp` | Phase volume fraction calculator |
 | `PercolationCheck.H/cpp` | Flood-fill percolation connectivity check |
@@ -191,6 +196,10 @@ make -j$(nproc) && ctest --output-on-failure
 | File | Purpose |
 |------|---------|
 | `openimpala/facade.py` | High-level NumPy-native API (tortuosity, volume_fraction, …) |
+| `openimpala/protocol.py` | Zero-dependency `VolumeProtocol` & SI unit conversion (`basecoat` boundary) |
+| `openimpala/exceptions.py` | `OpenImpalaError`, `ConvergenceError`, `PercolationError`, `UnitCalibrationError` |
+| `openimpala/_io.py` | OME-Zarr v0.4, TIFF, HDF5, Otsu segmentation, majority-vote coarsening |
+| `openimpala/synthetic.py` | Synthetic 3D microstructure & ML surrogate dataset generators |
 | `openimpala/session.py` | `Session` context manager — AMReX init/finalize (re-entrant) |
 | `openimpala/_solver.py` | Pure-Python SciPy/CuPy fallback backend (no compiled `_core`) |
 | `openimpala/cli.py` | `openimpala` CLI entry point |
@@ -202,6 +211,7 @@ make -j$(nproc) && ctest --output-on-failure
 |------|---------|
 | `tTortuosity.cpp` | Tortuosity on real TIFF data |
 | `tEffectiveDiffusivity.cpp` | D_eff tensor on real TIFF data |
+| `tEffectiveDiffusivityMLMG.cpp` | Matrix-free periodic homogenisation MLMG parity & multi-phase tests |
 | `tVolumeFraction.cpp` | Volume fraction validation |
 | `tPercolationCheck.cpp` | Flood-fill connectivity check |
 | `tTortuosityMLMG.cpp` | Matrix-free MLMG solver (directional/geometry variants) |
