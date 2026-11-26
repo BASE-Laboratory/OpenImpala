@@ -11,13 +11,23 @@
 namespace OpenImpala {
 
 SpecificSurfaceArea::SpecificSurfaceArea(const amrex::Geometry& geom, const amrex::iMultiFab& fm,
-                                         int phase_a, int phase_b, int comp, int boundary_padding)
+                                         int phase_a, int phase_b, int comp, int boundary_padding,
+                                         const amrex::iMultiFab* active_mask, int active_phase)
     : m_geom(geom), m_mf(fm), m_phase_a(phase_a), m_phase_b(phase_b), m_comp(comp),
-      m_boundary_padding(boundary_padding) {
+      m_boundary_padding(boundary_padding), m_active_mask(active_mask),
+      m_active_phase((active_phase >= 0) ? active_phase : phase_a) {
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_comp >= 0 && m_comp < m_mf.nComp(),
                                      "SpecificSurfaceArea: Component index out of bounds.");
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_boundary_padding >= 0,
                                      "SpecificSurfaceArea: boundary_padding must be non-negative.");
+    if (m_active_mask != nullptr) {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            m_active_mask->nGrow() >= 1,
+            "SpecificSurfaceArea: active_mask must have at least 1 ghost cell.");
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            m_active_phase == m_phase_a || m_active_phase == m_phase_b,
+            "SpecificSurfaceArea: active_phase must equal phase_a or phase_b.");
+    }
 }
 
 void SpecificSurfaceArea::directionFaceCounts(amrex::Array<long long, AMREX_SPACEDIM>& dir_faces,
@@ -28,6 +38,7 @@ void SpecificSurfaceArea::directionFaceCounts(amrex::Array<long long, AMREX_SPAC
 
     const int pa = m_phase_a;
     const int pb = m_phase_b;
+    const int act_phase = m_active_phase;
     const int phase_comp = m_comp;
     const amrex::Box& domain = m_geom.Domain();
 
@@ -59,16 +70,39 @@ void SpecificSurfaceArea::directionFaceCounts(amrex::Array<long long, AMREX_SPAC
             check_bx.setBig(d, hi_limit);
 
             if (check_bx.ok()) {
-                reduce_op.eval(check_bx, reduce_data,
-                               [=] AMREX_GPU_DEVICE(int i, int j,
-                                                    int k) noexcept -> amrex::GpuTuple<long long> {
-                                   int val = fab(i, j, k);
-                                   int nbr = fab(i + od0, j + od1, k + od2);
-                                   long long fc =
-                                       ((val == pa && nbr == pb) || (val == pb && nbr == pa)) ? 1LL
-                                                                                              : 0LL;
-                                   return {fc};
-                               });
+                if (m_active_mask == nullptr) {
+                    reduce_op.eval(
+                        check_bx, reduce_data,
+                        [=] AMREX_GPU_DEVICE(int i, int j,
+                                             int k) noexcept -> amrex::GpuTuple<long long> {
+                            int val = fab(i, j, k);
+                            int nbr = fab(i + od0, j + od1, k + od2);
+                            long long fc =
+                                ((val == pa && nbr == pb) || (val == pb && nbr == pa)) ? 1LL : 0LL;
+                            return {fc};
+                        });
+                } else {
+                    const auto& act = m_active_mask->const_array(mfi, 0);
+                    reduce_op.eval(check_bx, reduce_data,
+                                   [=] AMREX_GPU_DEVICE(
+                                       int i, int j, int k) noexcept -> amrex::GpuTuple<long long> {
+                                       const int val = fab(i, j, k);
+                                       const int nbr = fab(i + od0, j + od1, k + od2);
+                                       long long fc = 0LL;
+                                       if (val == pa && nbr == pb) {
+                                           const int a_flag = (act_phase == pa)
+                                                                  ? act(i, j, k)
+                                                                  : act(i + od0, j + od1, k + od2);
+                                           fc = (a_flag != 0) ? 1LL : 0LL;
+                                       } else if (val == pb && nbr == pa) {
+                                           const int a_flag = (act_phase == pb)
+                                                                  ? act(i, j, k)
+                                                                  : act(i + od0, j + od1, k + od2);
+                                           fc = (a_flag != 0) ? 1LL : 0LL;
+                                       }
+                                       return {fc};
+                                   });
+                }
             }
         }
 

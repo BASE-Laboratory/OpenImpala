@@ -26,7 +26,7 @@ find_path(HYPRE_INCLUDE_DIR
         $ENV{HYPRE_ROOT}
         $ENV{HYPRE_HOME}
         $ENV{HYPRE_INSTALL_PREFIX}
-    PATH_SUFFIXES include
+    PATH_SUFFIXES include include/hypre
 )
 
 # When a GPU backend is enabled, try the GPU-specific HYPRE library first.

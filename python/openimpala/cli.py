@@ -103,6 +103,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Solver backend: auto, mlmg, pcg, flexgmres, bicgstab, gmres, smg, pfmg (default: auto)",
     )
     p_analyze.add_argument(
+        "--precision",
+        choices=("float64", "float32", "mixed"),
+        default="float64",
+        help="MLMG floating-point precision mode: float64, float32, or mixed (default: float64)",
+    )
+    p_analyze.add_argument(
         "--preconditioner",
         default="smg",
         help="HYPRE Krylov preconditioner: smg or pfmg (default: smg)",
@@ -125,6 +131,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--deff",
         action="store_true",
         help="Also compute the 3x3 periodic homogenised effective diffusivity tensor",
+    )
+    p_analyze.add_argument(
+        "--flux-stats",
+        action="store_true",
+        help="Compute 3-D diffusive flux magnitude summary statistics over active voxels",
     )
     p_analyze.add_argument(
         "--bpx-electrode",
@@ -333,6 +344,11 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     if ds_factor is not None and hasattr(img, "shape"):
         result["shape"] = list(img.shape)
 
+    prec = getattr(args, "precision", "float64")
+    want_flux = bool(getattr(args, "flux_stats", False))
+    if prec != "float64":
+        result["precision"] = prec
+
     tau_res = None
     try:
         tau_res = oi.tortuosity(
@@ -341,6 +357,8 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
             direction=args.direction,
             solver=args.solver,
             preconditioner=args.preconditioner,
+            return_flux=want_flux,
+            mlmg_precision=prec,
             verbose=args.verbose,
         )
     except oi.PercolationError:
@@ -368,10 +386,23 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         result["residual_norm"] = tau_res.residual_norm
         result["flux_in"] = tau_res.flux_in
         result["flux_out"] = tau_res.flux_out
+        if want_flux and tau_res.flux_magnitude is not None:
+            import numpy as np
+
+            active_j = tau_res.flux_magnitude[tau_res.flux_magnitude > 0.0]
+            result["flux_stats"] = {
+                "mean_magnitude": float(np.mean(active_j)) if active_j.size > 0 else 0.0,
+                "max_magnitude": float(np.max(active_j)) if active_j.size > 0 else 0.0,
+                "std_magnitude": float(np.std(active_j)) if active_j.size > 0 else 0.0,
+            }
 
     if getattr(args, "deff", False):
         deff_res = oi.effective_diffusivity(
-            img, phase=args.phase, solver=args.solver, verbose=args.verbose
+            img,
+            phase=args.phase,
+            solver=args.solver,
+            mlmg_precision=prec,
+            verbose=args.verbose,
         )
         result["deff_tensor"] = deff_res.tensor.tolist()
         result["deff_diagonal"] = list(deff_res.diagonal)

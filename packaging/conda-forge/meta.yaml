@@ -1,0 +1,67 @@
+{% set name = "openimpala" %}
+{% set version = "5.2.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  - url: https://github.com/BASE-Laboratory/OpenImpala/archive/refs/tags/v{{ version }}.tar.gz
+    folder: openimpala
+  - url: https://github.com/AMReX-Codes/amrex/archive/refs/tags/25.03.tar.gz
+    folder: amrex
+
+build:
+  number: 0
+  skip: true  # [win]
+
+requirements:
+  build:
+    - {{ compiler('c') }}
+    - {{ compiler('cxx') }}
+    - cmake >=3.20
+    - ninja
+    - pkg-config
+    - llvm-openmp  # [osx]
+    - libgomp      # [linux]
+  host:
+    - python
+    - pip
+    - scikit-build-core >=0.8
+    - setuptools-scm >=8
+    - pybind11 >=2.11,<3
+    - numpy
+    - {{ mpi }}
+    - hypre >=2.28
+    - hdf5 * mpi_{{ mpi }}_*
+    - libtiff
+    - nlohmann_json
+  run:
+    - python
+    - {{ pin_compatible('numpy') }}
+    - scipy >=1.7
+    - {{ mpi }}
+    - hypre
+    - hdf5 * mpi_{{ mpi }}_*
+    - libtiff
+
+test:
+  imports:
+    - openimpala
+  commands:
+    - openimpala --version
+    - Diffusion --help || true
+    - python -c "import numpy as np, openimpala as oi; s = oi.tortuosity(np.zeros((8,8,8), dtype=np.int32), phase=0, direction='x'); assert abs(s.tortuosity - 1.0) < 1e-5"
+
+about:
+  home: https://github.com/BASE-Laboratory/OpenImpala
+  license: BSD-3-Clause
+  license_family: BSD
+  license_file: openimpala/LICENSE
+  summary: Scalable 3-D voxel transport-property and microstructure solver powered by AMReX and HYPRE
+  doc_url: https://base-laboratory.github.io/OpenImpala/
+  dev_url: https://github.com/BASE-Laboratory/OpenImpala
+
+extra:
+  recipe-maintainers:
+    - jameslehoux

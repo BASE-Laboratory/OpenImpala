@@ -84,19 +84,18 @@ apptainer exec -B "$(pwd):/data" openimpala-vX.Y.Z.sif \
 For batch SLURM scripts, see
 [HPC Usage](https://base-laboratory.github.io/OpenImpala/user-guide/hpc.html).
 
-### Build from source
+### Build from source / Conda & Spack
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the native and containerised
-developer build, code style, and test workflow.
+Conda-Forge (`packaging/conda-forge/`) and Spack (`packaging/spack/`) recipes are bundled alongside native CMake builds; see [CONTRIBUTING.md](CONTRIBUTING.md) and [Getting Started](https://base-laboratory.github.io/OpenImpala/getting-started.html).
 
 ## Features
 
 - Steady-state diffusion / conduction on raw or segmented 3D voxel images (built-in Otsu thresholding)
-- Tortuosity factor, full 3×3 effective diffusivity tensor, multi-phase transport
-- Microstructural metrics: volume fraction, percolation, particle size, specific surface area, REV studies
+- Tortuosity factor, 3D cell-centred diffusive flux fields (`return_flux=True`), full 3×3 effective diffusivity tensor, and multi-phase transport
+- Microstructural metrics: volume fraction, percolation, particle size, total & electrochemically active specific surface area (`active_only=True`), and resumable REV studies
 - Synthetic 3D microstructure & ML surrogate dataset generators (`openimpala.synthetic`)
-- TIFF / HDF5 / OME-Zarr / RAW / DAT image input; AMReX `yt`/ParaView plotfiles and BPX / BattINFO JSON output
-- Solvers: HYPRE (PCG, FlexGMRES, BiCGSTAB; SMG / PFMG preconditioners) and AMReX MLMG (matrix-free, GPU-native)
+- TIFF / HDF5 / OME-Zarr / collective MPI-IO RAW / DAT image input; AMReX `yt`/ParaView plotfiles and BPX / BattINFO JSON output
+- Solvers: HYPRE (PCG, FlexGMRES, BiCGSTAB; SMG / PFMG preconditioners) and AMReX MLMG (`float64`, `float32`, and `mixed`-precision defect-corrected V-cycles, GPU-native)
 - MPI + OpenMP + CUDA parallelism — scales from a laptop to multi-node HPC
 
 ## Citation

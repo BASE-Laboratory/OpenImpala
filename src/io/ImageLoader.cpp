@@ -8,9 +8,10 @@
 #include "HDF5Reader.H"
 #include "RawReader.H"
 
-#include <AMReX_Print.H>
-#include <AMReX_ParallelDescriptor.H>
 #include <AMReX_MultiFabUtil.H>
+#include <AMReX_ParallelDescriptor.H>
+#include <AMReX_ParmParse.H>
+#include <AMReX_Print.H>
 
 #include <algorithm>
 #include <stdexcept>
@@ -86,12 +87,47 @@ ImageData loadImage(const std::filesystem::path& filepath, const std::string& hd
         amrex::Copy(result.mf_phase, mf_temp, 0, 0, 1, 0);
 
     } else if (ext == ".raw") {
-        throw std::runtime_error("RAW format requires dimensions and data type at construction. "
-                                 "Use RawReader directly instead of ImageLoader for .raw files.");
+        int raw_w = 0;
+        int raw_h = 0;
+        int raw_d = 0;
+        std::string raw_dtype_str = "UINT8";
+        {
+            amrex::ParmParse pp_raw("raw");
+            pp_raw.query("width", raw_w);
+            pp_raw.query("height", raw_h);
+            pp_raw.query("depth", raw_d);
+            pp_raw.query("datatype", raw_dtype_str);
+
+            amrex::ParmParse pp_root;
+            if (raw_w <= 0)
+                pp_root.query("width", raw_w);
+            if (raw_h <= 0)
+                pp_root.query("height", raw_h);
+            if (raw_d <= 0)
+                pp_root.query("depth", raw_d);
+            pp_root.query("datatype", raw_dtype_str);
+        }
+        if (raw_w <= 0 || raw_h <= 0 || raw_d <= 0) {
+            throw std::runtime_error(
+                "RAW format requires positive raw.width, raw.height, and raw.depth in inputs.");
+        }
+        const RawDataType raw_dt = RawReader::parseDataType(raw_dtype_str);
+        if (raw_dt == RawDataType::UNKNOWN) {
+            throw std::runtime_error("Unsupported raw.datatype: '" + raw_dtype_str + "'.");
+        }
+        RawReader reader(filepath.string(), raw_w, raw_h, raw_d, raw_dt);
+        result.domain_box = reader.box();
+        result.ba.define(result.domain_box);
+        result.ba.maxSize(box_size);
+        result.dm.define(result.ba);
+        result.mf_phase.define(result.ba, result.dm, 1, 1);
+        amrex::iMultiFab mf_temp(result.ba, result.dm, 1, 0);
+        reader.threshold(threshold_val, phase_active, phase_inactive, mf_temp);
+        amrex::Copy(result.mf_phase, mf_temp, 0, 0, 1, 0);
+
     } else {
         throw std::runtime_error("Unsupported file extension: " + ext +
-                                 ". Supported: .tif, .tiff, .dat, .h5, .hdf5, .raw (via "
-                                 "RawReader directly)");
+                                 ". Supported: .tif, .tiff, .dat, .h5, .hdf5, .raw");
     }
 
     // Set up periodic geometry

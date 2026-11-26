@@ -478,11 +478,30 @@ void TortuositySolverBase::computePlaneFluxes(const amrex::MultiFab& mf_soln) {
     }
 }
 
+// --- computeCellFluxField ---
+void TortuositySolverBase::computeCellFluxField(amrex::MultiFab& mf_flux) const {
+    computeTortuosityCellFluxField(mf_flux, m_geom, m_mf_solution, m_mf_active_mask,
+                                   m_mf_diff_coeff, m_dir, m_vlo, m_vhi, 0);
+}
+
+// --- computeFluxStats ---
+FluxStats TortuositySolverBase::computeFluxStats(int num_bins) const {
+    return computeTortuosityFluxStats(m_geom, m_mf_solution, m_mf_active_mask, m_mf_diff_coeff,
+                                      m_dir, m_vlo, m_vhi, num_bins, 0);
+}
+
 // --- writeSolutionPlotfile ---
 void TortuositySolverBase::writeSolutionPlotfile(const std::string& label) {
     BL_PROFILE("TortuositySolverBase::writeSolutionPlotfile");
 
-    amrex::MultiFab mf_plot(m_ba, m_dm, 3, 0);
+    bool write_flux = m_write_flux_in_plotfile;
+    {
+        amrex::ParmParse pp_post("post_process");
+        pp_post.query("write_flux_field", write_flux);
+    }
+    const int n_plot_comp = write_flux ? 7 : 3;
+
+    amrex::MultiFab mf_plot(m_ba, m_dm, n_plot_comp, 0);
     amrex::MultiFab mf_mask_real(m_ba, m_dm, 1, 0);
     amrex::MultiFab mf_phase_real(m_ba, m_dm, 1, 0);
 #ifdef AMREX_USE_OMP
@@ -502,8 +521,17 @@ void TortuositySolverBase::writeSolutionPlotfile(const std::string& label) {
     amrex::Copy(mf_plot, m_mf_solution, 0, 0, 1, 0);
     amrex::Copy(mf_plot, mf_phase_real, 0, 1, 1, 0);
     amrex::Copy(mf_plot, mf_mask_real, 0, 2, 1, 0);
-    std::string plotfilename = m_resultspath + "/" + label;
     amrex::Vector<std::string> varnames = {"solution_potential", "phase_id", "active_mask"};
+    if (write_flux) {
+        amrex::MultiFab mf_flux(m_ba, m_dm, 4, 0);
+        computeCellFluxField(mf_flux);
+        amrex::Copy(mf_plot, mf_flux, 0, 3, 4, 0);
+        varnames.push_back("flux_x");
+        varnames.push_back("flux_y");
+        varnames.push_back("flux_z");
+        varnames.push_back("flux_magnitude");
+    }
+    std::string plotfilename = m_resultspath + "/" + label;
     amrex::WriteSingleLevelPlotfile(plotfilename, mf_plot, varnames, m_geom, 0.0, 0);
 }
 

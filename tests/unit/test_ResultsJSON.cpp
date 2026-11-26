@@ -640,3 +640,32 @@ TEST_CASE("ResultsJSON full round-trip with BPX and provenance", "[ResultsJSON][
 
     std::filesystem::remove(test_path);
 }
+
+// ============================================================================
+// v5.2.0: Flux magnitude statistics and participating active SSA
+// ============================================================================
+TEST_CASE("ResultsJSON serializes per-direction flux_stats and active SSA", "[ResultsJSON][v520]") {
+    ResultsJSON writer;
+    writer.setPhysicsConfig(makeConfig("diffusion"));
+    writer.setVolumeFraction(0.42);
+    writer.addDirectionResult("X", 0.18);
+    writer.setDirectionFluxStats("X", 0.31, 2.45, 0.27, {0.0, 1.0, 2.5}, {120LL, 35LL});
+    writer.setSpecificSurfaceArea(0.085);
+    writer.setSpecificSurfaceAreaRaw(0.112);
+    writer.setActiveSpecificSurfaceArea(0.064, 0.084, "X");
+
+    auto j = writer.buildJSON();
+    const auto& x_res = j["openimpala"]["results"]["X"];
+    REQUIRE(x_res.contains("flux_stats"));
+    CHECK(x_res["flux_stats"]["mean_magnitude"].get<double>() == Approx(0.31));
+    CHECK(x_res["flux_stats"]["max_magnitude"].get<double>() == Approx(2.45));
+    CHECK(x_res["flux_stats"]["std_magnitude"].get<double>() == Approx(0.27));
+    CHECK(x_res["flux_stats"]["histogram_edges"].size() == 3);
+    CHECK(x_res["flux_stats"]["histogram_counts"].size() == 2);
+    CHECK(x_res["flux_stats"]["histogram_counts"][0].get<long long>() == 120LL);
+
+    const auto& ms = j["openimpala"]["microstructure"];
+    CHECK(ms["active_specific_surface_area"].get<double>() == Approx(0.064));
+    CHECK(ms["active_specific_surface_area_raw"].get<double>() == Approx(0.084));
+    CHECK(ms["active_ssa_direction"].get<std::string>() == "X");
+}

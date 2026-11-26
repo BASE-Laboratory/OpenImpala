@@ -86,6 +86,8 @@ class TortuosityResult:
     solution_field: "np.ndarray | None" = None
     effective_diffusivity: Optional[float] = None
     plotfile_path: Optional[str] = None
+    flux_field: Optional[np.ndarray] = None
+    flux_magnitude: Optional[np.ndarray] = None
 
     def _deff_ratio(self) -> float:
         if self.effective_diffusivity is not None:
@@ -136,6 +138,11 @@ class TortuosityResult:
             if b_val is not None
             else ""
         )
+        jmax_row = (
+            f"<tr><td>Peak |J|</td><td>{float(np.max(self.flux_magnitude)):.6e}</td></tr>"
+            if self.flux_magnitude is not None and self.flux_magnitude.size > 0
+            else ""
+        )
         return (
             "<table>"
             "<tr><th>Metric</th><th>Value</th></tr>"
@@ -148,6 +155,7 @@ class TortuosityResult:
             f"<tr><td>Residual norm</td><td>{self.residual_norm:.2e}</td></tr>"
             f"<tr><td>Flux in</td><td>{self.flux_in:.6e}</td></tr>"
             f"<tr><td>Flux out</td><td>{self.flux_out:.6e}</td></tr>"
+            f"{jmax_row}"
             f"<tr><td>Active VF</td><td>{self.active_volume_fraction:.6f}</td></tr>"
             "</table>"
         )
@@ -500,6 +508,45 @@ def _parse_preconditioner(p):
     return precond_map[key]
 
 
+def _normalize_mlmg_precision(p) -> str:
+    """Validate an MLMG precision string or enum and return 'float64', 'float32', or 'mixed'."""
+    if isinstance(p, str):
+        key = p.strip().lower()
+        alias_map = {
+            "float64": "float64",
+            "double": "float64",
+            "fp64": "float64",
+            "float32": "float32",
+            "single": "float32",
+            "fp32": "float32",
+            "mixed": "mixed",
+        }
+        if key in alias_map:
+            return alias_map[key]
+        raise ValueError(
+            f"Unknown mlmg_precision '{p}'. Options: ['float64', 'float32', 'mixed']"
+        )
+    name = str(p).split(".")[-1].lower()
+    if name in ("float64", "float32", "mixed"):
+        return name
+    raise ValueError(
+        f"Unknown mlmg_precision '{p}'. Options: ['float64', 'float32', 'mixed']"
+    )
+
+
+def _parse_mlmg_precision(p):
+    """Convert a precision string or enum to ``_core.MLMGPrecision``."""
+    _core = _get_core()
+    if isinstance(p, _core.MLMGPrecision):
+        return p
+    norm = _normalize_mlmg_precision(p)
+    return {
+        "float64": _core.MLMGPrecision.Float64,
+        "float32": _core.MLMGPrecision.Float32,
+        "mixed": _core.MLMGPrecision.Mixed,
+    }[norm]
+
+
 def _auto_grid_size(shape: tuple[int, ...]) -> int:
     """Pick a good AMReX max_grid_size based on domain dimensions and MPI ranks."""
     n_max = max(shape)
@@ -839,7 +886,9 @@ def tortuosity(
     voxel_size: Optional[VoxelSizeArg] = None,
     phase_diffusivities: Optional[Mapping[int, float]] = None,
     return_field: bool = False,
+    return_flux: bool = False,
     write_plotfile: bool = False,
+    plotfile_nfiles: Optional[int] = None,
     preconditioner: Union[str, "PrecondType"] = "smg",
     max_grid_size: Union[int, str] = "auto",
     results_path: str = ".",
@@ -847,44 +896,18 @@ def tortuosity(
     mlmg_eps: Optional[float] = None,
     mlmg_maxiter: Optional[int] = None,
     mlmg_max_coarsening_level: Optional[int] = None,
+    mlmg_precision: Union[str, "MLMGPrecision"] = "float64",
 ) -> TortuosityResult:
-    """Compute steady-state tortuosity and effective diffusivity along *direction*.
-
-    Parameters
-    ----------
-    data : np.ndarray, VoxelImage, or path-like
-        3-D integer array of phase IDs ``(Nz, Ny, Nx)``, ``VoxelImage`` handle,
-        or path to a supported 3-D volume file (TIFF, HDF5, RAW, DAT, NPY, Zarr).
-    phase : int
-        Conducting phase ID (required when *phase_diffusivities* is ``None``).
-    direction : str or Direction
-        Flow direction (``'x'``, ``'y'``, or ``'z'``).
-    solver : str or SolverType
-        ``'auto'`` / ``'mlmg'`` (default matrix-free AMReX geometric multigrid),
-        or HYPRE solvers ``'pcg'``, ``'flexgmres'``, ``'gmres'``, ``'bicgstab'``,
-        ``'smg'``, ``'pfmg'``, ``'jacobi'``.
-    voxel_size : float or tuple of 3 floats, optional
-        Physical voxel spacing: either a scalar ``h`` (cubic voxels) or
-        ``(dz, dy, dx)`` matching NumPy ``(Nz, Ny, Nx)`` axis order.
-    phase_diffusivities : Mapping[int, float], optional
-        Multi-phase transport map ``{phase_id: D_phase}``.  Phases with ``D > 0``
-        participate in 6-connected transport with harmonic-mean face conductances;
-        unlisted phases or phases with ``D == 0`` are insulating.
-    return_field : bool
-        If ``True``, populate ``result.solution_field`` with the solved 3-D
-        potential field ``(Nz, Ny, Nx)`` (``float64``).  Defaults to ``False``
-        to avoid host memory copies on large grids.
-    write_plotfile : bool
-        If ``True``, write an AMReX ``HyperCLaw-V1.1`` plotfile directory under
-        *results_path* (readable out-of-core via ``yt.load()`` and ParaView)
-        and populate ``result.plotfile_path``.
-    """
+    """Compute steady-state tortuosity and effective diffusivity along *direction*."""
     phase_map = _normalize_phase_diffusivities(phase_diffusivities)
     if phase is None and not phase_map:
         raise TypeError(
             "tortuosity() missing required argument: 'phase' "
             "(pass e.g. phase=0 or phase=1, or specify phase_diffusivities={...})"
         )
+    _normalize_mlmg_precision(mlmg_precision)
+    if plotfile_nfiles is not None and int(plotfile_nfiles) <= 0:
+        raise ValueError(f"plotfile_nfiles must be > 0, got {plotfile_nfiles}")
     eff_phase = int(phase) if phase is not None else int(next(iter(phase_map)))
     _ensure_initialized()
 
@@ -902,6 +925,7 @@ def tortuosity(
             voxel_size=vz,
             phase_diffusivities=phase_map if phase_map else None,
             return_field=need_field,
+            return_flux=bool(return_flux),
         )
         if not result["solver_converged"]:
             raise ConvergenceError(
@@ -915,13 +939,20 @@ def tortuosity(
             )
             is_mlmg = isinstance(solver, str) and solver.strip().lower() in ("auto", "mlmg")
             subdir = f"tortuosity_mlmg_{d}" if is_mlmg else f"tortuosity_solution_{d}"
+            plot_fields: dict[str, np.ndarray] = {
+                "solution_potential": result["solution_field"],
+                "phase_id": arr.astype(np.float64),
+                "active_mask": active_mask.astype(np.float64),
+            }
+            if return_flux and result["flux_field"] is not None:
+                f_zyx = result["flux_field"]
+                plot_fields["flux_x"] = f_zyx[..., 2]
+                plot_fields["flux_y"] = f_zyx[..., 1]
+                plot_fields["flux_z"] = f_zyx[..., 0]
+                plot_fields["flux_magnitude"] = result["flux_magnitude"]
             out_dir = write_amrex_plotfile(
                 Path(results_path) / subdir,
-                {
-                    "solution_potential": result["solution_field"],
-                    "phase_id": arr.astype(np.float64),
-                    "active_mask": active_mask.astype(np.float64),
-                },
+                plot_fields,
                 voxel_size=vz,
             )
             plt_path = str(out_dir)
@@ -937,10 +968,14 @@ def tortuosity(
             solution_field=result["solution_field"] if return_field else None,
             effective_diffusivity=result["effective_diffusivity"],
             plotfile_path=plt_path,
+            flux_field=result["flux_field"] if return_flux else None,
+            flux_magnitude=result["flux_magnitude"] if return_flux else None,
         )
 
     # --- C++ backend path ---
     _core = _get_core()
+    if plotfile_nfiles is not None:
+        _core.set_plotfile_nfiles(int(plotfile_nfiles))
     d = _parse_direction(direction)
     d_int = _parse_direction_int(direction)
     st = _parse_solver(solver)
@@ -970,7 +1005,7 @@ def tortuosity(
             _core.mpi_bcast_double(0.0)
 
     if st == "mlmg":
-        mlmg_kwargs = {}
+        mlmg_kwargs: dict[str, Any] = {"precision": _parse_mlmg_precision(mlmg_precision)}
         if mlmg_eps is not None:
             mlmg_kwargs["eps"] = float(mlmg_eps)
         if mlmg_maxiter is not None:
@@ -1010,6 +1045,9 @@ def tortuosity(
         )
         plt_subdir = f"tortuosity_solution_{d_int}"
 
+    if write_plotfile and return_flux:
+        solver_obj.set_write_flux_field(True)
+
     if solver_obj.active_volume_fraction <= 0.0:
         dir_name = _core.PercolationCheck.direction_string(d)
         raise PercolationError(
@@ -1031,6 +1069,10 @@ def tortuosity(
         )
 
     field = solver_obj.solution_field() if return_field else None
+    flux_zyx_cpp: Optional[np.ndarray] = None
+    flux_mag_cpp: Optional[np.ndarray] = None
+    if return_flux:
+        flux_zyx_cpp, flux_mag_cpp = solver_obj.flux_field()
     plt_path_cpp = str(Path(results_path) / plt_subdir) if write_plotfile else None
 
     return TortuosityResult(
@@ -1044,6 +1086,8 @@ def tortuosity(
         solution_field=field,
         effective_diffusivity=float(solver_obj.effective_diffusivity),
         plotfile_path=plt_path_cpp,
+        flux_field=flux_zyx_cpp,
+        flux_magnitude=flux_mag_cpp,
     )
 
 
@@ -1057,7 +1101,9 @@ def tortuosity_all(
     voxel_size: Optional[VoxelSizeArg] = None,
     phase_diffusivities: Optional[Mapping[int, float]] = None,
     return_field: bool = False,
+    return_flux: bool = False,
     write_plotfile: bool = False,
+    plotfile_nfiles: Optional[int] = None,
     preconditioner: Union[str, "PrecondType"] = "smg",
     max_grid_size: Union[int, str] = "auto",
     results_path: str = ".",
@@ -1065,19 +1111,16 @@ def tortuosity_all(
     mlmg_eps: Optional[float] = None,
     mlmg_maxiter: Optional[int] = None,
     mlmg_max_coarsening_level: Optional[int] = None,
+    mlmg_precision: Union[str, "MLMGPrecision"] = "float64",
 ) -> dict[str, Optional[TortuosityResult]]:
-    """Compute steady-state tortuosity across cardinal directions ``('x', 'y', 'z')``.
-
-    Loads or stages *data* once, then solves each direction in *directions*.
-    When ``strict=False`` (default), directions that do not percolate map to
-    ``None`` instead of raising :class:`~openimpala.PercolationError`.
-    """
+    """Compute steady-state tortuosity across cardinal directions ``('x', 'y', 'z')``."""
     phase_map = _normalize_phase_diffusivities(phase_diffusivities)
     if phase is None and not phase_map:
         raise TypeError(
             "tortuosity_all() missing required argument: 'phase' "
             "(pass e.g. phase=0 or phase=1, or specify phase_diffusivities={...})"
         )
+    _normalize_mlmg_precision(mlmg_precision)
     _ensure_initialized()
 
     if _is_pure_python():
@@ -1101,7 +1144,9 @@ def tortuosity_all(
                 voxel_size=effective_vz,
                 phase_diffusivities=phase_diffusivities,
                 return_field=return_field,
+                return_flux=return_flux,
                 write_plotfile=write_plotfile,
+                plotfile_nfiles=plotfile_nfiles,
                 preconditioner=preconditioner,
                 max_grid_size=max_grid_size,
                 results_path=results_path,
@@ -1109,6 +1154,7 @@ def tortuosity_all(
                 mlmg_eps=mlmg_eps,
                 mlmg_maxiter=mlmg_maxiter,
                 mlmg_max_coarsening_level=mlmg_max_coarsening_level,
+                mlmg_precision=mlmg_precision,
             )
         except PercolationError:
             if strict:
@@ -1126,25 +1172,25 @@ def effective_diffusivity(
     solver: Union[str, "SolverType"] = "auto",
     return_fields: bool = False,
     write_plotfile: bool = False,
+    plotfile_nfiles: Optional[int] = None,
     max_grid_size: Union[int, str] = "auto",
     results_path: str = ".",
     verbose: int = 0,
     mlmg_eps: Optional[float] = None,
     mlmg_maxiter: Optional[int] = None,
     mlmg_max_coarsening_level: Optional[int] = None,
+    mlmg_precision: Union[str, "MLMGPrecision"] = "float64",
 ) -> EffectiveDiffusivityResult:
-    """Compute the full 3x3 homogenised effective-diffusivity tensor ``D_eff``.
-
-    Solves the three periodic homogenisation cell problems in ``x``, ``y``, ``z``
-    (defaulting to matrix-free AMReX ``MLMG`` across CPU, MPI, and CUDA GPUs) and
-    returns ``EffectiveDiffusivityResult`` with ``tensor`` ordered ``(x, y, z)``.
-    """
+    """Compute the full 3x3 homogenised effective-diffusivity tensor ``D_eff``."""
     phase_map = _normalize_phase_diffusivities(phase_diffusivities)
     if phase is None and not phase_map:
         raise TypeError(
             "effective_diffusivity() missing required argument: 'phase' "
             "(pass e.g. phase=0 or phase=1, or specify phase_diffusivities={...})"
         )
+    _normalize_mlmg_precision(mlmg_precision)
+    if plotfile_nfiles is not None and int(plotfile_nfiles) <= 0:
+        raise ValueError(f"plotfile_nfiles must be > 0, got {plotfile_nfiles}")
     eff_phase = int(phase) if phase is not None else int(next(iter(phase_map)))
     _ensure_initialized()
 
@@ -1198,12 +1244,15 @@ def effective_diffusivity(
         )
 
     _core = _get_core()
+    if plotfile_nfiles is not None:
+        _core.set_plotfile_nfiles(int(plotfile_nfiles))
     parsed_solver = _parse_solver(solver)
     use_mlmg = parsed_solver == "mlmg"
     hypre_st = _core.SolverType.FlexGMRES if use_mlmg else parsed_solver
     eff_eps = float(mlmg_eps) if mlmg_eps is not None else 1.0e-8
     eff_maxiter = int(mlmg_maxiter) if mlmg_maxiter is not None else 200
     eff_coarsen = int(mlmg_max_coarsening_level) if mlmg_max_coarsening_level is not None else 30
+    eff_prec = _parse_mlmg_precision(mlmg_precision)
 
     img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
     if write_plotfile:
@@ -1224,6 +1273,7 @@ def effective_diffusivity(
         mlmg_eps=eff_eps,
         mlmg_maxiter=eff_maxiter,
         mlmg_max_coarsening_level=eff_coarsen,
+        mlmg_precision=eff_prec,
     )
     if not raw["converged"]:
         solver_label = "MLMG" if use_mlmg else "HYPRE"
@@ -1256,19 +1306,42 @@ def specific_surface_area(
     *,
     voxel_size: Optional[VoxelSizeArg] = None,
     boundary_padding: int = 0,
+    active_only: bool = False,
+    direction: Union[str, "Direction"] = "x",
+    active_phase: Optional[int] = None,
     max_grid_size: Union[int, str] = "auto",
 ) -> SpecificSurfaceAreaResult:
-    """Compute interfacial specific surface area between *phase_a* and *phase_b*."""
+    """Compute interfacial specific surface area between *phase_a* and *phase_b*.
+
+    When ``active_only=True``, only interfaces whose *active_phase* side (defaults
+    to *phase_a*) belongs to a 6-connected cluster percolating across *direction*
+    are counted (electrochemically active interfacial surface area).
+    """
     _ensure_initialized()
     if boundary_padding < 0:
         raise ValueError(f"boundary_padding must be >= 0, got {boundary_padding}")
+    eff_act_phase = int(phase_a) if active_phase is None else int(active_phase)
+    if eff_act_phase not in (int(phase_a), int(phase_b)):
+        raise ValueError(
+            f"active_phase must equal phase_a ({phase_a}) or phase_b ({phase_b}), got {eff_act_phase}"
+        )
+    d_int = _parse_direction_int(direction)
 
     if _is_pure_python():
         from . import _solver
 
         arr, vz = _resolve_pure_input(data, voxel_size=voxel_size)
+        act_mask_np: Optional[np.ndarray] = None
+        if active_only:
+            _, _, act_mask_np = _solver.percolation_check(arr, eff_act_phase, 2 - d_int)
         raw = _solver.specific_surface_area(
-            arr, phase_a=phase_a, phase_b=phase_b, voxel_size=vz, boundary_padding=boundary_padding
+            arr,
+            phase_a=phase_a,
+            phase_b=phase_b,
+            voxel_size=vz,
+            boundary_padding=boundary_padding,
+            active_mask=act_mask_np,
+            active_phase=eff_act_phase,
         )
         return SpecificSurfaceAreaResult(
             ssa=raw["ssa"],
@@ -1288,8 +1361,19 @@ def specific_surface_area(
             f"boundary_padding={boundary_padding} is too large for domain of shape {dom_shape}"
         )
 
+    pc_obj = None
+    if active_only:
+        d_enum = _parse_direction(_DIR_NAMES[d_int])
+        pc_obj = _core.PercolationCheck(img, eff_act_phase, d_enum, 0)
+
     calc = _core.SpecificSurfaceArea(
-        img, phase_a=phase_a, phase_b=phase_b, comp=0, boundary_padding=boundary_padding
+        img,
+        phase_a=phase_a,
+        phase_b=phase_b,
+        comp=0,
+        boundary_padding=boundary_padding,
+        percolation=pc_obj,
+        active_phase=eff_act_phase,
     )
     (fx, fy, fz), tc = calc.direction_face_counts()
     fc = int(fx + fy + fz)
@@ -1474,17 +1558,20 @@ def rev_study(
     voxel_size: Optional[VoxelSizeArg] = None,
     solver: Union[str, "SolverType"] = "auto",
     csv_path: Optional[str] = None,
+    resume: bool = False,
     max_grid_size: Union[int, str] = "auto",
     verbose: int = 0,
     mlmg_eps: Optional[float] = None,
     mlmg_maxiter: Optional[int] = None,
     mlmg_max_coarsening_level: Optional[int] = None,
+    mlmg_precision: Union[str, "MLMGPrecision"] = "float64",
 ) -> REVStudyResult:
     """Run a Representative Elementary Volume (REV) convergence study."""
     if phase is None:
         raise TypeError(
             "rev_study() missing required argument: 'phase' (pass e.g. phase=0 or phase=1)"
         )
+    _normalize_mlmg_precision(mlmg_precision)
     eff_phase = int(phase)
     _ensure_initialized()
     size_list = [int(s) for s in sizes if int(s) > 0]
@@ -1504,6 +1591,7 @@ def rev_study(
             phase=eff_phase,
             voxel_size=vz,
             csv_path=csv_path,
+            resume=bool(resume),
         )
         return _summarize_rev_records(records, csv_path)
 
@@ -1514,6 +1602,7 @@ def rev_study(
     eff_eps = float(mlmg_eps) if mlmg_eps is not None else 1.0e-8
     eff_maxiter = int(mlmg_maxiter) if mlmg_maxiter is not None else 200
     eff_coarsen = int(mlmg_max_coarsening_level) if mlmg_max_coarsening_level is not None else 30
+    eff_prec = _parse_mlmg_precision(mlmg_precision)
 
     img = _numpy_to_voxelimage(data, max_grid_size, voxel_size=voxel_size)
     box_sz = 32 if isinstance(max_grid_size, str) else int(max_grid_size)
@@ -1573,6 +1662,8 @@ def rev_study(
             mlmg_eps=eff_eps,
             mlmg_maxiter=eff_maxiter,
             mlmg_max_coarsening_level=eff_coarsen,
+            mlmg_precision=eff_prec,
+            resume=bool(resume),
         )
         records = _parse_csv_text(csv_content)
         return _summarize_rev_records(records, str(target_p))
@@ -1593,6 +1684,8 @@ def rev_study(
             mlmg_eps=eff_eps,
             mlmg_maxiter=eff_maxiter,
             mlmg_max_coarsening_level=eff_coarsen,
+            mlmg_precision=eff_prec,
+            resume=False,
         )
         records = _parse_csv_text(csv_content)
     return _summarize_rev_records(records, None)
@@ -1981,13 +2074,16 @@ def estimate_memory(
     *,
     solver: str = "hypre",
     preconditioner: str = "pfmg",
+    precision: str = "float64",
     mpi_ranks: Optional[int] = None,
 ) -> dict:
     """Estimate peak per-rank memory usage (in bytes/MB/GB) for a 3-D transport solve.
 
     Uses empirically calibrated bytes-per-voxel footprints measured on the C++
     AMReX/HYPRE multigrid hierarchies across :math:`64^3`–:math:`256^3` grids:
-    ``~310 B/voxel`` for matrix-free ``mlmg``, ``~365 B/voxel`` for ``pcg+pfmg``,
+    ``~165 B/voxel`` for single-precision ``mlmg`` (``precision='float32'``),
+    ``~195 B/voxel`` for mixed-precision defect-corrected ``mlmg`` (``precision='mixed'``),
+    ``~310 B/voxel`` for double-precision ``mlmg``, ``~365 B/voxel`` for ``pcg+pfmg``,
     ``~1030 B/voxel`` for ``flexgmres+pfmg``, and ``~1400 B/voxel`` with ``smg``.
     """
     ranks = max(int(mpi_ranks if mpi_ranks is not None else num_ranks), 1)
@@ -1995,8 +2091,14 @@ def estimate_memory(
     per_rank = total / ranks
     s_norm = solver.strip().lower()
     p_norm = preconditioner.strip().lower()
+    prec_norm = _normalize_mlmg_precision(precision)
     if s_norm in ("mlmg", "auto"):
-        bytes_per_voxel = 310
+        if prec_norm == "float32":
+            bytes_per_voxel = 165
+        elif prec_norm == "mixed":
+            bytes_per_voxel = 195
+        else:
+            bytes_per_voxel = 310
     elif s_norm == "pure":
         bytes_per_voxel = 340
     elif s_norm == "smg" or p_norm == "smg":
@@ -2018,6 +2120,7 @@ def estimate_memory(
         "num_ranks": ranks,
         "mpi_ranks": ranks,
         "solver": s_norm,
+        "precision": prec_norm,
     }
 
 

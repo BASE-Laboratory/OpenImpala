@@ -63,5 +63,15 @@ All unlisted phase IDs are treated as insulating ($D = 0$).
 | `hypre.eps` | float | `1e-9` | Relative residual convergence tolerance |
 | `hypre.maxiter` | int | `200` | Maximum solver iterations |
 | `amr.max_grid_size` | int | `32` | Maximum AMReX patch edge length |
+| `raw.width` / `raw.height` / `raw.depth` | int | — | Dimensions $(N_x, N_y, N_z)$ when `image.filename` is `.raw` |
+| `raw.datatype` | string | `UINT8` | Raw binary element type (`UINT8`, `UINT16_LE`, `INT16_LE`, `FLOAT32_LE`, …) |
+| `mlmg.precision` | string | `float64` | Matrix-free MLMG precision (`float64`, `float32`, `mixed`) |
+| `post_process.write_flux_field` | bool | `false` | Append 4 flux components (`flux_x`, `flux_y`, `flux_z`, `flux_magnitude`) to tortuosity plotfiles |
+| `post_process.calc_flux_stats` | bool | `false` | Compute and write per-direction `flux_stats` (mean, max, std, histogram) to JSON |
+| `microstructure.compute_active_ssa` | bool | `false` | Compute percolation-filtered participating interfacial SSA alongside total SSA |
+| `plotfile.nfiles` | int | AMReX default | Concurrent `VisMF` file streams per plotfile directory |
+| `checkpoint.dir` / `checkpoint.restart` | string / bool | `""` / `false` | Write / resume solved directional potential or corrector `VisMF` checkpoints |
+| `rev.resume` | bool | `false` | Resume an interrupted REV study from existing CSV output |
 | `results.path` | string | `.` | Output directory for JSON/text summaries and plotfiles |
 | `tortuosity.write_plotfile` | bool | `false` | Write distributed AMReX plotfile for `yt` / ParaView / VisIt |
+

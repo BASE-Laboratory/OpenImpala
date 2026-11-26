@@ -309,6 +309,66 @@ def _compute_flux(
     return float(flux_in), float(flux_out), float(D_eff)
 
 
+def _compute_cell_flux_field(
+    solution: np.ndarray,
+    active_mask: np.ndarray,
+    diff_coeff: np.ndarray,
+    direction: int,
+    dx: tuple[float, float, float],
+    vlo: float = 0.0,
+    vhi: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute cell-centred 3-D flux vector (Jz, Jy, Jx) and magnitude |J| on active voxels."""
+    shape = active_mask.shape  # (Nz, Ny, Nx)
+    sol = solution.reshape(shape)
+    act = active_mask == 1
+    flux_zyx = np.zeros(shape + (3,), dtype=np.float64)
+
+    for ax in range(3):
+        h_ax = float(dx[ax])
+        n_ax = shape[ax]
+        j_minus = np.zeros(shape, dtype=np.float64)
+        j_plus = np.zeros(shape, dtype=np.float64)
+
+        if n_ax > 1:
+            lo_sl = [slice(None)] * 3
+            hi_sl = [slice(None)] * 3
+            lo_sl[ax] = slice(0, n_ax - 1)
+            hi_sl[ax] = slice(1, n_ax)
+            lo_t = tuple(lo_sl)
+            hi_t = tuple(hi_sl)
+
+            both = act[lo_t] & act[hi_t]
+            d_lo = diff_coeff[lo_t]
+            d_hi = diff_coeff[hi_t]
+            denom = np.where(both & ((d_lo + d_hi) > 0.0), d_lo + d_hi, 1.0)
+            d_face = np.where(both & ((d_lo + d_hi) > 0.0), 2.0 * d_lo * d_hi / denom, 0.0)
+            j_int = np.where(both, -d_face * (sol[hi_t] - sol[lo_t]) / h_ax, 0.0)
+
+            j_plus[lo_t] = j_int
+            j_minus[hi_t] = j_int
+
+        if ax == direction:
+            b0_sl = [slice(None)] * 3
+            b0_sl[ax] = 0
+            b0_t = tuple(b0_sl)
+            j_minus[b0_t] = np.where(
+                act[b0_t], -2.0 * diff_coeff[b0_t] * (sol[b0_t] - vlo) / h_ax, 0.0
+            )
+
+            b1_sl = [slice(None)] * 3
+            b1_sl[ax] = n_ax - 1
+            b1_t = tuple(b1_sl)
+            j_plus[b1_t] = np.where(
+                act[b1_t], -2.0 * diff_coeff[b1_t] * (vhi - sol[b1_t]) / h_ax, 0.0
+            )
+
+        flux_zyx[..., ax] = np.where(act, 0.5 * (j_minus + j_plus), 0.0)
+
+    flux_mag = np.linalg.norm(flux_zyx, axis=-1)
+    return flux_zyx, flux_mag
+
+
 def _solve_spd_cg(
     A_sp: sp.csr_matrix,
     rhs: np.ndarray,
@@ -380,6 +440,7 @@ def solve_tortuosity(
     voxel_size: tuple[float, float, float] = (1.0, 1.0, 1.0),
     phase_diffusivities: Optional[Mapping[int, float]] = None,
     return_field: bool = True,
+    return_flux: bool = False,
 ) -> dict:
     """Compute tortuosity and effective diffusivity along NumPy axis *direction* (0=z, 1=y, 2=x)."""
     data = np.ascontiguousarray(data, dtype=np.int32)
@@ -440,6 +501,12 @@ def solve_tortuosity(
         tau = float("inf")
 
     solution_field = solution.reshape(shape).copy() if return_field else None
+    flux_field_arr: Optional[np.ndarray] = None
+    flux_mag_arr: Optional[np.ndarray] = None
+    if return_flux:
+        flux_field_arr, flux_mag_arr = _compute_cell_flux_field(
+            solution, active_mask, diff_coeff, direction, dx
+        )
 
     return {
         "tortuosity": tau,
@@ -451,6 +518,8 @@ def solve_tortuosity(
         "flux_out": flux_out,
         "active_volume_fraction": active_vf,
         "solution_field": solution_field,
+        "flux_field": flux_field_arr,
+        "flux_magnitude": flux_mag_arr,
         "backend": backend_name(),
     }
 
@@ -678,6 +747,8 @@ def specific_surface_area(
     phase_b: int = 1,
     voxel_size: tuple[float, float, float] = (1.0, 1.0, 1.0),
     boundary_padding: int = 0,
+    active_mask: Optional[np.ndarray] = None,
+    active_phase: Optional[int] = None,
 ) -> dict:
     """Compute interface face counts and specific surface area between *phase_a* and *phase_b*."""
     data = np.ascontiguousarray(data, dtype=np.int32)
@@ -690,6 +761,12 @@ def specific_surface_area(
     if dz <= 0.0 or dy <= 0.0 or dx <= 0.0:
         raise ValueError(f"voxel_size components must all be > 0, got {voxel_size}")
 
+    eff_act_phase = int(phase_a) if active_phase is None else int(active_phase)
+    if active_mask is not None and eff_act_phase not in (int(phase_a), int(phase_b)):
+        raise ValueError(
+            f"active_phase must equal phase_a ({phase_a}) or phase_b ({phase_b}), got {eff_act_phase}"
+        )
+
     if boundary_padding > 0:
         p = int(boundary_padding)
         if any(s <= 2 * p for s in data.shape):
@@ -697,19 +774,63 @@ def specific_surface_area(
                 f"boundary_padding={p} is too large for array of shape {data.shape}"
             )
         sub = data[p:-p, p:-p, p:-p]
+        sub_act = active_mask[p:-p, p:-p, p:-p] if active_mask is not None else None
     else:
         sub = data
+        sub_act = active_mask
 
     total_count = int(sub.size)
 
-    def _count_axis(a: np.ndarray, b: np.ndarray) -> int:
-        return int(
-            np.count_nonzero(((a == phase_a) & (b == phase_b)) | ((a == phase_b) & (b == phase_a)))
+    def _count_axis(
+        a: np.ndarray,
+        b: np.ndarray,
+        act_a: Optional[np.ndarray],
+        act_b: Optional[np.ndarray],
+    ) -> int:
+        if act_a is None or act_b is None:
+            return int(
+                np.count_nonzero(
+                    ((a == phase_a) & (b == phase_b)) | ((a == phase_b) & (b == phase_a))
+                )
+            )
+        cond_ab = (a == phase_a) & (b == phase_b) & (
+            (act_a != 0) if eff_act_phase == phase_a else (act_b != 0)
         )
+        cond_ba = (a == phase_b) & (b == phase_a) & (
+            (act_a != 0) if eff_act_phase == phase_b else (act_b != 0)
+        )
+        return int(np.count_nonzero(cond_ab | cond_ba))
 
-    fx = _count_axis(sub[:, :, :-1], sub[:, :, 1:]) if sub.shape[2] > 1 else 0
-    fy = _count_axis(sub[:, :-1, :], sub[:, 1:, :]) if sub.shape[1] > 1 else 0
-    fz = _count_axis(sub[:-1, :, :], sub[1:, :, :]) if sub.shape[0] > 1 else 0
+    fx = (
+        _count_axis(
+            sub[:, :, :-1],
+            sub[:, :, 1:],
+            sub_act[:, :, :-1] if sub_act is not None else None,
+            sub_act[:, :, 1:] if sub_act is not None else None,
+        )
+        if sub.shape[2] > 1
+        else 0
+    )
+    fy = (
+        _count_axis(
+            sub[:, :-1, :],
+            sub[:, 1:, :],
+            sub_act[:, :-1, :] if sub_act is not None else None,
+            sub_act[:, 1:, :] if sub_act is not None else None,
+        )
+        if sub.shape[1] > 1
+        else 0
+    )
+    fz = (
+        _count_axis(
+            sub[:-1, :, :],
+            sub[1:, :, :],
+            sub_act[:-1, :, :] if sub_act is not None else None,
+            sub_act[1:, :, :] if sub_act is not None else None,
+        )
+        if sub.shape[0] > 1
+        else 0
+    )
     face_count = fx + fy + fz
 
     if total_count > 0:
@@ -813,6 +934,7 @@ def rev_study(
     voxel_size: tuple[float, float, float] = (1.0, 1.0, 1.0),
     csv_path: Optional[str] = None,
     seed: int = 42,
+    resume: bool = False,
 ) -> list[dict]:
     """Run an REV convergence study in pure Python and optionally write CSV matching REVStudy.cpp."""
     data = np.ascontiguousarray(data, dtype=np.int32)
@@ -822,10 +944,51 @@ def rev_study(
     nz, ny, nx = data.shape
     rng = np.random.default_rng(seed)
     records: list[dict] = []
+    cached_by_key: dict[tuple[int, int], dict] = {}
 
     if csv_path is not None:
         out_path = Path(csv_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
+        if resume and out_path.is_file():
+            with open(out_path, "r", newline="") as f_in:
+                reader = csv.DictReader(f_in)
+                for row in reader:
+                    try:
+                        s_no = int(row["SampleNo"])
+                        t_sz = int(row["REV_Size_Target"])
+                        dxx = float(row["D_xx"])
+                        dyy = float(row["D_yy"])
+                        dzz = float(row["D_zz"])
+                        dxy = float(row["D_xy"])
+                        dxz = float(row["D_xz"])
+                        dyz = float(row["D_yz"])
+                        D_mat = np.array(
+                            [[dxx, dxy, dxz], [dxy, dyy, dyz], [dxz, dyz, dzz]],
+                            dtype=np.float64,
+                        )
+                        cached_by_key[(s_no, t_sz)] = {
+                            "sample": s_no,
+                            "seed_xyz": (
+                                int(row["SeedX"]),
+                                int(row["SeedY"]),
+                                int(row["SeedZ"]),
+                            ),
+                            "target_size": t_sz,
+                            "actual_size_xyz": (
+                                int(row["ActualSizeX"]),
+                                int(row["ActualSizeY"]),
+                                int(row["ActualSizeZ"]),
+                            ),
+                            "D_xx": dxx,
+                            "D_yy": dyy,
+                            "D_zz": dzz,
+                            "D_xy": dxy,
+                            "D_xz": dxz,
+                            "D_yz": dyz,
+                            "tensor": D_mat,
+                        }
+                    except (KeyError, ValueError):
+                        continue
     else:
         out_path = None
 
@@ -840,6 +1003,10 @@ def rev_study(
             sx = int(rng.integers(0, nx - act_x + 1)) if nx > act_x else 0
             sy = int(rng.integers(0, ny - act_y + 1)) if ny > act_y else 0
             sz = int(rng.integers(0, nz - act_z + 1)) if nz > act_z else 0
+            cached = cached_by_key.get((s_idx, t))
+            if cached is not None:
+                records.append(cached)
+                continue
             sub = data[sz : sz + act_z, sy : sy + act_y, sx : sx + act_x]
             eff = solve_effective_diffusivity(sub, phase=phase, voxel_size=voxel_size)
             D = eff["tensor"]

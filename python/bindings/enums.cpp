@@ -84,6 +84,13 @@ void init_enums(py::module_& m) {
         .value("Periodic", OpenImpala::BCType::Periodic,
                "Periodic wrapping (requires periodic grid)");
 
+    // --- MLMGPrecision ---
+    py::enum_<OpenImpala::MLMGPrecision>(
+        m, "MLMGPrecision", "Floating-point precision mode for AMReX matrix-free MLMG V-cycles.")
+        .value("Float64", OpenImpala::MLMGPrecision::Float64)
+        .value("Float32", OpenImpala::MLMGPrecision::Float32)
+        .value("Mixed", OpenImpala::MLMGPrecision::Mixed);
+
     // --- PhysicsType ---
     py::enum_<OpenImpala::PhysicsType>(m, "PhysicsType", "Physical quantity being computed.")
         .value("Diffusion", OpenImpala::PhysicsType::Diffusion)

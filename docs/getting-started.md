@@ -32,10 +32,22 @@ On macOS (Apple Silicon and Intel), Windows, and Linux ARM64, `openimpala` insta
 :::{tab-item} HPC Container (Apptainer)
 Pre-built Apptainer (`.sif`) images are attached to each [GitHub Release](https://github.com/BASE-Laboratory/OpenImpala/releases):
 ```bash
-wget https://github.com/BASE-Laboratory/OpenImpala/releases/download/v5.0.0/openimpala-v5.0.0.sif
+wget https://github.com/BASE-Laboratory/OpenImpala/releases/download/v5.2.0/openimpala-v5.2.0.sif
 
-apptainer exec -B "$(pwd):/data" openimpala-v5.0.0.sif \
+apptainer exec -B "$(pwd):/data" openimpala-v5.2.0.sif \
     /usr/bin/Diffusion /data/inputs
+```
+:::
+
+:::{tab-item} Conda & Spack (HPC)
+Build or install via the bundled `conda-forge` and `Spack` recipes under `packaging/`:
+```bash
+# Conda build from repository recipe
+conda build packaging/conda-forge -c conda-forge
+
+# Spack custom repo on Tier-1/Tier-0 HPC clusters (CPU MPI or +cuda)
+spack repo add packaging/spack
+spack install openimpala@5.2.0 +mpi +openmp +python
 ```
 :::
 

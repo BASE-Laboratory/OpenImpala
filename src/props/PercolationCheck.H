@@ -53,6 +53,16 @@ public:
         return m_active_vf;
     }
 
+    /** @brief Returns the 3-D percolating activity mask (1 = active, 0 = inactive, >=1 ghost). */
+    const amrex::iMultiFab& activeMask() const {
+        return m_mf_active_mask;
+    }
+
+    /** @brief Returns the AMReX Geometry used for the connectivity check. */
+    const amrex::Geometry& getGeometry() const {
+        return m_geom;
+    }
+
     /** @brief Returns a human-readable direction string ("X", "Y", or "Z"). */
     static std::string directionString(OpenImpala::Direction dir);
 
@@ -63,6 +73,7 @@ private:
     amrex::Geometry m_geom;
     amrex::BoxArray m_ba;
     amrex::DistributionMapping m_dm;
+    amrex::iMultiFab m_mf_active_mask;
     int m_verbose;
 
     bool m_percolates = false;

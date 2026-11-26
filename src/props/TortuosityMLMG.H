@@ -63,7 +63,8 @@ public:
                    const std::string& resultspath, const amrex::Real vlo = 0.0,
                    const amrex::Real vhi = 1.0, int verbose = 0, bool write_plotfile = false,
                    amrex::Real eps = 1.0e-8, int maxiter = 200, int max_coarsening_level = 30,
-                   const std::map<int, amrex::Real>& phase_coeffs = {});
+                   const std::map<int, amrex::Real>& phase_coeffs = {},
+                   MLMGPrecision precision = MLMGPrecision::Float64);
 
     ~TortuosityMLMG() override = default;
 
@@ -74,12 +75,23 @@ public:
     /** @brief Solve the masked voxel equations and populate m_mf_solution. */
     bool solve() override;
 
+    MLMGPrecision getPrecision() const {
+        return m_precision;
+    }
+
+    // Public for CUDA __device__ lambda compatibility
+    bool solveFloat64();
+    bool solveFloat32();
+    bool solveMixed();
+    void initializeLinearRampSolution();
+
 private:
     amrex::Real m_eps = 1.0e-8;
     int m_maxiter = 200;
     int m_max_coarsening_level = 30;
     bool m_use_gmres = true;
     int m_gmres_restart = 24;
+    MLMGPrecision m_precision = MLMGPrecision::Float64;
 };
 
 } // namespace OpenImpala

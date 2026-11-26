@@ -117,3 +117,87 @@ def test_mpi_v460_fields_and_metrics():
     deff_pockets = oi.effective_diffusivity(with_pockets, phase=1, max_grid_size=6)
     assert deff_base.solver_converged and deff_pockets.solver_converged
     np.testing.assert_allclose(deff_pockets.tensor, deff_base.tensor, rtol=1e-7, atol=1e-8)
+
+
+def test_mpi_v520_flux_mixed_precision_and_raw_streaming():
+    """Verify multi-rank v5.2 flux gathering, active SSA, mixed MLMG, and uneven RawReader MPI-IO."""
+    # 1. Channel + isolated pocket distributed across 8 boxes (max_grid_size=8 on 16^3)
+    chan = np.zeros((16, 16, 16), dtype=np.int32)
+    chan[2:6, 2:6, :] = 1
+    chan[10:12, 10:12, 10:12] = 1
+    dx = 50.0e-9
+
+    ssa_tot = oi.specific_surface_area(chan, phase_a=1, phase_b=0, voxel_size=dx, max_grid_size=8)
+    ssa_act = oi.specific_surface_area(
+        chan,
+        phase_a=1,
+        phase_b=0,
+        voxel_size=dx,
+        active_only=True,
+        direction="x",
+        active_phase=1,
+        max_grid_size=8,
+    )
+    assert sum(ssa_tot.face_counts_xyz) == 280
+    assert sum(ssa_act.face_counts_xyz) == 256
+
+    # 2. Mixed-precision MLMG + distributed 3-D flux field gathering across MPI ranks
+    fixture_path = Path(__file__).parent / "data" / "porous24.npz"
+    with np.load(fixture_path) as fixture:
+        porous = fixture["pore"].astype(np.int32)
+
+    t64 = oi.tortuosity(
+        porous,
+        phase=1,
+        direction="z",
+        voxel_size=dx,
+        solver="mlmg",
+        mlmg_precision="float64",
+        return_flux=True,
+        max_grid_size=12,
+    )
+    tmix = oi.tortuosity(
+        porous,
+        phase=1,
+        direction="z",
+        voxel_size=dx,
+        solver="mlmg",
+        mlmg_precision="mixed",
+        return_flux=True,
+        max_grid_size=12,
+    )
+    assert tmix.tortuosity == pytest.approx(t64.tortuosity, rel=1e-6)
+    assert tmix.flux_field is not None and tmix.flux_field.shape == (24, 24, 24, 3)
+    assert tmix.flux_magnitude is not None and tmix.flux_magnitude.shape == (24, 24, 24)
+    mean_neg_jz = float(np.mean(-tmix.flux_field[..., 0]))
+    assert mean_neg_jz * (24 * dx) == pytest.approx(tmix.effective_diffusivity, rel=1e-5)
+
+    # 3. Collective MPI-IO RawReader streaming with uneven patch count across 2 ranks (3 patches)
+    raw_file = Path("/tmp/openimpala_mpi_smoke_uneven_14x8x8.raw")
+    arr = (np.arange(8 * 8 * 14, dtype=np.uint8).reshape(8, 8, 14) % 19)
+    if oi.build_info().get("mpi_rank", 0) == 0:
+        arr.tofile(raw_file)
+    # Synchronise via a lightweight distributed call before all ranks open the file
+    _ = oi.volume_fraction(chan, phase=1, max_grid_size=8)
+
+    reader, img = oi.read_image(
+        str(raw_file),
+        raw_width=14,
+        raw_height=8,
+        raw_depth=8,
+        raw_data_type="UINT8",
+        threshold=9.0,
+        dark_is_pore=True,
+        voxel_size=1.0e-6,
+        max_grid_size=8,
+    )
+    if hasattr(reader, "has_full_buffer_allocated"):
+        assert reader.has_full_buffer_allocated is False
+    vf_raw = oi.volume_fraction(img, phase=1)
+    assert vf_raw.phase_count == int(np.count_nonzero(arr > 9))
+    assert vf_raw.total_count == arr.size
+    del reader, img
+    _ = oi.volume_fraction(chan, phase=1, max_grid_size=8)
+    if oi.build_info().get("mpi_rank", 0) == 0 and raw_file.exists():
+        raw_file.unlink()
+

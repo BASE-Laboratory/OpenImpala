@@ -15,12 +15,15 @@
 #include <AMReX_Print.H>
 #include <AMReX_Utility.H>
 
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <limits>
 #include <memory>
 #include <random>
+#include <set>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 namespace OpenImpala {
@@ -50,13 +53,74 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
         return;
     }
 
+    std::filesystem::path csv_path = config.results_path / config.csv_filename;
+    std::set<std::pair<int, int>> completed_pairs;
+    bool append_existing = false;
+
+    if (config.resume) {
+        std::vector<int> flat_pairs;
+        int has_header_int = 0;
+        if (amrex::ParallelDescriptor::IOProcessor() && std::filesystem::exists(csv_path)) {
+            std::ifstream existing_ifs(csv_path.string());
+            std::string line;
+            if (existing_ifs.is_open() && std::getline(existing_ifs, line)) {
+                if (!line.empty()) {
+                    has_header_int = 1;
+                }
+                while (std::getline(existing_ifs, line)) {
+                    if (line.empty()) {
+                        continue;
+                    }
+                    std::stringstream lss(line);
+                    std::string tok;
+                    std::vector<std::string> cols;
+                    while (std::getline(lss, tok, ',')) {
+                        cols.push_back(tok);
+                    }
+                    if (cols.size() >= 5) {
+                        char* end_s = nullptr;
+                        char* end_r = nullptr;
+                        const long samp_no = std::strtol(cols[0].c_str(), &end_s, 10);
+                        const long rev_sz = std::strtol(cols[4].c_str(), &end_r, 10);
+                        if (end_s != cols[0].c_str() && end_r != cols[4].c_str()) {
+                            flat_pairs.push_back(static_cast<int>(samp_no));
+                            flat_pairs.push_back(static_cast<int>(rev_sz));
+                        }
+                    }
+                }
+            }
+        }
+        if (amrex::ParallelDescriptor::NProcs() > 1) {
+            const int io_rank = amrex::ParallelDescriptor::IOProcessorNumber();
+            amrex::ParallelDescriptor::Bcast(&has_header_int, 1, io_rank);
+            int n_ints = static_cast<int>(flat_pairs.size());
+            amrex::ParallelDescriptor::Bcast(&n_ints, 1, io_rank);
+            if (!amrex::ParallelDescriptor::IOProcessor()) {
+                flat_pairs.resize(static_cast<std::size_t>(n_ints));
+            }
+            if (n_ints > 0) {
+                amrex::ParallelDescriptor::Bcast(flat_pairs.data(), n_ints, io_rank);
+            }
+        }
+        append_existing = (has_header_int != 0);
+        for (std::size_t idx = 0; idx + 1 < flat_pairs.size(); idx += 2) {
+            completed_pairs.emplace(flat_pairs[idx], flat_pairs[idx + 1]);
+        }
+    }
+
     // Open CSV file
     std::ofstream csv_file;
-    std::filesystem::path csv_path = config.results_path / config.csv_filename;
     if (amrex::ParallelDescriptor::IOProcessor()) {
-        csv_file.open(csv_path.string());
-        csv_file << "SampleNo,SeedX,SeedY,SeedZ,REV_Size_Target,ActualSizeX,"
-                    "ActualSizeY,ActualSizeZ,D_xx,D_yy,D_zz,D_xy,D_xz,D_yz\n";
+        if (csv_path.has_parent_path() && !csv_path.parent_path().empty()) {
+            std::filesystem::create_directories(csv_path.parent_path());
+        }
+        if (append_existing) {
+            csv_file.open(csv_path.string(), std::ios::app);
+        } else {
+            csv_file.open(csv_path.string());
+            csv_file << "SampleNo,SeedX,SeedY,SeedZ,REV_Size_Target,ActualSizeX,"
+                        "ActualSizeY,ActualSizeZ,D_xx,D_yy,D_zz,D_xy,D_xz,D_yz\n";
+        }
     }
 
     // Use rank-independent seed so all MPI ranks agree on sub-volume coordinates
@@ -64,7 +128,7 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
 
     for (int s_idx = 0; s_idx < config.num_samples; ++s_idx) {
         for (int target_size : config.sizes) {
-            // --- Generate random sub-volume seed ---
+            // --- Generate random sub-volume seed (always advance RNG before resume check) ---
             amrex::IntVect seed_lo;
             for (int d = 0; d < AMREX_SPACEDIM; ++d) {
                 int min_coord = domain_box_full.smallEnd(d);
@@ -75,6 +139,14 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
                     std::uniform_int_distribution<> distr(min_coord, max_coord);
                     seed_lo[d] = distr(gen);
                 }
+            }
+
+            if (completed_pairs.count({s_idx + 1, target_size}) > 0) {
+                if (config.verbose >= 1 && amrex::ParallelDescriptor::IOProcessor()) {
+                    amrex::Print() << " REV Sample " << s_idx + 1 << ", Target Size " << target_size
+                                   << " already in CSV — skipping (resume=true)." << std::endl;
+                }
+                continue;
             }
 
             amrex::Box bx_rev = amrex::Box(seed_lo, seed_lo + amrex::IntVect(target_size - 1));
@@ -174,7 +246,7 @@ void runREVStudy(const amrex::Geometry& geom_full, const amrex::BoxArray& ba_ful
                             geom_rev, ba_rev, dm_rev, mf_phase_rev, config.phase_id, dir,
                             plot_path.string(), config.verbose, config.write_plotfiles,
                             config.mlmg_eps, config.mlmg_maxiter, config.mlmg_max_coarsening_level,
-                            {}, cell_type_ptr);
+                            {}, cell_type_ptr, config.mlmg_precision);
                         if (!has_shared_cell_type) {
                             shared_cell_type.define(ba_rev, dm_rev, 1, 1);
                             amrex::Copy(shared_cell_type, mlmg_solver.getCellTypeMask(), 0, 0, 1,

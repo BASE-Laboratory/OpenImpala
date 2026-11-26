@@ -36,6 +36,8 @@ struct REVConfig {
     amrex::Real mlmg_eps = 1.0e-8;      ///< MLMG relative residual tolerance
     int mlmg_maxiter = 200;             ///< MLMG maximum outer iterations
     int mlmg_max_coarsening_level = 30; ///< MLMG maximum multigrid coarsening depth
+    MLMGPrecision mlmg_precision = MLMGPrecision::Float64; ///< MLMG floating-point precision mode
+    bool resume = false;                ///< Resume from existing CSV, skipping completed samples
     std::filesystem::path results_path; ///< Directory for output files
     std::string csv_filename = "rev_study_Deff.csv"; ///< CSV output filename
 };

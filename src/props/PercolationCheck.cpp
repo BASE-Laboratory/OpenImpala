@@ -1,13 +1,14 @@
 #include "PercolationCheck.H"
 #include "FloodFill.H"
 
+#include <AMReX_Box.H>
+#include <AMReX_CoordSys.H>
 #include <AMReX_Gpu.H>
 #include <AMReX_GpuLaunch.H>
 #include <AMReX_GpuQualifiers.H>
+#include <AMReX_MFIter.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_Print.H>
-#include <AMReX_MFIter.H>
-#include <AMReX_Box.H>
 
 namespace OpenImpala {
 
@@ -15,9 +16,14 @@ PercolationCheck::PercolationCheck(const amrex::Geometry& geom, const amrex::Box
                                    const amrex::DistributionMapping& dm,
                                    const amrex::iMultiFab& mf_phase, int phase_id,
                                    OpenImpala::Direction dir, int verbose)
-    : m_geom(geom), m_ba(ba), m_dm(dm), m_verbose(verbose) {
+    : m_ba(ba), m_dm(dm), m_mf_active_mask(ba, dm, 1, 1), m_verbose(verbose) {
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
         mf_phase.nGrow() >= 1, "PercolationCheck: input iMultiFab must have >= 1 ghost cell.");
+    amrex::Array<int, AMREX_SPACEDIM> is_per{
+        AMREX_D_DECL(geom.isPeriodic(0), geom.isPeriodic(1), geom.isPeriodic(2))};
+    is_per[static_cast<int>(dir)] = 0;
+    m_geom.define(geom.Domain(), &(geom.ProbDomain()), amrex::CoordSys::cartesian, is_per.data());
+    m_mf_active_mask.setVal(FLOOD_INACTIVE);
     run(mf_phase, phase_id, dir);
 }
 
@@ -39,6 +45,7 @@ void PercolationCheck::run(const amrex::iMultiFab& mf_phase, int phase_id,
     BL_PROFILE("PercolationCheck::run");
 
     const int idir = static_cast<int>(dir);
+    m_mf_active_mask.setVal(FLOOD_INACTIVE);
 
     // Collect boundary seeds (shared utility handles MPI gather + dedup)
     amrex::Vector<amrex::IntVect> inlet_seeds;
@@ -53,6 +60,7 @@ void PercolationCheck::run(const amrex::iMultiFab& mf_phase, int phase_id,
 
     // Early exit if either face has no phase cells
     if (inlet_seeds.empty() || outlet_seeds.empty()) {
+        m_mf_active_mask.FillBoundary(m_geom.periodicity());
         m_percolates = false;
         m_active_vf = 0.0;
         return;
@@ -75,15 +83,12 @@ void PercolationCheck::run(const amrex::iMultiFab& mf_phase, int phase_id,
                                   m_verbose);
 
     // Build active mask: cells reachable from BOTH inlet and outlet (GPU-compatible)
-    amrex::iMultiFab mf_active_mask(m_ba, m_dm, 1, 0);
-    mf_active_mask.setVal(FLOOD_INACTIVE);
-
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-    for (amrex::MFIter mfi(mf_active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(m_mf_active_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const amrex::Box& tileBox = mfi.tilebox();
-        auto mask_arr = mf_active_mask.array(mfi);
+        auto mask_arr = m_mf_active_mask.array(mfi);
         const auto inlet_arr = mf_reached_inlet.const_array(mfi);
         const auto outlet_arr = mf_reached_outlet.const_array(mfi);
         amrex::ParallelFor(tileBox, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
@@ -94,7 +99,8 @@ void PercolationCheck::run(const amrex::iMultiFab& mf_phase, int phase_id,
         });
     }
 
-    long num_active = mf_active_mask.sum(0);
+    long num_active = m_mf_active_mask.sum(0);
+    m_mf_active_mask.FillBoundary(m_geom.periodicity());
     long total_cells = m_geom.Domain().numPts();
     m_active_vf = (total_cells > 0)
                       ? static_cast<amrex::Real>(num_active) / static_cast<amrex::Real>(total_cells)

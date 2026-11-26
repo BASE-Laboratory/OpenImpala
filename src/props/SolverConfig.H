@@ -84,6 +84,35 @@ inline Direction parseDirection(const std::string& dir_str) {
     return Direction::X;
 }
 
+/** @brief Convert a case-insensitive precision string to MLMGPrecision enum. */
+inline MLMGPrecision parseMLMGPrecision(const std::string& prec_str) {
+    std::string s = prec_str;
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+    if (s == "float64" || s == "double" || s == "fp64")
+        return MLMGPrecision::Float64;
+    if (s == "float32" || s == "single" || s == "fp32")
+        return MLMGPrecision::Float32;
+    if (s == "mixed")
+        return MLMGPrecision::Mixed;
+    amrex::Abort("Invalid MLMG precision string: '" + prec_str +
+                 "'. Use 'float64', 'float32', or 'mixed'.");
+    return MLMGPrecision::Float64;
+}
+
+/** @brief Convert an MLMGPrecision enum value to its canonical lowercase name. */
+inline const char* mlmgPrecisionString(MLMGPrecision prec) {
+    switch (prec) {
+    case MLMGPrecision::Float64:
+        return "float64";
+    case MLMGPrecision::Float32:
+        return "float32";
+    case MLMGPrecision::Mixed:
+        return "mixed";
+    default:
+        return "float64";
+    }
+}
+
 } // namespace OpenImpala
 
 #endif // SOLVER_CONFIG_H

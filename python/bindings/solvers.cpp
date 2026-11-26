@@ -6,6 +6,8 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <memory>
@@ -38,24 +40,52 @@ using namespace OpenImpala;
 
 namespace {
 
+py::tuple export_flux_numpy_pair(const amrex::MultiFab& mf_flux, const amrex::Geometry& geom) {
+    const amrex::Box& domain = geom.Domain();
+    const int nx = domain.length(0);
+    const int ny = domain.length(1);
+    const int nz = domain.length(2);
+    const std::size_t n_vox =
+        static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz);
+
+    auto jx_arr = OpenImpala::multifab_to_numpy(mf_flux, geom, 0);
+    auto jy_arr = OpenImpala::multifab_to_numpy(mf_flux, geom, 1);
+    auto jz_arr = OpenImpala::multifab_to_numpy(mf_flux, geom, 2);
+    auto jmag_arr = OpenImpala::multifab_to_numpy(mf_flux, geom, 3);
+
+    py::array_t<double> flux_zyx({static_cast<py::ssize_t>(nz), static_cast<py::ssize_t>(ny),
+                                  static_cast<py::ssize_t>(nx), static_cast<py::ssize_t>(3)});
+    auto* dst = static_cast<double*>(flux_zyx.request().ptr);
+    const auto* jx = static_cast<const double*>(jx_arr.request().ptr);
+    const auto* jy = static_cast<const double*>(jy_arr.request().ptr);
+    const auto* jz = static_cast<const double*>(jz_arr.request().ptr);
+
+    for (std::size_t idx = 0; idx < n_vox; ++idx) {
+        dst[idx * 3 + 0] = jz[idx];
+        dst[idx * 3 + 1] = jy[idx];
+        dst[idx * 3 + 2] = jx[idx];
+    }
+
+    return py::make_tuple(flux_zyx, jmag_arr);
+}
+
 py::dict compute_effective_diffusivity_tensor(std::shared_ptr<VoxelImage> img, int phase_id,
                                               OpenImpala::SolverType solver_type,
                                               const std::string& results_path, int verbose,
                                               bool write_plotfile,
                                               const std::map<int, amrex::Real>& phase_coeffs,
                                               bool return_chi, bool use_mlmg, amrex::Real mlmg_eps,
-                                              int mlmg_maxiter, int mlmg_max_coarsening_level) {
+                                              int mlmg_maxiter, int mlmg_max_coarsening_level,
+                                              OpenImpala::MLMGPrecision mlmg_precision) {
     if (!img || !img->mf) {
         throw std::runtime_error("Cannot compute effective diffusivity on an empty VoxelImage.");
     }
 
-    // Build a periodic Geometry matching img->geom's index box and physical RealBox
     amrex::Array<int, AMREX_SPACEDIM> is_periodic{AMREX_D_DECL(1, 1, 1)};
     amrex::Geometry geom_per;
     geom_per.define(img->geom.Domain(), &(img->geom.ProbDomain()), amrex::CoordSys::cartesian,
                     is_periodic.data());
 
-    // Copy phase data into a periodic iMultiFab so periodic ghost cells are populated
     amrex::iMultiFab mf_phase_per(img->ba, img->dm, 1, 1);
     amrex::Copy(mf_phase_per, *(img->mf), 0, 0, 1, 0);
     mf_phase_per.FillBoundary(geom_per.periodicity());
@@ -93,7 +123,7 @@ py::dict compute_effective_diffusivity_tensor(std::shared_ptr<VoxelImage> img, i
             EffectiveDiffusivityMLMG solver(geom_per, img->ba, img->dm, mf_phase_per, phase_id,
                                             dirs[d], results_path, verbose, write_plotfile,
                                             mlmg_eps, mlmg_maxiter, mlmg_max_coarsening_level,
-                                            phase_coeffs, cell_type_ptr);
+                                            phase_coeffs, cell_type_ptr, mlmg_precision);
 
             if (d == 0) {
                 amrex::Copy(active_mask_0g, solver.getActiveMask(), 0, 0, 1, 0);
@@ -242,11 +272,8 @@ void init_solvers(py::module_& m) {
              py::arg("solver_type"), py::arg("results_path"), py::arg("vlo") = 0.0,
              py::arg("vhi") = 1.0, py::arg("verbose") = 0, py::arg("write_plotfile") = false,
              py::arg("preconditioner") = OpenImpala::PrecondType::SMG,
-             py::arg("phase_coeffs") = std::map<int, amrex::Real>{},
-             // keep VoxelImage alive while this object lives
-             py::keep_alive<1, 2>())
+             py::arg("phase_coeffs") = std::map<int, amrex::Real>{}, py::keep_alive<1, 2>())
 
-        // value() — translate NaN-on-failure into a Python exception
         .def(
             "value",
             [](TortuosityHypre& self, bool refresh) {
@@ -262,7 +289,6 @@ void init_solvers(py::module_& m) {
             py::arg("refresh") = false,
             "Compute (or return cached) tortuosity.  Raises RuntimeError on failure.")
 
-        // Raw value without exception wrapping for power users
         .def(
             "value_raw", [](TortuosityHypre& self, bool refresh) { return self.value(refresh); },
             py::arg("refresh") = false, "Return tortuosity (NaN on failure, no exception).")
@@ -276,10 +302,22 @@ void init_solvers(py::module_& m) {
             "Return the solved 3-D steady-state potential field as a float64 NumPy array "
             "of shape (nz, ny, nx).")
 
+        .def(
+            "flux_field",
+            [](const TortuosityHypre& self) {
+                amrex::MultiFab mf_flux;
+                self.computeCellFluxField(mf_flux);
+                return export_flux_numpy_pair(mf_flux, self.getGeometry());
+            },
+            "Return (flux_zyx, flux_magnitude) where flux_zyx has shape (nz, ny, nx, 3) ordered "
+            "(Jz, Jy, Jx) and flux_magnitude has shape (nz, ny, nx).")
+
+        .def("set_write_flux_field", &TortuosityHypre::setWriteFluxField, py::arg("enable") = true,
+             "Include 3-D flux components in the AMReX solution plotfile when write_plotfile=True.")
+
         .def("check_matrix_properties", &TortuosityHypre::checkMatrixProperties,
              "Verify HYPRE matrix / RHS properties (for debugging).")
 
-        // Read-only diagnostics
         .def_property_readonly("solver_converged", &TortuosityHypre::getSolverConverged)
         .def_property_readonly("residual_norm", &TortuosityHypre::getFinalRelativeResidualNorm)
         .def_property_readonly("iterations", &TortuosityHypre::getSolverIterations)
@@ -299,23 +337,24 @@ void init_solvers(py::module_& m) {
     // =========================================================================
     py::class_<TortuosityMLMG>(m, "TortuosityMLMG",
                                "Matrix-free MLMG tortuosity solver using AMReX's native geometric "
-                               "multigrid.  Lower memory and faster setup than HYPRE for "
-                               "small/medium grids.")
+                               "multigrid (supports float64, float32, and mixed precision).")
 
         .def(py::init([](std::shared_ptr<VoxelImage> img, amrex::Real vf, int phase,
                          OpenImpala::Direction dir, const std::string& results_path,
                          amrex::Real vlo, amrex::Real vhi, int verbose, bool write_plotfile,
                          amrex::Real eps, int maxiter, int max_coarsening_level,
-                         const std::map<int, amrex::Real>& phase_coeffs) {
+                         const std::map<int, amrex::Real>& phase_coeffs,
+                         OpenImpala::MLMGPrecision precision) {
                  return new TortuosityMLMG(img->geom, img->ba, img->dm, *(img->mf), vf, phase, dir,
                                            results_path, vlo, vhi, verbose, write_plotfile, eps,
-                                           maxiter, max_coarsening_level, phase_coeffs);
+                                           maxiter, max_coarsening_level, phase_coeffs, precision);
              }),
              py::arg("img"), py::arg("vf"), py::arg("phase"), py::arg("dir"),
              py::arg("results_path"), py::arg("vlo") = 0.0, py::arg("vhi") = 1.0,
              py::arg("verbose") = 0, py::arg("write_plotfile") = false, py::arg("eps") = 1.0e-8,
              py::arg("maxiter") = 200, py::arg("max_coarsening_level") = 30,
-             py::arg("phase_coeffs") = std::map<int, amrex::Real>{}, py::keep_alive<1, 2>())
+             py::arg("phase_coeffs") = std::map<int, amrex::Real>{},
+             py::arg("precision") = OpenImpala::MLMGPrecision::Float64, py::keep_alive<1, 2>())
 
         .def(
             "value",
@@ -345,6 +384,19 @@ void init_solvers(py::module_& m) {
             "Return the solved 3-D steady-state potential field as a float64 NumPy array "
             "of shape (nz, ny, nx).")
 
+        .def(
+            "flux_field",
+            [](const TortuosityMLMG& self) {
+                amrex::MultiFab mf_flux;
+                self.computeCellFluxField(mf_flux);
+                return export_flux_numpy_pair(mf_flux, self.getGeometry());
+            },
+            "Return (flux_zyx, flux_magnitude) where flux_zyx has shape (nz, ny, nx, 3) ordered "
+            "(Jz, Jy, Jx) and flux_magnitude has shape (nz, ny, nx).")
+
+        .def("set_write_flux_field", &TortuosityMLMG::setWriteFluxField, py::arg("enable") = true,
+             "Include 3-D flux components in the AMReX solution plotfile when write_plotfile=True.")
+
         .def_property_readonly("solver_converged", &TortuosityMLMG::getSolverConverged)
         .def_property_readonly("residual_norm", &TortuosityMLMG::getFinalRelativeResidualNorm)
         .def_property_readonly("iterations", &TortuosityMLMG::getSolverIterations)
@@ -355,7 +407,8 @@ void init_solvers(py::module_& m) {
         .def_property_readonly("plane_fluxes", &TortuosityMLMG::getPlaneFluxes)
         .def_property_readonly("plane_flux_max_deviation",
                                &TortuosityMLMG::getPlaneFluxMaxDeviation)
-        .def_property_readonly("is_multi_phase", &TortuosityMLMG::isMultiPhase);
+        .def_property_readonly("is_multi_phase", &TortuosityMLMG::isMultiPhase)
+        .def_property_readonly("precision", &TortuosityMLMG::getPrecision);
 
     // =========================================================================
     // TortuosityDirect
@@ -372,7 +425,6 @@ void init_solvers(py::module_& m) {
              }),
              py::arg("img"), py::arg("phase"), py::arg("dir"), py::arg("eps"), py::arg("n_steps"),
              py::arg("plot_interval"), py::arg("plot_basename"), py::arg("vlo"), py::arg("vhi"),
-             // keep VoxelImage alive while this object lives
              py::keep_alive<1, 2>())
 
         .def(
@@ -412,9 +464,7 @@ void init_solvers(py::module_& m) {
              }),
              py::arg("img"), py::arg("phase_id"), py::arg("dir"), py::arg("solver_type"),
              py::arg("results_path"), py::arg("verbose") = 1, py::arg("write_plotfile") = false,
-             py::arg("phase_coeffs") = std::map<int, amrex::Real>{},
-             // keep VoxelImage alive while this object lives
-             py::keep_alive<1, 2>())
+             py::arg("phase_coeffs") = std::map<int, amrex::Real>{}, py::keep_alive<1, 2>())
 
         .def("solve", &EffectiveDiffusivityHypre::solve,
              "Solve the cell problem.  Returns True if the solver converged.")
@@ -437,15 +487,18 @@ void init_solvers(py::module_& m) {
         .def(py::init([](std::shared_ptr<VoxelImage> img, int phase_id, OpenImpala::Direction dir,
                          const std::string& results_path, int verbose, bool write_plotfile,
                          amrex::Real eps, int maxiter, int max_coarsening_level,
-                         const std::map<int, amrex::Real>& phase_coeffs) {
+                         const std::map<int, amrex::Real>& phase_coeffs,
+                         OpenImpala::MLMGPrecision precision) {
                  return new EffectiveDiffusivityMLMG(
                      img->geom, img->ba, img->dm, *(img->mf), phase_id, dir, results_path, verbose,
-                     write_plotfile, eps, maxiter, max_coarsening_level, phase_coeffs, nullptr);
+                     write_plotfile, eps, maxiter, max_coarsening_level, phase_coeffs, nullptr,
+                     precision);
              }),
              py::arg("img"), py::arg("phase_id"), py::arg("dir"), py::arg("results_path") = ".",
              py::arg("verbose") = 0, py::arg("write_plotfile") = false, py::arg("eps") = 1.0e-8,
              py::arg("maxiter") = 200, py::arg("max_coarsening_level") = 30,
-             py::arg("phase_coeffs") = std::map<int, amrex::Real>{}, py::keep_alive<1, 2>())
+             py::arg("phase_coeffs") = std::map<int, amrex::Real>{},
+             py::arg("precision") = OpenImpala::MLMGPrecision::Float64, py::keep_alive<1, 2>())
 
         .def("solve", &EffectiveDiffusivityMLMG::solve,
              "Solve the periodic cell problem.  Returns True if the solver converged.")
@@ -456,7 +509,8 @@ void init_solvers(py::module_& m) {
         .def_property_readonly("solver_converged", &EffectiveDiffusivityMLMG::getSolverConverged)
         .def_property_readonly("residual_norm",
                                &EffectiveDiffusivityMLMG::getFinalRelativeResidualNorm)
-        .def_property_readonly("iterations", &EffectiveDiffusivityMLMG::getSolverIterations);
+        .def_property_readonly("iterations", &EffectiveDiffusivityMLMG::getSolverIterations)
+        .def_property_readonly("precision", &EffectiveDiffusivityMLMG::getPrecision);
 
     // =========================================================================
     // Full 3x3 D_eff tensor homogenization helper
@@ -468,6 +522,7 @@ void init_solvers(py::module_& m) {
           py::arg("phase_coeffs") = std::map<int, amrex::Real>{}, py::arg("return_chi") = false,
           py::arg("use_mlmg") = false, py::arg("mlmg_eps") = 1.0e-8, py::arg("mlmg_maxiter") = 200,
           py::arg("mlmg_max_coarsening_level") = 30,
+          py::arg("mlmg_precision") = OpenImpala::MLMGPrecision::Float64,
           "Solve the 3 periodic homogenization cell problems and assemble the 3x3 effective "
           "diffusivity tensor D_eff (in X=0, Y=1, Z=2 order).");
 }

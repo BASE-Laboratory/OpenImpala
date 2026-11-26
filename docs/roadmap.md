@@ -1,24 +1,15 @@
 # Development Roadmap
 
-This document summarises shipped milestones across the `v4.x`–`v5.1` series, near-term engineering priorities (`v5.2`), and longer-term multi-physics research tracks (`v6.0+`). Live tracking is maintained on GitHub in [Issue #40 — Strategic Development Roadmap](https://github.com/BASE-Laboratory/OpenImpala/issues/40).
+This document summarises shipped milestones across the `v4.x`–`v5.2` series and longer-term multi-physics research tracks (`v6.0+`). Live tracking is maintained on GitHub in [Issue #40 — Strategic Development Roadmap](https://github.com/BASE-Laboratory/OpenImpala/issues/40).
 
-## Shipped Milestones (`v4.0` – `v5.1`)
+## Shipped Milestones (`v4.0` – `v5.2`)
 
 - **Zero-Fortran C++17 & CUDA Architecture (`v4.0`–`v4.5`)** — Complete migration of all finite-volume stencil, flux, connected-component, and boundary-condition kernels to portable AMReX `ParallelFor` lambdas (`CPU` + `CUDA` via `openimpala-cuda`), exact outer-face harmonic Dirichlet boundary conditions, and matrix-free `TortuosityMLMG` (`~310 B/voxel`, ~3.3–4.6× lower RAM than HYPRE structured Krylov solvers).
 - **Symmetric $3\times 3$ Homogenisation, Multi-Phase & Stereology (`v4.6`)** — Full periodic cell-problem effective diffusivity tensor `effective_diffusivity()`, arbitrary per-phase conductivity maps (`phase_diffusivities`), anisotropic physical `voxel_size`, Cauchy–Crofton specific surface area, 6-connected components, equivalent-sphere PSD, through-thickness profiles, and REV convergence studies across both C++ and pure-Python backends.
 - **Cloud OME-Zarr, Zero-Dependency Bridges & Surrogate Generators (`v4.7`)** — OME-NGFF v0.4 Zarr I/O (`read_zarr_volume`, `write_zarr_volume`), Otsu segmentation (`threshold="otsu"`), majority-vote coarsening (`downsample_volume`), out-of-core AMReX plotfiles for `yt` and ParaView, direct ingestion of STFC CIL `ImageData` and `xarray.DataArray` handles, SHA-256-verified benchmark datasets, and synthetic porous-media ML dataset generation (`openimpala.synthetic`).
 - **`v5.0.0` Relaunch, PyBaMM / Faraday BPX Interoperability & JOSS 2026** — Explicit `phase` API consistency across all solvers, automatic OpenMPI runtime discovery (`DT_RUNPATH` + `openmpi` wheel preloading) with loud fallback diagnostics, quiet-by-default AMReX session lifecycle, `.macmullin_number` and `.bruggeman_exponent` on `TortuosityResult`, one-call `to_pybamm_parameters()` and `export_bpx_json()` helpers, CLI parity (`--downsample`, `--deff`, `--bpx-electrode`), and automated 8-case analytical wheel verification in CI.
 - **`v5.1` Matrix-Free Periodic Homogenisation & `BASE-Laboratory` Layer 3 Contract** — Matrix-free `EffectiveDiffusivityMLMG` (`MLABecLaplacian` + `GMRESMLMG` with exact per-component SPD nullspace pinning across CPU, MPI, and CUDA GPUs) as the default solver for `effective_diffusivity()` and `rev_study()`, plus structural `VolumeProtocol` / `UnitCalibrationError` duck-typing (`basecoat.Volume` / `VolumeSet`) and lazy OME-Zarr `labels/<label_key>` + SI `[m]` unit enforcement.
-
-## Near-Term Engineering (`v5.2`)
-
-1. **HPC & Conda Packaging Ecosystem**
-   - `conda-forge` feedstock for `openimpala` ([Issue #147](https://github.com/BASE-Laboratory/OpenImpala/issues/147)).
-   - Upstream `Spack` package recipe for national Tier-1/Tier-0 supercomputers ([Issue #220](https://github.com/BASE-Laboratory/OpenImpala/issues/220)).
-2. **Extreme-Scale I/O & Mixed-Precision Solvers**
-   - Collective MPI-IO in `RawReader` ([Issue #18](https://github.com/BASE-Laboratory/OpenImpala/issues/18)) and scalable parallel plotfile/checkpoint I/O ([Issue #32](https://github.com/BASE-Laboratory/OpenImpala/issues/32), [Issue #33](https://github.com/BASE-Laboratory/OpenImpala/issues/33)).
-   - Single-precision (`float32`) and mixed-precision V-cycle options in `TortuosityMLMG` and `EffectiveDiffusivityMLMG` to halve GPU device memory on $1024^3+$ tomograms ([Issue #13](https://github.com/BASE-Laboratory/OpenImpala/issues/13), [Issue #30](https://github.com/BASE-Laboratory/OpenImpala/issues/30)).
-   - Optional 3D local diffusive flux-vector field export and active-pore interfacial surface area ([Issue #34](https://github.com/BASE-Laboratory/OpenImpala/issues/34)).
+- **`v5.2` Local 3D Flux Fields, Active SSA, Mixed-Precision `MLMG` & Extreme-Scale HPC I/O** — Native 3D cell-centred diffusive flux vector and magnitude export (`return_flux=True`, 7-component plotfiles, JSON `flux_stats`), percolation-filtered electrochemically active surface area (`active_only=True`), single- and mixed-precision `MLMG` V-cycles (`mlmg_precision="float64" | "float32" | "mixed"`), collective MPI-IO subarray streaming in `RawReader`, `plotfile.nfiles` concurrency control, deterministic `REVStudy` CSV & `VisMF` checkpoint/restart, and bundled `conda-forge` (`packaging/conda-forge/`) + `Spack` (`packaging/spack/`) recipes.
 
 ## Multi-Physics & Numerical Research Tracks (`v6.0+`)
 

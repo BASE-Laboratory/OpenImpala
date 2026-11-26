@@ -715,8 +715,14 @@ bool OpenImpala::TortuosityHypre::solve() {
         if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  Writing solution plotfile..." << std::endl;
         }
-        amrex::MultiFab mf_plot(m_ba, m_dm, numComponentsPhi, 0);
-        amrex::MultiFab mf_soln_temp(m_ba, m_dm, 1, 0);
+        bool write_flux = m_write_flux_in_plotfile;
+        {
+            amrex::ParmParse pp_post("post_process");
+            pp_post.query("write_flux_field", write_flux);
+        }
+        const int n_plot_comp = write_flux ? 7 : numComponentsPhi;
+        amrex::MultiFab mf_plot(m_ba, m_dm, n_plot_comp, 0);
+        amrex::MultiFab mf_soln_temp(m_ba, m_dm, 1, 1);
         mf_soln_temp.setVal(0.0);
         // HYPRE_MEMORY_DEVICE on CUDA → GetBoxValues writes to a device pointer.
         // No OMP: HYPRE_StructVectorGetBoxValues is not thread-safe for the same vector.
@@ -756,6 +762,7 @@ bool OpenImpala::TortuosityHypre::solve() {
 #ifdef AMREX_USE_GPU
         amrex::Gpu::streamSynchronize();
 #endif
+        mf_soln_temp.FillBoundary(m_geom.periodicity());
         amrex::MultiFab mf_mask_temp(m_ba, m_dm, 1, 0);
         amrex::Copy(mf_mask_temp, m_mf_active_mask, MaskComp, 0, 1, 0);
         amrex::MultiFab mf_phase_temp(m_ba, m_dm, 1, 0);
@@ -763,9 +770,21 @@ bool OpenImpala::TortuosityHypre::solve() {
         amrex::Copy(mf_plot, mf_soln_temp, 0, 0, 1, 0);
         amrex::Copy(mf_plot, mf_phase_temp, 0, 1, 1, 0);
         amrex::Copy(mf_plot, mf_mask_temp, 0, 2, 1, 0);
+        amrex::Vector<std::string> varnames = {"solution_potential", "phase_id", "active_mask"};
+        if (write_flux) {
+            m_mf_active_mask.FillBoundary(m_geom.periodicity());
+            m_mf_diff_coeff.FillBoundary(m_geom.periodicity());
+            amrex::MultiFab mf_flux(m_ba, m_dm, 4, 0);
+            computeTortuosityCellFluxField(mf_flux, m_geom, mf_soln_temp, m_mf_active_mask,
+                                           m_mf_diff_coeff, m_dir, m_vlo, m_vhi, 0);
+            amrex::Copy(mf_plot, mf_flux, 0, 3, 4, 0);
+            varnames.push_back("flux_x");
+            varnames.push_back("flux_y");
+            varnames.push_back("flux_z");
+            varnames.push_back("flux_magnitude");
+        }
         std::string plotfilename =
             m_resultspath + "/tortuosity_solution_" + std::to_string(static_cast<int>(m_dir));
-        amrex::Vector<std::string> varnames = {"solution_potential", "phase_id", "active_mask"};
         amrex::WriteSingleLevelPlotfile(plotfilename, mf_plot, varnames, m_geom, 0.0, 0);
         if (m_verbose > 0 && amrex::ParallelDescriptor::IOProcessor()) {
             amrex::Print() << "  Plotfile written to " << plotfilename << std::endl;
@@ -1507,6 +1526,16 @@ void OpenImpala::TortuosityHypre::computePlaneFluxes(const amrex::MultiFab& mf_s
                            << std::defaultfloat << "\n";
         }
     }
+}
+
+void TortuosityHypre::computeCellFluxField(amrex::MultiFab& mf_flux) const {
+    computeTortuosityCellFluxField(mf_flux, m_geom, m_mf_phi, m_mf_active_mask, m_mf_diff_coeff,
+                                   m_dir, m_vlo, m_vhi, SolnComp);
+}
+
+FluxStats TortuosityHypre::computeFluxStats(int num_bins) const {
+    return computeTortuosityFluxStats(m_geom, m_mf_phi, m_mf_active_mask, m_mf_diff_coeff, m_dir,
+                                      m_vlo, m_vhi, num_bins, SolnComp);
 }
 
 
